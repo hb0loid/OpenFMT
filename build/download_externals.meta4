@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<metalink xmlns="urn:ietf:params:xml:ns:metalink">
+ <file name="build/externals/7zr.exe">
+  <size>600064</size>
+  <hash type="sha-512">4660038bfbd524c88ac122fe709bb1878d18e317e518b9aaa84516172d7236c9d29df700433b62e2320222b83d0edf2dc217039732c9cc055eb260fe4a242cc7</hash>
+  <url>https://7-zip.org/a/7zr.exe</url>
+  <url>https://github.com/ip7z/7zip/releases/download/26.06/7zr.exe</url>
+  <url>https://deac-fra.dl.sourceforge.net/project/sevenzip/7-Zip/26.06/7zr.exe</url>
+  <url>https://sf-eu-introserv-1.dl.sourceforge.net/project/sevenzip/7-Zip/26.06/7zr.exe</url>
+  <url>https://sf-west-interserver-1.dl.sourceforge.net/project/sevenzip/7-Zip/26.06/7zr.exe</url>
+  <url>https://sf-west-interserver-2.dl.sourceforge.net/project/sevenzip/7-Zip/26.06/7zr.exe</url>
+ </file>
+ <file name="build/externals/7z2606-x64.exe">
+  <size>1659704</size>
+  <hash type="sha-512">80efd8e1f57e4762276ef8ce0355b4e66efff08bf52a889acbdeded028963fbacedba9f9479a09a5ed2230aec30427e298b23df65e489e22f6affc57d99a7de6</hash>
+  <url>https://7-zip.org/a/7z2606-x64.exe</url>
+  <url>https://github.com/ip7z/7zip/releases/download/26.06/7z2606-x64.exe</url>
+  <url>https://deac-fra.dl.sourceforge.net/project/sevenzip/7-Zip/26.06/7z2606-x64.exe</url>
+  <url>https://sf-eu-introserv-1.dl.sourceforge.net/project/sevenzip/7-Zip/26.06/7z2606-x64.exe</url>
+  <url>https://sf-west-interserver-1.dl.sourceforge.net/project/sevenzip/7-Zip/26.06/7z2606-x64.exe</url>
+  <url>https://sf-west-interserver-2.dl.sourceforge.net/project/sevenzip/7-Zip/26.06/7z2606-x64.exe</url>
+ </file>
+ <file name="build/externals/WA5.55_SDK.exe">
+  <size>336166</size>
+  <hash type="sha-512">394375db8a16bf155b5de9376f6290488ab339e503dbdfdc4e2f5bede967799e625c559cca363bc988324f1a8e86e5fd28a9f697422abd7bb3dcde4a766607b5</hash>
+  <url>https://download.nullsoft.com/winamp/plugin-dev/WA5.55_SDK.exe</url>
+  <url>http://download.nullsoft.com/winamp/plugin-dev/WA5.55_SDK.exe</url>
+  <url>https://web.archive.org/web/20131217072017id_/http://download.nullsoft.com/winamp/plugin-dev/WA5.55_SDK.exe</url>
+ </file>
+ <file name="build/externals/xmp-sdk.zip">
+  <size>326626</size>
+  <hash type="sha-512">8310230e678a73228c0d647c21db13030a88cab65a24ce890f22e3d730482325325d0a8b96c6ddf721be26f77f02f0c80b9d5e3d3db818f2cb7c1444e6b329ba</hash>
+  <url>https://www.un4seen.com/files/xmp-sdk.zip</url>
+ </file>
+ <file name="build/externals/htmlhelp.exe">
+  <size>3509072</size>
+  <hash type="sha-512">d91371244ea98c691b4674ee266c4a2496a296800c176adae069d21f5c52c0763b21cc7859cfffa865b89e50171a2c99a6d14620c32f7d72c0ef04045348f856</hash>
+  <url>https://web.archive.org/web/20200918004813id_/https://download.microsoft.com/download/0/A/9/0A939EF6-E31C-430F-A3DF-DFAE7960D564/htmlhelp.exe</url>
+  <url>https://web.archive.org/web/20160423015142id_/https://download.microsoft.com/download/0/a/9/0a939ef6-e31c-430f-a3df-dfae7960d564/htmlhelp.exe</url>
+  <url>https://web.archive.org/web/20160301111642id_/https://download.microsoft.com/download/0/A/9/0A939EF6-E31C-430F-A3DF-DFAE7960D564/htmlhelp.exe</url>
+  <url>https://web.archive.org/web/20200918004813id_/http://download.microsoft.com/download/0/A/9/0A939EF6-E31C-430F-A3DF-DFAE7960D564/htmlhelp.exe</url>
+  <url>https://web.archive.org/web/20160423015142id_/http://download.microsoft.com/download/0/a/9/0a939ef6-e31c-430f-a3df-dfae7960d564/htmlhelp.exe</url>
+  <url>https://web.archive.org/web/20160301111642id_/http://download.microsoft.com/download/0/A/9/0A939EF6-E31C-430F-A3DF-DFAE7960D564/htmlhelp.exe</url>
+ </file>
+ <file name="build/externals/python-3.15.2-embed-amd64.zip">
+  <size>13740486</size>
+  <hash type="sha-512">d03cfd58fe9aedd5bf8612c0a17f25a7ef82557a2ef5fe3703827ac98f69b153236a1acd4c817fcbea4ccece1990cbf0e2cf3eb5880ff39226f1ebaef8fcc02c</hash>
+  <url>https://www.python.org/ftp/python/3.15.2/python-3.15.2-embed-amd64.zip</url>
+ </file>
+ <file name="build/externals/innounp050.rar">
+  <size>141621</size>
+  <hash type="sha-512">dbbc809308267a866db9d6b751fdeda6d179e1a65d8ddb14bb51984431ae91493f9a76105e1789b245732043a2c696c869ed10964b48cf59f81e55bd52f85330</hash>
+  <url>https://deac-fra.dl.sourceforge.net/project/innounp/innounp/innounp 0.50/innounp050.rar</url>
+  <url>https://sf-eu-introserv-1.dl.sourceforge.net/project/innounp/innounp/innounp 0.50/innounp050.rar</url>
+  <url>https://sf-west-interserver-1.dl.sourceforge.net/project/innounp/innounp/innounp 0.50/innounp050.rar</url>
+  <url>https://sf-west-interserver-2.dl.sourceforge.net/project/innounp/innounp/innounp 0.50/innounp050.rar</url>
+ </file>
+ <file name="build/externals/innosetup-7.1.1-x64.exe">
+  <size>14336568</size>
+  <hash type="sha-512">9988a19144af4b01fd7314cc67c0e985ced908a4358846fc1e9257a1fd528748e5e54bfa4235f80f5c01a77467ecaf9115dbea7088c4d5f647ca4b5317cb8a21</hash>
+  <url>https://github.com/jrsoftware/issrc/releases/download/is-7_1_1/innosetup-7.1.1-x64.exe</url>
+ </file>
+ <file name="build/externals/isetup-5.5.8-unicode.exe">
+  <size>2342456</size>
+  <hash type="sha-512">da7e27d85caec85b4194c7b1412c5a64c0ae12f22d903b94f2f4ee9ea0cb99c91b2d1dbb49262eefae8129e6b91f5c46f26f353011076e77e75f9c955fc5e1cb</hash>
+  <url>https://files.jrsoftware.org/is/5/isetup-5.5.8-unicode.exe</url>
+  <url>https://web.archive.org/web/20230523165634id_/https://files.jrsoftware.org/is/5/isetup-5.5.8-unicode.exe</url>
+ </file>
+ <file name="build/externals/example_songs_ompt_1_30.7z">
+  <size>4881392</size>
+  <hash type="sha-512">bfecf7f97fd71bd52bcfb38307ccb98c751e6a0fa0c1f31208b22b9392f03ea3da8f9271327df2de4fc2e463e0c13c6a24107fbe18caf8f446b7e7cf93073fa5</hash>
+  <url>https://download.openmpt.org/resources/modules/example_songs_ompt_1_30.7z</url>
+ </file>
+ <file name="build/externals/allegro-4.2.3.1-hg.8+r8500.zip">
+  <size>3872466</size>
+  <hash type="sha-512">46cd8d4d7138b795dbc66994e953d0abc578c6d3c00615e3580237458529d33d7ad9d269a9778918d4b3719d75750d5cca74ff6bf38ad357a766472799ee9e7b</hash>
+  <url>https://lib.openmpt.org/files/libopenmpt/contrib/allegro/allegro-4.2.3.1-hg.8+r8500.zip</url>
+  <url>https://mercury.sexy/members/manx/liballegro-4.2/allegro-4.2.3.1-hg.8+r8500.zip</url>
+ </file>
+ <file name="build/externals/csdpmi7b.zip">
+  <size>71339</size>
+  <hash type="sha-512">58c24691d27cead1cec92d334af551f37a3ba31de25a687d99399c28d822ec9f6ffccc9332bfce35e65dae4dd1210b54e54b223a4de17f5adcb11e2da004b834</hash>
+  <url>https://lib.openmpt.org/files/libopenmpt/contrib/djgpp/cwsdpmi/csdpmi7b.zip</url>
+  <url>https://www.mirrorservice.org/sites/ftp.delorie.com/pub/djgpp/current/v2misc/csdpmi7b.zip</url>
+  <url>https://djgpp.mirror.garr.it/current/v2misc/csdpmi7b.zip</url>
+ </file>
+ <file name="build/externals/csdpmi7s.zip">
+  <size>89872</size>
+  <hash type="sha-512">ea5652d31850d8eb0d15a919de0b51849f58efea0d16ad2aa4687fac4abd223d0ca34a2d1b616b02fafe84651dbef3e506df9262cfb399eb6d9909bffc89bfd3</hash>
+  <url>https://lib.openmpt.org/files/libopenmpt/contrib/djgpp/cwsdpmi/csdpmi7s.zip</url>
+  <url>https://www.mirrorservice.org/sites/ftp.delorie.com/pub/djgpp/current/v2misc/csdpmi7s.zip</url>
+  <url>https://djgpp.mirror.garr.it/current/v2misc/csdpmi7s.zip</url>
+ </file>
+ <file name="build/externals/svn_apply_autoprops.py">
+  <size>5601</size>
+  <hash type="sha-512">9d41d53917509a5a4cdcc14660d1f0455e81859355b86b841adbf99994500e8795dac2df75b8a1d75aeee36816edaab7871735be3b40acf379092b994cb6ee61</hash>
+  <url>https://raw.githubusercontent.com/apache/subversion/c66ceddd7d0b1b77bed35d697ab94cfaa4d9e691/contrib/client-side/svn_apply_autoprops.py</url>
+  <url>https://svn.apache.org/repos/asf/subversion/trunk/contrib/client-side/svn_apply_autoprops.py</url>
+ </file>
+</metalink>

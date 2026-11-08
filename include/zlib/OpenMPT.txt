@@ -1,0 +1,11 @@
+zlib 1.4. (zlib-1.4.tar.gz) (2026-11-05)
+Files not required by OpenMPT have been removed.
+OpenMPT specific changes:
+ *  `zconf.h` has been modified to avoid preprocessor warnings. See
+    <https://github.com/madler/zlib/issues/1169>.
+ *  `contrib/minizip/iowin32.c` has been modified to only use Windows 8 WinRT
+    API when actually compiling for Windows 8 or later.
+ *  All custom modifications are marked with /* OpenMPT */
+ *  For building, premake is used to generate Visual Studio project files.
+    See ../build/premake/ for details.
+No further changes have been made.

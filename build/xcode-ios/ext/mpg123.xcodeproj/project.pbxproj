@@ -1,0 +1,345 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 46;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0DB77E99430BCD22E8BAEED3 /* ntom.c in Sources */ = {isa = PBXBuildFile; fileRef = 23E4152E61E01A86B3AEC409 /* ntom.c */; };
+		12BEAF2022F598FEBC11325F /* id3.c in Sources */ = {isa = PBXBuildFile; fileRef = 42FC8EBF867FCDC25BA932B3 /* id3.c */; };
+		1757AB1BA9F483496FDDAD17 /* icy2utf8.c in Sources */ = {isa = PBXBuildFile; fileRef = 5A2309D3E620B7007932F48E /* icy2utf8.c */; };
+		22326336E966843B4FD5241C /* synth_8bit.c in Sources */ = {isa = PBXBuildFile; fileRef = 466F927B8FEB00D52623F825 /* synth_8bit.c */; };
+		23BA757240805103A314D812 /* tabinit.c in Sources */ = {isa = PBXBuildFile; fileRef = 98F0EF6E5BD72052D6E553F0 /* tabinit.c */; };
+		28132DFDED3DBED3306181F4 /* layer3.c in Sources */ = {isa = PBXBuildFile; fileRef = 8B6F368DCE32AB0926557CFC /* layer3.c */; };
+		285B3B742791F6DC0BBC10EA /* synth_s32.c in Sources */ = {isa = PBXBuildFile; fileRef = EE911CB0D8DB7F2988E1AFC8 /* synth_s32.c */; };
+		2EC6D8003677EF76FD68D040 /* readers.c in Sources */ = {isa = PBXBuildFile; fileRef = 590D65EF90ED64B0E9ED1313 /* readers.c */; };
+		30A80903C1FC332F01CE3919 /* optimize.c in Sources */ = {isa = PBXBuildFile; fileRef = C74FD4518DBA6BC283A7EFED /* optimize.c */; };
+		313F8DA1521098A9D2944370 /* frame.c in Sources */ = {isa = PBXBuildFile; fileRef = C48096D6803356FF026B9771 /* frame.c */; };
+		3FA5E4EE44A3C5D49A9FEE0E /* synth.c in Sources */ = {isa = PBXBuildFile; fileRef = 822289BCB5B1CD0DA397ECEA /* synth.c */; };
+		4B824EB3F329456D159F2542 /* format.c in Sources */ = {isa = PBXBuildFile; fileRef = 21E73AAD551662BE0529ECEC /* format.c */; };
+		5AEDE79DA0F4B03571329FA2 /* libmpg123.c in Sources */ = {isa = PBXBuildFile; fileRef = 4167AB8E5F963F6788E09433 /* libmpg123.c */; };
+		5E3405BF4F31D3CBEC1A1320 /* layer1.c in Sources */ = {isa = PBXBuildFile; fileRef = 10E90EF2807019E833B1A88C /* layer1.c */; };
+		7216F03C550F84F9B4B6717F /* parse.c in Sources */ = {isa = PBXBuildFile; fileRef = 7CD2DBB9141672BF99366330 /* parse.c */; };
+		7FCFE87CBD34A63DEA3A0A33 /* dither.c in Sources */ = {isa = PBXBuildFile; fileRef = 76EB03EB63950F8C447ED98C /* dither.c */; };
+		91ED017AC24E4034C52CFC6D /* layer2.c in Sources */ = {isa = PBXBuildFile; fileRef = C67FDBC73783B700E6E09AA0 /* layer2.c */; };
+		A39C4FBDCA3D4C9426AA3488 /* icy.c in Sources */ = {isa = PBXBuildFile; fileRef = C0EA3376552433B68D3D8974 /* icy.c */; };
+		A4EF114D694EC0424CF4664F /* equalizer.c in Sources */ = {isa = PBXBuildFile; fileRef = EAE444329ED820B02F53A66A /* equalizer.c */; };
+		A60158D0E1BF9D68A2A4EDCF /* dct64.c in Sources */ = {isa = PBXBuildFile; fileRef = 5DD7F31E75EC4C9865F12140 /* dct64.c */; };
+		A65D5676ECC7EC1C7E39EE89 /* synth_real.c in Sources */ = {isa = PBXBuildFile; fileRef = 77E386C2196F7E4BD7C6A12D /* synth_real.c */; };
+		A993B4DB0A860B41EFB7EB23 /* index.c in Sources */ = {isa = PBXBuildFile; fileRef = AEA4330A721D8466AAB2399E /* index.c */; };
+		AA6A307EABBA0500FFE39E5C /* compat_str.c in Sources */ = {isa = PBXBuildFile; fileRef = C1AA8663204BBD0372651ADA /* compat_str.c */; };
+		BC9F748ED4D34A6C8BBAB19B /* feature.c in Sources */ = {isa = PBXBuildFile; fileRef = EAE2E6DB98392FED85FFA924 /* feature.c */; };
+		C0A1BCE8656D7CA1130D3E59 /* stringbuf.c in Sources */ = {isa = PBXBuildFile; fileRef = 53CF2D433A8E007C3C343E9F /* stringbuf.c */; };
+		CA093BC3E41472A21A159DCC /* lfs_wrap.c in Sources */ = {isa = PBXBuildFile; fileRef = 4DF1568C3F46E976514A4027 /* lfs_wrap.c */; };
+		E5BB57B170CA0EFEC729112B /* compat.c in Sources */ = {isa = PBXBuildFile; fileRef = F1DC8DCA7E1C339E7204FEC7 /* compat.c */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0A4A8302844B44E7FF71C2A7 /* openmpt-mpg123.dll */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.dylib"; includeInIndex = 0; name = "openmpt-mpg123.dll"; path = "openmpt-mpg123.dll"; sourceTree = BUILT_PRODUCTS_DIR; };
+		10E90EF2807019E833B1A88C /* layer1.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = layer1.c; path = ../../../include/mpg123/src/libmpg123/layer1.c; sourceTree = "<group>"; };
+		21E73AAD551662BE0529ECEC /* format.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = format.c; path = ../../../include/mpg123/src/libmpg123/format.c; sourceTree = "<group>"; };
+		23E4152E61E01A86B3AEC409 /* ntom.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = ntom.c; path = ../../../include/mpg123/src/libmpg123/ntom.c; sourceTree = "<group>"; };
+		4167AB8E5F963F6788E09433 /* libmpg123.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = libmpg123.c; path = ../../../include/mpg123/src/libmpg123/libmpg123.c; sourceTree = "<group>"; };
+		42FC8EBF867FCDC25BA932B3 /* id3.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = id3.c; path = ../../../include/mpg123/src/libmpg123/id3.c; sourceTree = "<group>"; };
+		466F927B8FEB00D52623F825 /* synth_8bit.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = synth_8bit.c; path = ../../../include/mpg123/src/libmpg123/synth_8bit.c; sourceTree = "<group>"; };
+		4DF1568C3F46E976514A4027 /* lfs_wrap.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = lfs_wrap.c; path = ../../../include/mpg123/src/libmpg123/lfs_wrap.c; sourceTree = "<group>"; };
+		53CF2D433A8E007C3C343E9F /* stringbuf.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = stringbuf.c; path = ../../../include/mpg123/src/libmpg123/stringbuf.c; sourceTree = "<group>"; };
+		590D65EF90ED64B0E9ED1313 /* readers.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = readers.c; path = ../../../include/mpg123/src/libmpg123/readers.c; sourceTree = "<group>"; };
+		5A2309D3E620B7007932F48E /* icy2utf8.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = icy2utf8.c; path = ../../../include/mpg123/src/libmpg123/icy2utf8.c; sourceTree = "<group>"; };
+		5DD7F31E75EC4C9865F12140 /* dct64.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = dct64.c; path = ../../../include/mpg123/src/libmpg123/dct64.c; sourceTree = "<group>"; };
+		76EB03EB63950F8C447ED98C /* dither.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = dither.c; path = ../../../include/mpg123/src/libmpg123/dither.c; sourceTree = "<group>"; };
+		77E386C2196F7E4BD7C6A12D /* synth_real.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = synth_real.c; path = ../../../include/mpg123/src/libmpg123/synth_real.c; sourceTree = "<group>"; };
+		7CD2DBB9141672BF99366330 /* parse.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = parse.c; path = ../../../include/mpg123/src/libmpg123/parse.c; sourceTree = "<group>"; };
+		822289BCB5B1CD0DA397ECEA /* synth.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = synth.c; path = ../../../include/mpg123/src/libmpg123/synth.c; sourceTree = "<group>"; };
+		8B6F368DCE32AB0926557CFC /* layer3.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = layer3.c; path = ../../../include/mpg123/src/libmpg123/layer3.c; sourceTree = "<group>"; };
+		98F0EF6E5BD72052D6E553F0 /* tabinit.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = tabinit.c; path = ../../../include/mpg123/src/libmpg123/tabinit.c; sourceTree = "<group>"; };
+		AEA4330A721D8466AAB2399E /* index.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = index.c; path = ../../../include/mpg123/src/libmpg123/index.c; sourceTree = "<group>"; };
+		C0EA3376552433B68D3D8974 /* icy.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = icy.c; path = ../../../include/mpg123/src/libmpg123/icy.c; sourceTree = "<group>"; };
+		C1AA8663204BBD0372651ADA /* compat_str.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = compat_str.c; path = ../../../include/mpg123/src/compat/compat_str.c; sourceTree = "<group>"; };
+		C48096D6803356FF026B9771 /* frame.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = frame.c; path = ../../../include/mpg123/src/libmpg123/frame.c; sourceTree = "<group>"; };
+		C67FDBC73783B700E6E09AA0 /* layer2.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = layer2.c; path = ../../../include/mpg123/src/libmpg123/layer2.c; sourceTree = "<group>"; };
+		C74FD4518DBA6BC283A7EFED /* optimize.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = optimize.c; path = ../../../include/mpg123/src/libmpg123/optimize.c; sourceTree = "<group>"; };
+		EAE2E6DB98392FED85FFA924 /* feature.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = feature.c; path = ../../../include/mpg123/src/libmpg123/feature.c; sourceTree = "<group>"; };
+		EAE444329ED820B02F53A66A /* equalizer.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = equalizer.c; path = ../../../include/mpg123/src/libmpg123/equalizer.c; sourceTree = "<group>"; };
+		EE911CB0D8DB7F2988E1AFC8 /* synth_s32.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = synth_s32.c; path = ../../../include/mpg123/src/libmpg123/synth_s32.c; sourceTree = "<group>"; };
+		F1DC8DCA7E1C339E7204FEC7 /* compat.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = compat.c; path = ../../../include/mpg123/src/compat/compat.c; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		2DB2BDB3A95AE07ECD3C074C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		135481FE010FE57D7D672D5B /* Embed Libraries */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+			);
+			name = "Embed Libraries";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXGroup section */
+		14A3102AC8C8E2D4941DD612 /* mpg123 */ = {
+			isa = PBXGroup;
+			children = (
+				EC18FD33417D41ACF26C4691 /* compat */,
+				B0C6C5C81655995B8D6C9646 /* libmpg123 */,
+				990A9E97AA7ABFD9D0C572FA /* Products */,
+			);
+			name = mpg123;
+			sourceTree = "<group>";
+		};
+		990A9E97AA7ABFD9D0C572FA /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				0A4A8302844B44E7FF71C2A7 /* openmpt-mpg123.dll */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		B0C6C5C81655995B8D6C9646 /* libmpg123 */ = {
+			isa = PBXGroup;
+			children = (
+				5DD7F31E75EC4C9865F12140 /* dct64.c */,
+				76EB03EB63950F8C447ED98C /* dither.c */,
+				EAE444329ED820B02F53A66A /* equalizer.c */,
+				EAE2E6DB98392FED85FFA924 /* feature.c */,
+				21E73AAD551662BE0529ECEC /* format.c */,
+				C48096D6803356FF026B9771 /* frame.c */,
+				C0EA3376552433B68D3D8974 /* icy.c */,
+				5A2309D3E620B7007932F48E /* icy2utf8.c */,
+				42FC8EBF867FCDC25BA932B3 /* id3.c */,
+				AEA4330A721D8466AAB2399E /* index.c */,
+				10E90EF2807019E833B1A88C /* layer1.c */,
+				C67FDBC73783B700E6E09AA0 /* layer2.c */,
+				8B6F368DCE32AB0926557CFC /* layer3.c */,
+				4DF1568C3F46E976514A4027 /* lfs_wrap.c */,
+				4167AB8E5F963F6788E09433 /* libmpg123.c */,
+				23E4152E61E01A86B3AEC409 /* ntom.c */,
+				C74FD4518DBA6BC283A7EFED /* optimize.c */,
+				7CD2DBB9141672BF99366330 /* parse.c */,
+				590D65EF90ED64B0E9ED1313 /* readers.c */,
+				53CF2D433A8E007C3C343E9F /* stringbuf.c */,
+				822289BCB5B1CD0DA397ECEA /* synth.c */,
+				466F927B8FEB00D52623F825 /* synth_8bit.c */,
+				77E386C2196F7E4BD7C6A12D /* synth_real.c */,
+				EE911CB0D8DB7F2988E1AFC8 /* synth_s32.c */,
+				98F0EF6E5BD72052D6E553F0 /* tabinit.c */,
+			);
+			name = libmpg123;
+			sourceTree = "<group>";
+		};
+		EC18FD33417D41ACF26C4691 /* compat */ = {
+			isa = PBXGroup;
+			children = (
+				F1DC8DCA7E1C339E7204FEC7 /* compat.c */,
+				C1AA8663204BBD0372651ADA /* compat_str.c */,
+			);
+			name = compat;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		888982C49E00F063936E4D14 /* mpg123 */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0B5136FB48DF64C251BD67F1 /* Build configuration list for PBXNativeTarget "mpg123" */;
+			buildPhases = (
+				EC96388A45918702B6F2DA7E /* Resources */,
+				5D4C561B96D996E7F008498D /* Sources */,
+				2DB2BDB3A95AE07ECD3C074C /* Frameworks */,
+				135481FE010FE57D7D672D5B /* Embed Libraries */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = mpg123;
+			productName = mpg123;
+			productReference = 0A4A8302844B44E7FF71C2A7 /* openmpt-mpg123.dll */;
+			productType = "com.apple.product-type.library.dynamic";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		08FB7793FE84155DC02AAC07 /* Project object */ = {
+			isa = PBXProject;
+			buildConfigurationList = 1DEB928908733DD80010E9CD /* Build configuration list for PBXProject "mpg123" */;
+			compatibilityVersion = "Xcode 3.2";
+			hasScannedForEncodings = 1;
+			mainGroup = 14A3102AC8C8E2D4941DD612 /* mpg123 */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				888982C49E00F063936E4D14 /* openmpt-mpg123.dll */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		EC96388A45918702B6F2DA7E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		5D4C561B96D996E7F008498D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E5BB57B170CA0EFEC729112B /* compat.c in Sources */,
+				AA6A307EABBA0500FFE39E5C /* compat_str.c in Sources */,
+				A60158D0E1BF9D68A2A4EDCF /* dct64.c in Sources */,
+				7FCFE87CBD34A63DEA3A0A33 /* dither.c in Sources */,
+				A4EF114D694EC0424CF4664F /* equalizer.c in Sources */,
+				BC9F748ED4D34A6C8BBAB19B /* feature.c in Sources */,
+				4B824EB3F329456D159F2542 /* format.c in Sources */,
+				313F8DA1521098A9D2944370 /* frame.c in Sources */,
+				A39C4FBDCA3D4C9426AA3488 /* icy.c in Sources */,
+				1757AB1BA9F483496FDDAD17 /* icy2utf8.c in Sources */,
+				12BEAF2022F598FEBC11325F /* id3.c in Sources */,
+				A993B4DB0A860B41EFB7EB23 /* index.c in Sources */,
+				5E3405BF4F31D3CBEC1A1320 /* layer1.c in Sources */,
+				91ED017AC24E4034C52CFC6D /* layer2.c in Sources */,
+				28132DFDED3DBED3306181F4 /* layer3.c in Sources */,
+				CA093BC3E41472A21A159DCC /* lfs_wrap.c in Sources */,
+				5AEDE79DA0F4B03571329FA2 /* libmpg123.c in Sources */,
+				0DB77E99430BCD22E8BAEED3 /* ntom.c in Sources */,
+				30A80903C1FC332F01CE3919 /* optimize.c in Sources */,
+				7216F03C550F84F9B4B6717F /* parse.c in Sources */,
+				2EC6D8003677EF76FD68D040 /* readers.c in Sources */,
+				C0A1BCE8656D7CA1130D3E59 /* stringbuf.c in Sources */,
+				3FA5E4EE44A3C5D49A9FEE0E /* synth.c in Sources */,
+				22326336E966843B4FD5241C /* synth_8bit.c in Sources */,
+				A65D5676ECC7EC1C7E39EE89 /* synth_real.c in Sources */,
+				285B3B742791F6DC0BBC10EA /* synth_s32.c in Sources */,
+				23BA757240805103A314D812 /* tabinit.c in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXVariantGroup section */
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		167C304D8B1CBD9F3130816D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = "$(NATIVE_ARCH_ACTUAL)";
+				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
+				CONFIGURATION_BUILD_DIR = "$(SYMROOT)";
+				CONFIGURATION_TEMP_DIR = "$(OBJROOT)";
+				COPY_PHASE_STRIP = NO;
+				GCC_C_LANGUAGE_STANDARD = c17;
+				GCC_ENABLE_FIX_AND_CONTINUE = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					DEBUG,
+					MPT_BUILD_DEBUG,
+				);
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				OBJROOT = obj/Debug/mpg123;
+				ONLY_ACTIVE_ARCH = YES;
+				SYMROOT = "../../../bin/debug/xcode4-ios/all";
+				USER_HEADER_SEARCH_PATHS = (
+					../../../include/mpg123/ports/generic,
+					../../../include/mpg123/src/include,
+				);
+			};
+			name = Debug;
+		};
+		362325A5E084E3BFF208B053 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = "$(NATIVE_ARCH_ACTUAL)";
+				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
+				CONFIGURATION_BUILD_DIR = "$(SYMROOT)";
+				CONFIGURATION_TEMP_DIR = "$(OBJROOT)";
+				GCC_C_LANGUAGE_STANDARD = c17;
+				GCC_OPTIMIZATION_LEVEL = 3;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					NDEBUG,
+				);
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				OBJROOT = obj/Release/mpg123;
+				ONLY_ACTIVE_ARCH = NO;
+				SYMROOT = "../../../bin/release/xcode4-ios/all";
+				USER_HEADER_SEARCH_PATHS = (
+					../../../include/mpg123/ports/generic,
+					../../../include/mpg123/src/include,
+				);
+			};
+			name = Release;
+		};
+		663BE52CF79F8D0D729202A3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CONFIGURATION_BUILD_DIR = "../../../bin/debug/xcode4-ios/all";
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				EXECUTABLE_EXTENSION = dll;
+				GCC_DYNAMIC_NO_PIC = NO;
+				INSTALL_PATH = /usr/local/lib;
+				PRODUCT_NAME = "openmpt-mpg123";
+			};
+			name = Debug;
+		};
+		897EA4EF987532CB5599FDF6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CONFIGURATION_BUILD_DIR = "../../../bin/release/xcode4-ios/all";
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				EXECUTABLE_EXTENSION = dll;
+				GCC_DYNAMIC_NO_PIC = NO;
+				INSTALL_PATH = /usr/local/lib;
+				PRODUCT_NAME = "openmpt-mpg123";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		0B5136FB48DF64C251BD67F1 /* Build configuration list for PBXNativeTarget "openmpt-mpg123.dll" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				663BE52CF79F8D0D729202A3 /* Debug */,
+				897EA4EF987532CB5599FDF6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		1DEB928908733DD80010E9CD /* Build configuration list for PBXProject "mpg123" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				167C304D8B1CBD9F3130816D /* Debug */,
+				362325A5E084E3BFF208B053 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+};
+rootObject = 08FB7793FE84155DC02AAC07 /* Project object */;
+}
