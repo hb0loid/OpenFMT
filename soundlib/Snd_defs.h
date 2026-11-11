@@ -784,6 +784,20 @@ struct PSGPatch
 	bool easyPitch = true, resetNoise = true, furnacePitch = false;
 };
 
+// Громкость каждого чипа отдельно, 8.8 с единицей в ChipVolumeUnity. Furnace
+// хранит её для каждой микросхемы песни, поэтому у синтов больше не один общий
+// множитель на всех. PCM-чипы сюда не входят: их партии идут через обычный
+// микшер сэмплов.
+enum ChipKind : uint8
+{
+	ChipOPL,
+	ChipOPN2,
+	ChipOPM,
+	ChipPSG,
+	ChipKinds,
+};
+inline constexpr uint16 ChipVolumeUnity = 256;
+
 using OPN2Patch = std::array<uint8, 1 + 4 * 7>;
 inline constexpr OPN2Patch DefaultOPN2Patch = {
   0x20,

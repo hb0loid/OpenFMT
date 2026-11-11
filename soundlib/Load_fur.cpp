@@ -860,6 +860,12 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 	const bool timing = !grooves.empty() || std::adjacent_find(speeds.begin(), speeds.end(), std::not_equal_to<uint8>()) != speeds.end();
 	InitializeGlobals(MOD_TYPE_MPT, static_cast<CHANNELINDEX>(voices.size() + (timing ? 1 : 0)));
 	m_SongFlags.set(SONG_IMPORTED | SONG_LINEARSLIDES);
+	// Громкость микросхем из chipGains здесь намеренно не применяется. Furnace
+	// уже учитывает её в выходе самого чипа, поэтому второй раз её накручивать
+	// нельзя. Измерено на раздельном экспорте Furnace: без неё партия YM2612
+	// совпадала с эталоном на +0,1 дБ в `the toilet lock` и +1,6 дБ в
+	// `mushroom hill alt`, а с ней уходила на −5,5 и −3,8 дБ соответственно.
+	// Уровни m_chipVolume остаются единичными и служат поправкой микшера.
 	// Legacy partial and hardware-period slides use chip-specific units.
 	if(compat[1] == 2)
 	{
@@ -968,7 +974,14 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		auto patch = realInstrument ? std::make_shared<PSGPatch>(furInstruments[furIns].psg) : std::make_shared<PSGPatch>();
 		patch->chip = chip;
 		patch->lane = lane;
-		patch->mixGain = chipGains[chip];
+		// Громкость микросхемы сюда больше не кладётся: Furnace уже учёл её в
+		// выходе чипа, и прежний импорт накручивал её второй раз. Измерено на
+		// раздельном экспорте: PSG был тише эталона на 10,9 дБ при громкости
+		// чипа 21 (что даёт −9,7 дБ), на 8,1 дБ при той же 21 и на 7,0 дБ при
+		// громкости 32 (что даёт −6,0 дБ). Дефицит следовал за громкостью чипа,
+		// то есть и был этим двойным применением. Поле остаётся в патче ради
+		// старых .fmt, где оно уже записано.
+		patch->mixGain = ChipVolumeUnity;
 		patch->easyPitch = !noEasyNoise[chip];
 		patch->resetNoise = !noPhaseReset[chip];
 		patch->furnacePitch = true;

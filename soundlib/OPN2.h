@@ -482,7 +482,7 @@ public:
 		return true;
 	}
 
-	void Mix(int32 *target, size_t count, uint32 volumeFactorQ16)
+	void Mix(int32 *target, size_t count, uint32 volumeFactorQ16, const uint16 *chipVolume)
 	{
 		for(auto &chip : m_chips)
 		{
@@ -494,7 +494,8 @@ public:
 			if(!assigned)
 				continue;
 
-			const double gain = static_cast<double>(MixerReference) * volumeFactorQ16 / 65536.0;
+			const double gain = static_cast<double>(MixerReference) * volumeFactorQ16 / 65536.0
+				* chipVolume[chip.isOPM ? ChipOPM : ChipOPN2] / ChipVolumeUnity;
 			for(size_t i = 0; i < count; i++)
 			{
 				chip.phase += chip.rate;

@@ -61,17 +61,17 @@ void OPL::Initialize(uint32 sampleRate)
 }
 
 
-void OPL::Mix(int32 *target, size_t count, uint32 volumeFactorQ16, const ModChannel *channels)
+void OPL::Mix(int32 *target, size_t count, uint32 volumeFactorQ16, const ModChannel *channels, const uint16 *chipVolume)
 {
 	if(m_psg)
-		m_psg->Mix(target, count, volumeFactorQ16, channels);
+		m_psg->Mix(target, count, volumeFactorQ16, channels, chipVolume[ChipPSG]);
 	if(m_opn2)
-		m_opn2->Mix(target, count, volumeFactorQ16);
+		m_opn2->Mix(target, count, volumeFactorQ16, chipVolume);
 	if(!m_isActive)
 		return;
 
 	// This factor causes a sample voice to be more or less as loud as an OPL voice
-	const int32 factor = Util::muldiv_unsigned(volumeFactorQ16, 6169, (1 << 16));
+	const int32 factor = Util::muldiv_unsigned(volumeFactorQ16, 6169 * chipVolume[ChipOPL] / ChipVolumeUnity, (1 << 16));
 	while(count--)
 	{
 		int16 l, r;

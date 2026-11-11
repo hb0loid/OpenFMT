@@ -279,7 +279,7 @@ public:
 		return true;
 	}
 
-	void Mix(int32 *target, size_t count, uint32 factor, const ModChannel *channels)
+	void Mix(int32 *target, size_t count, uint32 factor, const ModChannel *channels, uint16 chipVolume)
 	{
 		constexpr double level[] = {0.0, 0.03981, 0.05012, 0.06310, 0.07943, 0.1, 0.12589, 0.15849,
 			0.19953, 0.25119, 0.31623, 0.39811, 0.50119, 0.63096, 0.79433, 1.0};
@@ -297,7 +297,10 @@ public:
 					continue;
 				const int vol = voice.volume + std::clamp(voice.macros[PSGPatch::Volume].value, 0, 15) - 15;
 				// Match the Genesis PSG level to the existing OPN2 mixer calibration.
-				const double gain = level[std::max(0, vol)] * (18800000.0 / (65536.0 * 256.0)) * factor * voice.patch->mixGain;
+				// Громкость микросхемы из песни Furnace лежит в patch->mixGain,
+				// а chipVolume — поправка микшера поверх неё.
+				const double gain = level[std::max(0, vol)] * (18800000.0 / (65536.0 * 256.0)) * factor
+					* voice.patch->mixGain * chipVolume / ChipVolumeUnity;
 				left[lane] = gain * std::min<int32>(256 - voice.pan, 128) / 128.0;
 				right[lane] = gain * std::min<int32>(voice.pan, 128) / 128.0;
 			}

@@ -2533,6 +2533,15 @@ void CSoundFile::SaveExtendedSongProperties(std::ostream &f) const
 	WriteModular(f, MagicBE("VSTV"), m_nVSTiVolume);
 	if(m_furnaceSlides)
 		WriteModular(f, MagicLE("FPSL"), m_furnaceSlides);
+	// Громкость чипов идёт именованным полем расширений песни, а не новой
+	// сигнатурой файла: читатель, который его не знает, просто его пропустит.
+	if(std::any_of(m_chipVolume.begin(), m_chipVolume.end(), [](uint16 volume) { return volume != ChipVolumeUnity; }))
+	{
+		uint64 packed = 0;
+		for(size_t i = 0; i < ChipKinds; i++)
+			packed |= static_cast<uint64>(m_chipVolume[i]) << (16 * i);
+		WriteModular(f, MagicLE("FCHV"), packed);
+	}
 
 	if(GetType() == MOD_TYPE_XM && m_nDefaultGlobalVolume != MAX_GLOBAL_VOLUME)
 	{
@@ -2738,6 +2747,15 @@ bool CSoundFile::LoadExtendedSongProperties(FileReader &file, bool ignoreChannel
 			case MagicBE("SPA."): ReadField(chunk, size, m_nSamplePreAmp); break;
 			case MagicBE("VSTV"): ReadField(chunk, size, m_nVSTiVolume); break;
 			case MagicLE("FPSL"): ReadField(chunk, size, m_furnaceSlides); break;
+			case MagicLE("FCHV"):
+				// Громкость чипов, по 16 бит на чип в порядке ChipKind.
+				{
+					uint64 packed = 0;
+					ReadField(chunk, size, packed);
+					for(size_t i = 0; i < ChipKinds; i++)
+						m_chipVolume[i] = static_cast<uint16>((packed >> (16 * i)) & 0xFFFF);
+				}
+				break;
 			case MagicBE("DGV."): ReadField(chunk, size, m_nDefaultGlobalVolume); break;
 			case MagicBE("RP.."): if(GetType() != MOD_TYPE_XM) { ORDERINDEX restartPos; ReadField(chunk, size, restartPos); Order().SetRestartPos(restartPos); } break;
 			case MagicLE("RSMP"):

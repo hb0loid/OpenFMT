@@ -306,7 +306,7 @@ samplecount_t CSoundFile::Read(samplecount_t count, IAudioTarget &target, IAudio
 
 		if(m_opl)
 		{
-			m_opl->Mix(MixSoundBuffer, countChunk, m_OPLVolumeFactor * m_nVSTiVolume / 48, m_PlayState.Chn.data());
+			m_opl->Mix(MixSoundBuffer, countChunk, m_OPLVolumeFactor * m_nVSTiVolume / 48, m_PlayState.Chn.data(), m_chipVolume.data());
 		}
 
 #ifndef NO_REVERB

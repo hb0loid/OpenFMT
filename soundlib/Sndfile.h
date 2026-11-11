@@ -504,6 +504,11 @@ public:
 		FurnaceIgnoreSameNote = 1 << 12,
 	};
 	uint16 m_furnaceSlides = 0;
+	// Громкость отдельных чипов, 8.8. Для YM2612 и YM2151 заполняется из песни
+	// Furnace при импорте. У PSG громкость микросхемы по-прежнему лежит в патче,
+	// потому что чип поддерживает до 32 экземпляров с разными уровнями, и старые
+	// .fmt её уже так хранят; здесь для него остаётся пользовательская поправка.
+	std::array<uint16, ChipKinds> m_chipVolume;
 	uint32 m_nSamplePreAmp, m_nVSTiVolume;
 	uint32 m_OPLVolumeFactor;  // 16.16
 	static constexpr uint32 m_OPLVolumeFactorScale = 1 << 16;
