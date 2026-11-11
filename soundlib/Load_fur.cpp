@@ -1180,14 +1180,58 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 							command = CMD_POSITIONJUMP;
 							argument = static_cast<uint8>(orders);
 						}
-						const bool pitchSlide = command == CMD_PORTAMENTOUP || command == CMD_PORTAMENTODOWN
-							|| command == CMD_TONEPORTAMENTO || command == CMD_TONEPORTAVOL;
-						// Keep the slide when a local effect competes for the single effect column.
-						const bool replaceLocal = m_furnaceSlides && pitchSlide
-							&& (cell.command == CMD_VIBRATO || cell.command == CMD_ARPEGGIO || cell.command == CMD_PANNING8);
+						// На строку Furnace может прийти до восьми эффектов, а в
+						// ячейке OpenMPT колонка эффекта одна. Выживает более
+						// важный: команду чипа или скорость заменить нечем,
+						// панораму же можно увести в колонку громкости или
+						// потерять почти без вреда.
+						const auto priority = [](ModCommand::COMMAND cmd) -> int
+						{
+							switch(cmd)
+							{
+							case CMD_NONE:
+								return 0;
+							case CMD_PANNING8:
+								return 1;
+							case CMD_ARPEGGIO:
+							case CMD_VIBRATO:
+							case CMD_TREMOLO:
+								return 2;
+							case CMD_VOLUMESLIDE:
+							case CMD_VOLUMEDOWN_DURATION:
+								return 3;
+							case CMD_PORTAMENTOUP:
+							case CMD_PORTAMENTODOWN:
+							case CMD_TONEPORTAMENTO:
+							case CMD_TONEPORTAVOL:
+								return 4;
+							case CMD_PSG_NOISE:
+							case CMD_FM_LEVEL1:
+							case CMD_FM_LEVEL2:
+							case CMD_FM_LEVEL3:
+							case CMD_FM_LEVEL4:
+								return 5;
+							case CMD_SPEED:
+							case CMD_TEMPO:
+							case CMD_POSITIONJUMP:
+							case CMD_PATTERNBREAK:
+								return 6;
+							default:
+								return 3;
+							}
+						};
+						const bool replaceLocal = command != CMD_NONE && cell.command != CMD_NONE
+							&& priority(command) > priority(cell.command);
+						// Панораму, проигравшую борьбу за колонку, ещё можно
+						// сохранить в колонке громкости.
+						if(replaceLocal && cell.command == CMD_PANNING8 && cell.volcmd == VOLCMD_NONE)
+						{
+							cell.volcmd = VOLCMD_PANNING;
+							cell.vol = static_cast<ModCommand::VOL>((cell.param + 2) / 4);
+						}
 						if(command != CMD_NONE && (cell.command == CMD_NONE || replaceLocal))
 						{
-							unsupported += replaceLocal;
+							unsupported += replaceLocal && cell.volcmd != VOLCMD_PANNING;
 							cell.command = command;
 							cell.param = argument;
 						} else if(fx != 0 || value)

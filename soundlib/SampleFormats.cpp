@@ -10,6 +10,7 @@
 
 #include "stdafx.h"
 #include "ITTools.h"
+#include "ChipSampleIO.h"
 #include "Loaders.h"
 #include "mod_specifications.h"
 #include "S3MTools.h"
@@ -2345,14 +2346,42 @@ bool CSoundFile::ReadITSSample(SAMPLEINDEX nSample, FileReader &file, bool rewin
 	DestroySampleThreadsafe(nSample);
 
 	ModSample &sample = Samples[nSample];
+	// Код конверсии нативного чипа подменяется на штатный до разбора заголовка:
+	// иначе ConvertToMPT не поставит флаг OPL и патч читать будет нечем.
+	const uint8 chipFormat = sampleHeader.cvt;
+	if(chipFormat == FmtOPN2Sample || chipFormat == FmtOPMSample || chipFormat == FmtPSGSample)
+		sampleHeader.cvt = ITSample::cvtOPLInstrument;
 	file.Seek(sampleHeader.ConvertToMPT(sample));
 	m_szNames[nSample] = mpt::String::ReadBuf(mpt::String::spacePaddedNull, sampleHeader.name);
 
 	if(sample.uFlags[CHN_ADLIB])
 	{
-		OPLPatch patch;
-		file.ReadArray(patch);
-		sample.SetAdlib(true, patch);
+		// Патч нативного чипа помечен своим кодом конверсии и лежит на месте
+		// данных сэмпла, как и в модуле. Без этой ветки сохранённый инструмент
+		// YM2612 возвращался обычным OPL с мусором вместо патча.
+		if(chipFormat == FmtPSGSample)
+		{
+			if(auto patch = ReadPSGPatch(file); patch)
+			{
+				sample.SetAdlib(true);
+				sample.psg = std::move(patch);
+			}
+		} else if(chipFormat == FmtOPN2Sample || chipFormat == FmtOPMSample)
+		{
+			OPN2Patch patch;
+			if(file.ReadArray(patch))
+			{
+				sample.SetAdlib(true);
+				sample.opn2 = patch;
+				sample.isOPN2 = true;
+				sample.isOPM = chipFormat == FmtOPMSample;
+			}
+		} else
+		{
+			OPLPatch patch;
+			file.ReadArray(patch);
+			sample.SetAdlib(true, patch);
+		}
 		InitOPL();
 		if(!SupportsOPL())
 		{
@@ -2496,6 +2525,40 @@ bool CSoundFile::ReadITIInstrument(INSTRUMENTINDEX nInstr, FileReader &file)
 
 #ifndef MODPLUG_NO_FILESAVE
 
+// Отдельный файл сэмпла в формате IT. Нужен для нативных чипов: штатный путь
+// сохранения принудительно выбирает S3I, а туда влезает только 12-байтовый
+// OPL-патч, поэтому патч YM2612 или PSG там терялся.
+bool CSoundFile::SaveITSSample(SAMPLEINDEX smp, std::ostream &f) const
+{
+	if(smp < 1 || smp > GetNumSamples())
+		return false;
+	const ModSample &sample = Samples[smp];
+	ITSample itss;
+	itss.ConvertToIT(sample, GetType(), false, false, false);
+	mpt::String::WriteBuf(mpt::String::nullTerminated, itss.name) = m_szNames[smp];
+
+	const bool isPSG = sample.psg != nullptr;
+	const bool isOPN2 = !isPSG && sample.isOPN2;
+	if(isPSG)
+		itss.cvt = FmtPSGSample;
+	else if(isOPN2)
+		itss.cvt = sample.isOPM ? FmtOPMSample : FmtOPN2Sample;
+
+	itss.samplepointer = sizeof(ITSample);
+	mpt::IO::Write(f, itss);
+
+	if(isPSG)
+		WritePSGPatch(f, *sample.psg);
+	else if(isOPN2)
+		mpt::IO::WriteRaw(f, sample.opn2.data(), sample.opn2.size());
+	else if(sample.uFlags[CHN_ADLIB])
+		mpt::IO::WriteRaw(f, sample.adlib.data(), sample.adlib.size());
+	else
+		itss.GetSampleFormat(0x0214).WriteSample(f, sample);
+	return true;
+}
+
+
 bool CSoundFile::SaveITIInstrument(INSTRUMENTINDEX nInstr, std::ostream &f, const mpt::PathString &filename, bool compress, bool allowExternal) const
 {
 	ITInstrument iti;
@@ -2544,13 +2607,32 @@ bool CSoundFile::SaveITIInstrument(INSTRUMENTINDEX nInstr, std::ostream &f, cons
 
 		mpt::String::WriteBuf(mpt::String::nullTerminated, itss.name) = m_szNames[smp];
 
+		// Патч нативного чипа помечается своим кодом конверсии и пишется явно.
+		// Штатный OPL-патч лежит в том же union, что и указатель на данные, и
+		// попадал в файл сам собой, а патч YM2612 — отдельное поле, поэтому без
+		// этой ветки инструмент сохранялся как OPL с мусором вместо патча.
+		const ModSample &chipSample = Samples[smp];
+		const bool isPSG = chipSample.psg != nullptr;
+		const bool isOPN2 = !isPSG && chipSample.isOPN2;
+		if(isPSG)
+			itss.cvt = FmtPSGSample;
+		else if(isOPN2)
+			itss.cvt = chipSample.isOPM ? FmtOPMSample : FmtOPN2Sample;
+
 		itss.samplepointer = filePos;
 		mpt::IO::Write(f, itss);
 
 		// Write sample
 		auto curPos = mpt::IO::TellWrite(f);
 		mpt::IO::SeekAbsolute(f, filePos);
-		if(!isExternal)
+		if(isPSG)
+		{
+			filePos += mpt::saturate_cast<uint32>(WritePSGPatch(f, *chipSample.psg));
+		} else if(isOPN2)
+		{
+			mpt::IO::WriteRaw(f, chipSample.opn2.data(), chipSample.opn2.size());
+			filePos += mpt::saturate_cast<uint32>(chipSample.opn2.size());
+		} else if(!isExternal)
 		{
 			filePos += mpt::saturate_cast<uint32>(itss.GetSampleFormat(0x0214).WriteSample(f, Samples[smp]));
 		} else

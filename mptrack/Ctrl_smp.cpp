@@ -1471,7 +1471,7 @@ void CCtrlSamples::SaveSample(bool doBatchSave)
 {
 	mpt::PathString fileName, defaultPath = TrackerSettings::Instance().PathSamples.GetWorkingDir();
 	SampleEditorDefaultFormat defaultFormat = TrackerSettings::Instance().m_defaultSampleFormat;
-	bool hasAdlib = false;
+	bool hasAdlib = false, hasNativeChip = false;
 
 	if(!doBatchSave)
 	{
@@ -1504,6 +1504,7 @@ void CCtrlSamples::SaveSample(bool doBatchSave)
 		else if(!mpt::PathCompareNoCase(ext, P_(".16svx"))) defaultFormat = dfIFF;
 
 		hasAdlib = sample.uFlags[CHN_ADLIB];
+		hasNativeChip = sample.isOPN2 || sample.psg != nullptr;
 	} else
 	{
 		// Save all samples
@@ -1541,6 +1542,9 @@ void CCtrlSamples::SaveSample(bool doBatchSave)
 	// Do we have to use a format that can save OPL instruments?
 	if(hasAdlib)
 		filter = 3;
+	// Патч нативного чипа в S3I не влезает: там место только под OPL.
+	if(hasNativeChip)
+		filter = 6;
 
 	FileDialog dlg = SaveFileDialog()
 		.DefaultExtension(ToSettingValue(defaultFormat).as<mpt::ustring>())
@@ -1549,7 +1553,8 @@ void CCtrlSamples::SaveSample(bool doBatchSave)
 			"FLAC File (*.flac)|*.flac|"
 			"S3I Scream Tracker 3 Instrument (*.s3i)|*.s3i|"
 			"IFF (8SVX / 16SVX) (*.iff)|*.iff;*.8sv;*.8svx;*.16sv;*.16svx|"
-			"RAW Audio (*.raw)|*.raw||")
+			"RAW Audio (*.raw)|*.raw|"
+			"IT Sample with chip patch (*.its)|*.its||")
 			.WorkingDirectory(defaultPath)
 			.FilterIndex(&filter);
 	if(!dlg.Show(this)) return;
@@ -1574,6 +1579,7 @@ void CCtrlSamples::SaveSample(bool doBatchSave)
 		if(sample.HasSampleData())
 		{
 			const bool isAdlib = sample.uFlags[CHN_ADLIB];
+			const bool isNativeChip = sample.isOPN2 || sample.psg != nullptr;
 
 			fileName = dlg.GetFirstFile();
 			if(doBatchSave)
@@ -1590,7 +1596,9 @@ void CCtrlSamples::SaveSample(bool doBatchSave)
 				fileName = mpt::PathString::FromUnicode(fileNameU);
 
 				// Need to enforce S3I for Adlib samples
-				if(isAdlib && saveFormat != dfS3I)
+				if(isNativeChip)
+					fileName = fileName.ReplaceExtension(P_(".its"));
+				else if(isAdlib && saveFormat != dfS3I)
 					fileName = fileName.ReplaceExtension(P_(".s3i"));
 			}
 
@@ -1607,7 +1615,11 @@ void CCtrlSamples::SaveSample(bool doBatchSave)
 
 				// Need to enforce S3I for Adlib samples
 				const auto thisFormat = isAdlib ? dfS3I : saveFormat;
-				if(thisFormat == dfRAW)
+				// Патч нативного чипа умеет сохранить только файл IT: в S3I есть
+				// место лишь под двенадцать байт OPL.
+				if(isNativeChip)
+					ok = m_sndFile.SaveITSSample(smp, f);
+				else if(thisFormat == dfRAW)
 					ok = m_sndFile.SaveRAWSample(smp, f);
 				else if(thisFormat == dfFLAC)
 					ok = m_sndFile.SaveFLACSample(smp, f);
