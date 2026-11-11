@@ -360,7 +360,10 @@ public:
 		if(!slot)
 			return false;
 		KeyOn(*chip, index, false);
-		slot->volume = slot->modVolume = 0;
+		// Only the output volume is silenced here. The modulator level is the mixer's
+		// "cutoff doubles as modulator intensity" control, which ordinary modules never
+		// write, so zeroing it would strip the FM timbre for good after the first cut.
+		slot->volume = 0;
 		WriteLevels(*chip, index);
 		if(unassign)
 			slot->channel = CHANNELINDEX_INVALID;
@@ -427,11 +430,17 @@ public:
 		Slot *slot = Find(channel, &chip, &index);
 		if(!slot)
 			return false;
+		// The mixer reuses filter cutoff as "modulator intensity", which is well defined
+		// for the OPL's single modulator and carrier. These chips chain up to three
+		// modulators per algorithm, where attenuating all of them by the same amount is
+		// not the same thing, so the request is accepted and ignored, as before.
+		// Mapping cutoff onto a four operator patch needs its own work.
+		if(applyToModulator)
+			return true;
 		const uint8 clamped = std::min<uint8>(volume, 63);
-		uint8 &target = applyToModulator ? slot->modVolume : slot->volume;
-		if(target != clamped)
+		if(slot->volume != clamped)
 		{
-			target = clamped;
+			slot->volume = clamped;
 			WriteLevels(*chip, index);
 		}
 		return true;
