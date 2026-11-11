@@ -766,5 +766,31 @@ public:
 using TEMPO = FPInt<10000, uint32>;
 
 using OPLPatch = std::array<uint8, 12>;
+// Algorithm/feedback register followed by seven operator registers per operator.
+// Operator order is 1, 2, 3, 4, independent of the chip's register ordering.
+struct PSGSequence
+{
+	std::vector<int32> values;
+	uint8 loop = 255, release = 255, delay = 0, speed = 1;
+	bool relative = false, instantRelease = false;
+};
+
+struct PSGPatch
+{
+	enum Macro { Volume, Arpeggio, Duty, Pitch, Reset, Count };
+	std::array<PSGSequence, Count> macros;
+	uint16 mixGain = 256;  // 8.8 fixed point
+	uint8 lane = 0, chip = 0;
+	bool easyPitch = true, resetNoise = true, furnacePitch = false;
+};
+
+using OPN2Patch = std::array<uint8, 1 + 4 * 7>;
+inline constexpr OPN2Patch DefaultOPN2Patch = {
+  0x20,
+  0x01, 32, 0x1F, 0x0C, 0x03, 0x48, 0,
+  0x01, 24, 0x1F, 0x0C, 0x04, 0x48, 0,
+  0x02, 32, 0x1F, 0x0E, 0x04, 0x48, 0,
+  0x01,  8, 0x1F, 0x0A, 0x03, 0x38, 0,
+};
 
 OPENMPT_NAMESPACE_END

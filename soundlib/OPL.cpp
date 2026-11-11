@@ -10,6 +10,9 @@
 
 #include "stdafx.h"
 #include "OPL.h"
+#include "OPN2.h"
+#include "SN76489.h"
+#include "ModSample.h"
 #include "../common/misc_util.h"
 
 #include <cstdint>
@@ -45,6 +48,11 @@ OPL::~OPL()
 
 void OPL::Initialize(uint32 sampleRate)
 {
+	m_sampleRate = sampleRate;
+	if(m_psg)
+		m_psg->SetSampleRate(sampleRate);
+	if(m_opn2)
+		m_opn2->SetSampleRate(sampleRate);
 	if(m_opl == nullptr)
 		m_opl = std::make_unique<Opal>(sampleRate);
 	else
@@ -53,8 +61,12 @@ void OPL::Initialize(uint32 sampleRate)
 }
 
 
-void OPL::Mix(int32 *target, size_t count, uint32 volumeFactorQ16)
+void OPL::Mix(int32 *target, size_t count, uint32 volumeFactorQ16, const ModChannel *channels)
 {
+	if(m_psg)
+		m_psg->Mix(target, count, volumeFactorQ16, channels);
+	if(m_opn2)
+		m_opn2->Mix(target, count, volumeFactorQ16, channels);
 	if(!m_isActive)
 		return;
 
@@ -146,6 +158,10 @@ uint8 OPL::AllocateVoice(CHANNELINDEX c)
 
 void OPL::MoveChannel(CHANNELINDEX from, CHANNELINDEX to)
 {
+	if(m_psg && m_psg->MoveChannel(from, to))
+		return;
+	if(m_opn2 && m_opn2->MoveChannel(from, to))
+		return;
 	uint8 oplCh = GetVoice(from);
 	if(oplCh == OPL_CHANNEL_INVALID)
 		return;
@@ -159,6 +175,10 @@ void OPL::MoveChannel(CHANNELINDEX from, CHANNELINDEX to)
 
 void OPL::NoteOff(CHANNELINDEX c)
 {
+	if(m_psg && m_psg->NoteOff(c))
+		return;
+	if(m_opn2 && m_opn2->NoteOff(c))
+		return;
 	uint8 oplCh = GetVoice(c);
 	if(oplCh == OPL_CHANNEL_INVALID || m_opl == nullptr)
 		return;
@@ -171,6 +191,10 @@ void OPL::NoteOff(CHANNELINDEX c)
 
 void OPL::NoteCut(CHANNELINDEX c, bool unassign)
 {
+	if(m_psg && m_psg->NoteCut(c, unassign))
+		return;
+	if(m_opn2 && m_opn2->NoteCut(c, unassign))
+		return;
 	uint8 oplCh = GetVoice(c);
 	if(oplCh == OPL_CHANNEL_INVALID)
 		return;
@@ -186,6 +210,10 @@ void OPL::NoteCut(CHANNELINDEX c, bool unassign)
 
 void OPL::Frequency(CHANNELINDEX c, uint32 milliHertz, bool keyOff, bool beatingOscillators)
 {
+	if(m_psg && m_psg->Frequency(c, milliHertz, keyOff))
+		return;
+	if(m_opn2 && m_opn2->Frequency(c, milliHertz, keyOff))
+		return;
 	uint8 oplCh = GetVoice(c);
 	if(oplCh == OPL_CHANNEL_INVALID || m_opl == nullptr)
 		return;
@@ -236,6 +264,10 @@ uint8 OPL::CalcVolume(uint8 trackerVol, uint8 kslVolume)
 
 void OPL::Volume(CHANNELINDEX c, uint8 vol, bool applyToModulator)
 {
+	if(m_psg && m_psg->Volume(c, vol, applyToModulator))
+		return;
+	if(m_opn2 && m_opn2->Volume(c, vol, applyToModulator))
+		return;
 	uint8 oplCh = GetVoice(c);
 	if(oplCh == OPL_CHANNEL_INVALID || m_opl == nullptr)
 		return;
@@ -256,6 +288,10 @@ void OPL::Volume(CHANNELINDEX c, uint8 vol, bool applyToModulator)
 
 int8 OPL::Pan(CHANNELINDEX c, int32 pan)
 {
+	if(m_psg && m_psg->Pan(c, pan))
+		return static_cast<int8>(pan <= 84 ? -1 : pan >= 171 ? 1 : 0);
+	if(m_opn2 && m_opn2->Pan(c, pan))
+		return static_cast<int8>(pan <= 84 ? -1 : pan >= 171 ? 1 : 0);
 	uint8 oplCh = GetVoice(c);
 	if(oplCh == OPL_CHANNEL_INVALID || m_opl == nullptr)
 		return 0;
@@ -298,8 +334,69 @@ void OPL::Patch(CHANNELINDEX c, const OPLPatch &patch)
 }
 
 
+void OPL::Patch(CHANNELINDEX c, const ModSample &sample)
+{
+	if(sample.psg)
+	{
+		if(m_logger)
+			return;
+		if(!m_psg)
+			m_psg = std::make_unique<SN76489>(m_sampleRate);
+		if(!m_psg->HasChannel(c))
+			NoteCut(c);
+		m_psg->Patch(c, sample.psg);
+		return;
+	}
+	if(m_psg)
+		m_psg->NoteCut(c, true);
+	if(sample.isOPN2)
+	{
+		if(m_logger)
+			return;
+		if(!m_opn2)
+			m_opn2 = std::make_unique<OPN2>(m_sampleRate);
+		if(GetVoice(c) != OPL_CHANNEL_INVALID)
+		{
+			// Stop an OPL voice before assigning this tracker channel to OPN2.
+			if(!m_opn2->HasChannel(c))
+				NoteCut(c);
+		}
+		m_opn2->Patch(c, sample.opn2, sample.isOPM);
+	} else
+	{
+		if(m_opn2)
+			m_opn2->NoteCut(c, true);
+		Patch(c, sample.adlib);
+	}
+}
+
+
+bool OPL::IsActive(CHANNELINDEX c) const
+{
+	return (m_psg && m_psg->HasChannel(c)) || (m_opn2 && m_opn2->HasChannel(c)) || GetVoice(c) != OPL_CHANNEL_INVALID;
+}
+
+
+void OPL::FMOperatorLevel(CHANNELINDEX c, uint8 op, uint8 level)
+{
+	if(m_opn2)
+		m_opn2->OperatorLevel(c, op, level);
+}
+
+
+void OPL::PSGNoiseMode(CHANNELINDEX c, uint8 mode)
+{
+	if(m_psg)
+		m_psg->NoiseMode(c, mode);
+}
+
+
 void OPL::Reset()
 {
+	if(m_psg)
+		m_psg->Reset();
+	if(m_opn2)
+		m_opn2->Reset();
 	if(m_isActive)
 	{
 		for(CHANNELINDEX chn = 0; chn < MAX_CHANNELS; chn++)

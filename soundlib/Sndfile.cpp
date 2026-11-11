@@ -198,6 +198,7 @@ void CSoundFile::InitializeGlobals(MODTYPE type, CHANNELINDEX numChannels)
 	m_nSamples = 0;
 	m_nSamplePreAmp = 48;
 	m_nVSTiVolume = 48;
+	m_furnaceSlides = 0;
 	m_OPLVolumeFactor = m_OPLVolumeFactorScale;
 	m_nDefaultGlobalVolume = MAX_GLOBAL_VOLUME;
 	m_SongFlags.reset();
@@ -294,6 +295,7 @@ static constexpr FileFormatLoader ModuleFormatLoaders[] =
 	MPT_DECLARE_FORMAT(SymMOD),
 	MPT_DECLARE_FORMAT(MUS_KM),
 	MPT_DECLARE_FORMAT(FMT),
+	MPT_DECLARE_FORMAT(FUR),
 	MPT_DECLARE_FORMAT(SFX),
 	MPT_DECLARE_FORMAT(STP),
 	MPT_DECLARE_FORMAT(DSym),
@@ -1371,6 +1373,17 @@ PlayBehaviourSet CSoundFile::GetDefaultPlaybackBehaviour(MODTYPE type)
 		break;
 	}
 	return playBehaviour;
+}
+
+
+bool CSoundFile::HasNativeChipSamples() const
+{
+	if(m_furnaceSlides)
+		return true;
+	for(SAMPLEINDEX smp = 1; smp <= GetNumSamples(); smp++)
+		if((Samples[smp].isOPN2 || Samples[smp].psg) && Samples[smp].uFlags[CHN_ADLIB])
+			return true;
+	return false;
 }
 
 

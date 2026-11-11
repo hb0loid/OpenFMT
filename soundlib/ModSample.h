@@ -52,6 +52,11 @@ struct ModSample
 		OPLPatch adlib;
 	};
 
+	OPN2Patch opn2{};
+	bool isOPN2 = false;  // Four-operator Yamaha patch uses the native FM mixer.
+	bool isOPM = false;
+	std::shared_ptr<const PSGPatch> psg;
+
 	ModSample(MODTYPE type = MOD_TYPE_NONE)
 	{
 		pData.pSample = nullptr;

@@ -119,6 +119,11 @@ enum EffectCommand : uint8
 	CMD_TONEPORTA_DURATION  = 55, // Parameter = how many rows the slide should last
 	CMD_VOLUMEDOWN_DURATION = 56, // Parameter = how many rows the slide should last
 	CMD_VOLUMEDOWN_ETX      = 57, // EasyTrax fade-out (parameter = speed, independent of song tempo)
+	CMD_PSG_NOISE           = 58,
+	CMD_FM_LEVEL1          = 59,
+	CMD_FM_LEVEL2          = 60,
+	CMD_FM_LEVEL3          = 61,
+	CMD_FM_LEVEL4          = 62,
 	MAX_EFFECTS
 };
 

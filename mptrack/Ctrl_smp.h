@@ -160,6 +160,8 @@ protected:
 	afx_msg void OnEstimateSampleSize();
 
 	afx_msg void OnInitOPLInstrument();
+	afx_msg void OnInitOPN2Instrument();
+	void InitFMInstrument(bool opn2);
 
 	MPT_ATTR_NOINLINE MPT_DECL_NOINLINE void SetModified(SAMPLEINDEX smp, SampleHint hint, bool updateAll, bool waveformModified);
 	void SetModified(SampleHint hint, bool updateAll, bool waveformModified) { SetModified(m_nSample, hint, updateAll, waveformModified); }

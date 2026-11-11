@@ -494,6 +494,16 @@ public:
 	ORDERINDEX m_lockOrderStart = ORDERINDEX_INVALID, m_lockOrderEnd = ORDERINDEX_INVALID;
 #endif // MODPLUG_TRACKER
 
+	enum FurnaceSlideFlag : uint16
+	{
+		FurnaceSlideSpeedMask = 0xff,
+		FurnaceSkipFirstTick = 1 << 8,
+		FurnaceStopAtTarget = 1 << 9,
+		FurnaceStopOnNoteOff = 1 << 10,
+		FurnaceLimitSlides = 1 << 11,
+		FurnaceIgnoreSameNote = 1 << 12,
+	};
+	uint16 m_furnaceSlides = 0;
 	uint32 m_nSamplePreAmp, m_nVSTiVolume;
 	uint32 m_OPLVolumeFactor;  // 16.16
 	static constexpr uint32 m_OPLVolumeFactorScale = 1 << 16;
@@ -806,6 +816,7 @@ public:
 	static ProbeResult ProbeFileHeaderFAR(MemoryFileReader file, const uint64 *pfilesize);
 	static ProbeResult ProbeFileHeaderFC(MemoryFileReader file, const uint64 *pfilesize);
 	static ProbeResult ProbeFileHeaderFMT(MemoryFileReader file, const uint64 *pfilesize);
+	static ProbeResult ProbeFileHeaderFUR(MemoryFileReader file, const uint64 *pfilesize);
 	static ProbeResult ProbeFileHeaderFTM(MemoryFileReader file, const uint64 *pfilesize);
 	static ProbeResult ProbeFileHeaderGDM(MemoryFileReader file, const uint64 *pfilesize);
 	static ProbeResult ProbeFileHeaderGMC(MemoryFileReader file, const uint64 *pfilesize);
@@ -873,6 +884,7 @@ public:
 	bool ReadFAR(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
 	bool ReadFC(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
 	bool ReadFMT(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
+	bool ReadFUR(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
 	bool ReadFTM(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
 	bool ReadGDM(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
 	bool ReadGMC(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
@@ -932,7 +944,7 @@ public:
 	bool SaveXM(std::ostream &f, bool compatibilityExport = false);
 	bool SaveS3M(std::ostream &f) const;
 	bool SaveMod(std::ostream &f) const;
-	bool SaveIT(std::ostream &f, const mpt::PathString &filename, bool compatibilityExport = false);
+	bool SaveIT(std::ostream &f, const mpt::PathString &filename, bool compatibilityExport = false, bool fmt = false);
 	uint32 SaveMixPlugins(std::ostream *file=nullptr, bool bUpdate=true);
 	void SaveExtendedInstrumentProperties(INSTRUMENTINDEX instr, MODTYPE forceType, std::ostream &f) const;
 	static void SaveExtendedInstrumentProperties(mpt::span<const ModInstrument * const> instruments, MODTYPE forceType, std::ostream &f, bool allInstruments);
@@ -956,6 +968,7 @@ public:
 
 	// MOD Convert function
 	MODTYPE GetBestSaveFormat() const;
+	bool HasNativeChipSamples() const;
 	static void ConvertModCommand(ModCommand &m, const uint8 command, const uint8 param);
 	static void S3MConvert(ModCommand &m, const uint8 command, const uint8 param, const bool fromIT);
 	void S3MSaveConvert(const ModCommand &source, uint8 &command, uint8 &param, const bool toIT, const bool compatibilityExport = false) const;
@@ -1081,6 +1094,8 @@ protected:
 	// Channel Effects
 	void ResetAutoSlides(ModChannel &chn) const;
 	void ProcessAutoSlides(PlayState &playState, CHANNELINDEX channel);
+	bool IsFurnaceTonePorta(const ModChannel &chn, const ModCommand &m) const;
+	void ProcessFurnaceSlide(ModChannel &chn, ModCommand::COMMAND cmd, uint8 param, bool newRow) const;
 	void UpdateS3MEffectMemory(ModChannel &chn, ModCommand::PARAM param) const;
 	void PortamentoFC(ModChannel &chn) const;
 	void PortamentoUp(CHANNELINDEX nChn, ModCommand::PARAM param, const bool doFinePortamentoAsRegular);

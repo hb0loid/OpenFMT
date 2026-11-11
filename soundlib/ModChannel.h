@@ -96,6 +96,13 @@ struct ModChannel
 	int32 nVolume, nPan, nFadeOutVol;
 	int32 nPeriod;  // Frequency in Hz if CSoundFile::PeriodsAreFrequencies() or using custom tuning, 4x Amiga periods otherwise
 	int32 nC5Speed, nPortamentoDest;
+	struct
+	{
+		ModCommand::COMMAND mode = CMD_NONE;
+		uint8 speed = 0, lastToneSpeed = 0;
+		int32 target = 0;
+		double precisePeriod = 0;
+	} furnaceSlide;
 	int32 cachedPeriod, glissandoPeriod;
 	int32 nCalcVolume;                 // Calculated channel volume, 14-Bit (without global volume, pre-amp etc applied) - for MIDI macros
 	EnvInfo VolEnv, PanEnv, PitchEnv;  // Envelope playback info

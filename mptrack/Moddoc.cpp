@@ -69,11 +69,20 @@ const TCHAR FileFilterMOD[]	= _T("ProTracker Modules (*.mod)|*.mod||");
 const TCHAR FileFilterXM[]	= _T("FastTracker Modules (*.xm)|*.xm||");
 const TCHAR FileFilterS3M[] = _T("Scream Tracker Modules (*.s3m)|*.s3m||");
 const TCHAR FileFilterIT[]	= _T("Impulse Tracker Modules (*.it)|*.it||");
-const TCHAR FileFilterMPT[] = _T("OpenMPT Modules (*.mptm)|*.mptm||");
+const TCHAR FileFilterMPT[] = _T("OpenMPT Modules (*.mptm)|*.mptm|Native Chip Modules (*.fmt)|*.fmt||");
+const TCHAR FileFilterFMT[] = _T("Native Chip Modules (*.fmt)|*.fmt||");
 const TCHAR FileFilterNone[] = _T("");
+
+static bool IsFMTPath(const mpt::PathString &filename)
+{
+	return !mpt::PathCompareNoCase(filename.GetFilenameExtension(), P_(".fmt"));
+}
+
 
 const CString ModTypeToFilter(const CSoundFile& sndFile)
 {
+	if(sndFile.HasNativeChipSamples())
+		return FileFilterFMT;
 	const MODTYPE modtype = sndFile.GetType();
 	switch(modtype)
 	{
@@ -374,6 +383,9 @@ bool CModDoc::OnSaveDocument(const mpt::PathString &filename, const bool setPath
 
 bool CModDoc::SaveFile(const mpt::PathString &filename, bool allowRelativeSamplePaths)
 {
+	const bool fmt = IsFMTPath(filename);
+	if((fmt && m_SndFile.GetType() != MOD_TYPE_MPT) || (!fmt && m_SndFile.HasNativeChipSamples()))
+		return false;
 	try
 	{
 		mpt::IO::SafeOutputFile sf(filename, std::ios::binary, mpt::IO::FlushModeFromBool(TrackerSettings::Instance().MiscFlushFileBuffersOnSave));
@@ -389,7 +401,7 @@ bool CModDoc::SaveFile(const mpt::PathString &filename, bool allowRelativeSample
 		case MOD_TYPE_S3M: return m_SndFile.SaveS3M(f);
 		case MOD_TYPE_XM:  return m_SndFile.SaveXM(f);
 		case MOD_TYPE_IT:  return m_SndFile.SaveIT(f, allowRelativeSamplePaths ? filename : mpt::PathString{});
-		case MOD_TYPE_MPT: return m_SndFile.SaveIT(f, allowRelativeSamplePaths ? filename : mpt::PathString{});
+		case MOD_TYPE_MPT: return m_SndFile.SaveIT(f, allowRelativeSamplePaths ? filename : mpt::PathString{}, false, fmt);
 		default: MPT_ASSERT_NOTREACHED();
 		}
 	} catch(const std::exception &)
@@ -487,7 +499,9 @@ void CModDoc::DeleteContents()
 BOOL CModDoc::DoSave(const mpt::PathString &filename, bool setPath)
 {
 	const mpt::PathString docFileName = GetPathNameMpt();
-	const mpt::ustring defaultExtension = m_SndFile.GetModSpecifications().GetFileExtension();
+	const bool hasNativeChips = m_SndFile.HasNativeChipSamples();
+	const bool isMPT = m_SndFile.GetType() == MOD_TYPE_MPT;
+	const mpt::ustring defaultExtension = (hasNativeChips || (isMPT && IsFMTPath(docFileName))) ? U_("fmt") : m_SndFile.GetModSpecifications().GetFileExtension();
 
 	switch(m_SndFile.GetBestSaveFormat())
 	{
@@ -513,7 +527,7 @@ BOOL CModDoc::DoSave(const mpt::PathString &filename, bool setPath)
 
 	mpt::PathString saveFileName;
 
-	if(filename.empty() || m_ShowSavedialog)
+	if(filename.empty() || m_ShowSavedialog || (hasNativeChips && !IsFMTPath(filename)) || (!isMPT && IsFMTPath(filename)))
 	{
 		mpt::PathString drive = docFileName.GetDrive();
 		mpt::PathString dir = docFileName.GetDirectory();
@@ -537,6 +551,12 @@ BOOL CModDoc::DoSave(const mpt::PathString &filename, bool setPath)
 	} else
 	{
 		saveFileName = filename;
+	}
+
+	if(hasNativeChips && !IsFMTPath(saveFileName))
+	{
+		Reporting::Error(U_("Native chip instruments require a .fmt module."));
+		return FALSE;
 	}
 
 	// Do we need to create a backup file ?
@@ -1111,7 +1131,7 @@ CHANNELINDEX CModDoc::PlayNote(PlayNoteParam &params, NoteToChannelMap *noteChan
 
 		if(chn.dwFlags[CHN_ADLIB] && chn.pModSample && m_SndFile.m_opl)
 		{
-			m_SndFile.m_opl->Patch(channel, chn.pModSample->adlib);
+			m_SndFile.m_opl->Patch(channel, *chn.pModSample);
 		}
 
 		m_SndFile.NoteChange(chn, note, false, true, true, channel);
@@ -3236,13 +3256,12 @@ void CModDoc::UpdateOPLInstrument(SAMPLEINDEX smp)
 		return;
 
 	CriticalSection cs;
-	const auto &patch = sample.adlib;
 	for(CHANNELINDEX chn = 0; chn < MAX_CHANNELS; chn++)
 	{
 		const auto &c = m_SndFile.m_PlayState.Chn[chn];
 		if(c.pModSample == &sample && c.IsSamplePlaying())
 		{
-			m_SndFile.m_opl->Patch(chn, patch);
+			m_SndFile.m_opl->Patch(chn, sample);
 		}
 	}
 }

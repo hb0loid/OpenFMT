@@ -137,6 +137,11 @@ static constexpr MPTEffectInfo gFXInfo[] =
 	{CMD_TONEPORTA_DURATION, 0, 0, 0, MOD_TYPE_NONE, _T("Tone Portamento with Duration")},
 	{CMD_VOLUMEDOWN_DURATION, 0, 0, 0, MOD_TYPE_NONE, _T("Channel Volume Down with Duration")},
 	{CMD_VOLUMEDOWN_ETX, 0, 0, 0, MOD_TYPE_NONE, _T("ETX Volume Slide Down")},
+	{CMD_PSG_NOISE, 0, 0, 3, MOD_TYPE_MPT, _T("SN76489 Noise Mode")},
+	{CMD_FM_LEVEL1, 0, 0, 127, MOD_TYPE_MPT, _T("FM Operator 1 Level")},
+	{CMD_FM_LEVEL2, 0, 0, 127, MOD_TYPE_MPT, _T("FM Operator 2 Level")},
+	{CMD_FM_LEVEL3, 0, 0, 127, MOD_TYPE_MPT, _T("FM Operator 3 Level")},
+	{CMD_FM_LEVEL4, 0, 0, 127, MOD_TYPE_MPT, _T("FM Operator 4 Level")},
 };
 
 

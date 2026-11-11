@@ -38,6 +38,7 @@ void ModChannel::Reset(ResetFlags resetMask, const CSoundFile &sndFile, CHANNELI
 		dwFlags.set(CHN_KEYOFF | CHN_NOTEFADE);
 		dwOldFlags.reset();
 		autoSlide.Reset();
+		furnaceSlide = {};
 		nInsVol = 64;
 		nnaGeneration = 0;
 		//IT compatibility 15. Retrigger

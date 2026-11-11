@@ -1919,6 +1919,7 @@
     <ClCompile Include="..\..\soundlib\Load_far.cpp" />
     <ClCompile Include="..\..\soundlib\Load_fc.cpp" />
     <ClCompile Include="..\..\soundlib\Load_fmt.cpp" />
+    <ClCompile Include="..\..\soundlib\Load_fur.cpp" />
     <ClCompile Include="..\..\soundlib\Load_ftm.cpp" />
     <ClCompile Include="..\..\soundlib\Load_gdm.cpp" />
     <ClCompile Include="..\..\soundlib\Load_gmc.cpp" />
@@ -1973,6 +1974,10 @@
     <ClCompile Include="..\..\soundlib\ModSample.cpp" />
     <ClCompile Include="..\..\soundlib\ModSequence.cpp" />
     <ClCompile Include="..\..\soundlib\OPL.cpp" />
+    <ClCompile Include="..\..\include\ymfm\ymfm_opn.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClCompile Include="..\..\include\ymfm\ymfm_opm.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClCompile Include="..\..\include\ymfm\ymfm_adpcm.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClCompile Include="..\..\include\ymfm\ymfm_ssg.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="..\..\soundlib\OggStream.cpp" />
     <ClCompile Include="..\..\soundlib\Paula.cpp" />
     <ClCompile Include="..\..\soundlib\PlayState.cpp" />

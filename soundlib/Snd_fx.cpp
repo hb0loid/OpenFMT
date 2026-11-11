@@ -163,17 +163,19 @@ public:
 				switch(command)
 				{
 				case CMD_TONEPORTAMENTO:
-					sndFile.TonePortamento(*state, channel, m.param);
+					if(!sndFile.m_furnaceSlides)
+						sndFile.TonePortamento(*state, channel, m.param);
 					break;
 				case CMD_TONEPORTAVOL:
-					sndFile.TonePortamento(*state, channel, 0);
+					if(!sndFile.m_furnaceSlides)
+						sndFile.TonePortamento(*state, channel, 0);
 					break;
 				case CMD_PORTAMENTOUP:
-					if(m.param || !(sndFile.GetType() & MOD_TYPE_MOD))
+					if(!sndFile.m_furnaceSlides && (m.param || !(sndFile.GetType() & MOD_TYPE_MOD)))
 						sndFile.PortamentoUp(*state, channel, m.param, false);
 					break;
 				case CMD_PORTAMENTODOWN:
-					if(m.param || !(sndFile.GetType() & MOD_TYPE_MOD))
+					if(!sndFile.m_furnaceSlides && (m.param || !(sndFile.GetType() & MOD_TYPE_MOD)))
 						sndFile.PortamentoDown(*state, channel, m.param, false);
 					break;
 				case CMD_MODCMDEX:
@@ -200,6 +202,8 @@ public:
 					break;
 				}
 
+				if(sndFile.m_furnaceSlides)
+					sndFile.ProcessFurnaceSlide(chn, command, m.param, i == portaStart);
 				if(chn.autoSlide.IsActive(AutoSlideCommand::TonePortamento) && !chn.rowCommand.IsTonePortamento())
 					sndFile.TonePortamento(*state, channel, chn.portamentoSlide);
 				else if(chn.autoSlide.IsActive(AutoSlideCommand::TonePortamentoWithDuration))
@@ -1093,7 +1097,7 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 
 				uint32 paramHi = m.param >> 4, paramLo = m.param & 0x0F;
 				uint32 startTick = 0;
-				const bool porta = m.IsTonePortamento();
+				const bool porta = m_furnaceSlides ? IsFurnaceTonePorta(chn, m) : m.IsTonePortamento();
 				bool stopNote = false;
 
 				if(m.instr) chn.prevNoteOffset = 0;
@@ -1333,7 +1337,7 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 					if(chn.isPaused)
 						continue;
 
-					if(m.IsAnyPitchSlide() || chn.autoSlide.AnyPitchSlideActive())
+					if(m.IsAnyPitchSlide() || chn.autoSlide.AnyPitchSlideActive() || chn.furnaceSlide.mode != CMD_NONE)
 					{
 						// Portamento needs immediate syncing, as the pitch changes on each tick
 						uint32 portaTick = memory.chnSettings[nChn].ticksToRender + startTick;
@@ -1396,7 +1400,7 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 				}
 				if(!chn.dwFlags[CHN_MUTE | CHN_SYNCMUTE] && chn.pModSample != nullptr && chn.pModSample->uFlags[CHN_ADLIB] && m_opl)
 				{
-					m_opl->Patch(n, chn.pModSample->adlib);
+					m_opl->Patch(n, *chn.pModSample);
 					m_opl->NoteCut(n);
 				}
 				chn.pCurrentSample = nullptr;
@@ -1913,6 +1917,8 @@ void CSoundFile::NoteChange(ModChannel &chn, int note, bool bPorta, bool bResetE
 		// Note Cut
 		if (note == NOTE_NOTECUT)
 		{
+			if((m_furnaceSlides & FurnaceStopOnNoteOff) && chn.furnaceSlide.mode == CMD_TONEPORTAMENTO)
+				chn.furnaceSlide.mode = CMD_NONE;
 			if(chn.dwFlags[CHN_ADLIB] && GetType() == MOD_TYPE_S3M)
 			{
 				// OPL voices are not cut but enter the release portion of their envelope
@@ -2065,7 +2071,13 @@ void CSoundFile::NoteChange(ModChannel &chn, int note, bool bPorta, bool bResetE
 	if(!pSmp) return;
 	if(period)
 	{
-		if((!bPorta) || (!chn.nPeriod)) chn.nPeriod = period;
+		if((!bPorta) || (!chn.nPeriod))
+		{
+			chn.nPeriod = period;
+			chn.furnaceSlide.precisePeriod = period;
+			if(m_furnaceSlides && !bPorta && chn.furnaceSlide.mode == CMD_TONEPORTAMENTO)
+				chn.furnaceSlide.mode = CMD_NONE;
+		}
 		if(!newTuning)
 		{
 			// FT2 compatibility: Don't reset portamento target with new notes.
@@ -2643,7 +2655,7 @@ bool CSoundFile::ProcessEffects()
 		ModCommand::VOL vol = chn.rowCommand.vol;
 		ModCommand::COMMAND cmd = chn.rowCommand.command;
 		uint32 param = chn.rowCommand.param;
-		bool bPorta = chn.rowCommand.IsTonePortamento();
+		bool bPorta = m_furnaceSlides ? IsFurnaceTonePorta(chn, chn.rowCommand) : chn.rowCommand.IsTonePortamento();
 
 		uint32 nStartTick = 0;
 		chn.isFirstTick = m_PlayState.m_flags[SONG_FIRSTTICK];
@@ -3108,7 +3120,7 @@ bool CSoundFile::ProcessEffects()
 
 				if(!chn.dwFlags[CHN_MUTE | CHN_SYNCMUTE] && chn.pModSample != nullptr && chn.pModSample->uFlags[CHN_ADLIB] && m_opl)
 				{
-					m_opl->Patch(nChn, chn.pModSample->adlib);
+					m_opl->Patch(nChn, *chn.pModSample);
 				}
 
 				// IT compatibility: Keep new instrument number for next instrument-less note even if sample playback is stopped
@@ -3175,7 +3187,7 @@ bool CSoundFile::ProcessEffects()
 				}
 				if(!chn.dwFlags[CHN_MUTE | CHN_SYNCMUTE] && chn.pModSample != nullptr && chn.pModSample->uFlags[CHN_ADLIB] && m_opl && (instrChange || !m_opl->IsActive(nChn)))
 				{
-					m_opl->Patch(nChn, chn.pModSample->adlib);
+					m_opl->Patch(nChn, *chn.pModSample);
 				}
 
 				NoteChange(chn, note, bPorta, !(GetType() & (MOD_TYPE_XM | MOD_TYPE_MT2)), false, nChn);
@@ -3419,13 +3431,13 @@ bool CSoundFile::ProcessEffects()
 
 		// Portamento Up
 		case CMD_PORTAMENTOUP:
-			if(param || !(GetType() & MOD_TYPE_MOD))
+			if(!m_furnaceSlides && (param || !(GetType() & MOD_TYPE_MOD)))
 				PortamentoUp(nChn, static_cast<ModCommand::PARAM>(param), false);
 			break;
 
 		// Portamento Down
 		case CMD_PORTAMENTODOWN:
-			if(param || !(GetType() & MOD_TYPE_MOD))
+			if(!m_furnaceSlides && (param || !(GetType() & MOD_TYPE_MOD)))
 				PortamentoDown(nChn, static_cast<ModCommand::PARAM>(param), false);
 			break;
 
@@ -3458,7 +3470,8 @@ bool CSoundFile::ProcessEffects()
 
 		// Tone-Portamento
 		case CMD_TONEPORTAMENTO:
-			TonePortamento(nChn, static_cast<uint16>(param));
+			if(!m_furnaceSlides)
+				TonePortamento(nChn, static_cast<uint16>(param));
 			break;
 
 		// Tone-Portamento + Volume Slide
@@ -3471,7 +3484,8 @@ bool CSoundFile::ProcessEffects()
 				if(!chn.isFirstTick || !m_playBehaviour[kS3MIgnoreCombinedFineSlides])
 					VolumeSlide(chn, static_cast<ModCommand::PARAM>(param));
 			}
-			TonePortamento(nChn, 0);
+			if(!m_furnaceSlides)
+				TonePortamento(nChn, 0);
 			break;
 
 		// Vibrato
@@ -3853,6 +3867,19 @@ bool CSoundFile::ProcessEffects()
 				VolumeDownETX(m_PlayState, chn, static_cast<ModCommand::PARAM>(param));
 			break;
 
+		case CMD_PSG_NOISE:
+			if(chn.isFirstTick && m_opl)
+				m_opl->PSGNoiseMode(nChn, static_cast<uint8>(param & 3));
+			break;
+
+		case CMD_FM_LEVEL1:
+		case CMD_FM_LEVEL2:
+		case CMD_FM_LEVEL3:
+		case CMD_FM_LEVEL4:
+			if(chn.isFirstTick && m_opl)
+				m_opl->FMOperatorLevel(nChn, static_cast<uint8>(cmd - CMD_FM_LEVEL1), static_cast<uint8>(param & 127));
+			break;
+
 		case CMD_TONEPORTA_DURATION:
 			if(chn.rowCommand.IsNote() && triggerNote)
 				TonePortamentoWithDuration(chn, static_cast<ModCommand::PARAM>(param));
@@ -3878,6 +3905,8 @@ bool CSoundFile::ProcessEffects()
 			chn.nOldIns = chn.rowCommand.instr;
 		}
 
+		if(m_furnaceSlides)
+			ProcessFurnaceSlide(chn, cmd, static_cast<uint8>(param), triggerNote);
 		ProcessAutoSlides(m_PlayState, nChn);
 	} // for(...) end
 
@@ -3957,6 +3986,90 @@ bool CSoundFile::HandleNextRow(PlayState &state, const ModSequence &order, bool 
 	}
 
 	return breakToRow;
+}
+
+
+bool CSoundFile::IsFurnaceTonePorta(const ModChannel &chn, const ModCommand &m) const
+{
+	if(m.volcmd == VOLCMD_TONEPORTAMENTO)
+		return true;
+	if(!chn.nPeriod || chn.dwFlags[CHN_KEYOFF])
+		return false;
+	switch(m.command)
+	{
+	case CMD_TONEPORTAMENTO:
+		if(!m.param)
+			return false;
+		return !(m_furnaceSlides & FurnaceIgnoreSameNote)
+			|| m.note != chn.nNote || chn.furnaceSlide.mode == CMD_TONEPORTAMENTO;
+	case CMD_TONEPORTAVOL:
+		return m.param && chn.furnaceSlide.lastToneSpeed;
+	case CMD_PORTAMENTOUP:
+	case CMD_PORTAMENTODOWN:
+		return false;
+	default:
+		return chn.furnaceSlide.mode == CMD_TONEPORTAMENTO;
+	}
+}
+
+
+void CSoundFile::ProcessFurnaceSlide(ModChannel &chn, ModCommand::COMMAND cmd, uint8 param, bool newRow) const
+{
+	auto &slide = chn.furnaceSlide;
+	if(newRow)
+	{
+		switch(cmd)
+		{
+		case CMD_PORTAMENTOUP:
+		case CMD_PORTAMENTODOWN:
+			slide.mode = param ? cmd : CMD_NONE;
+			slide.speed = param;
+			break;
+		case CMD_TONEPORTAMENTO:
+		case CMD_TONEPORTAVOL:
+			if(cmd == CMD_TONEPORTAMENTO && param)
+				slide.lastToneSpeed = param;
+			slide.speed = param ? slide.lastToneSpeed : 0;
+			slide.mode = slide.speed ? CMD_TONEPORTAMENTO : CMD_NONE;
+			[[fallthrough]];
+		default:
+			if(slide.mode == CMD_TONEPORTAMENTO && (chn.rowCommand.IsNote() || cmd == CMD_TONEPORTAMENTO || cmd == CMD_TONEPORTAVOL))
+			{
+				slide.target = chn.rowCommand.IsNote() && chn.nPortamentoDest > 0
+					? chn.nPortamentoDest : GetPeriodFromNote(chn.nNote, chn.nFineTune, chn.nC5Speed);
+			}
+			break;
+		}
+	}
+
+	if(!slide.speed || slide.mode == CMD_NONE || chn.nPeriod <= 0 || ((m_furnaceSlides & FurnaceSkipFirstTick) && chn.isFirstTick))
+		return;
+
+	const bool frequency = PeriodsAreFrequencies();
+	double target = slide.target;
+	if(slide.mode != CMD_TONEPORTAMENTO)
+	{
+		// Furnace's note domain extends below and above OpenMPT's pattern note range.
+		const bool limited = (m_furnaceSlides & FurnaceLimitSlides) != 0;
+		const int note = slide.mode == CMD_PORTAMENTOUP ? (limited ? 156 : 179) : (limited ? 60 : 0);
+		const double middleC = GetPeriodFromNote(NOTE_MIDDLEC, chn.nFineTune, chn.nC5Speed);
+		const double octaves = (note - 108) / 12.0;
+		target = std::clamp(middleC * std::exp2(frequency ? octaves : -octaves), 1.0, double{int32_max});
+	}
+	if(target <= 0)
+		return;
+
+	// Furnace linear pitch uses 128 units per semitone. Keep the fractional part across ticks.
+	if(std::lround(slide.precisePeriod) != chn.nPeriod)
+		slide.precisePeriod = chn.nPeriod;
+	const double octaves = slide.speed * (m_furnaceSlides & FurnaceSlideSpeedMask) / (128.0 * 12.0);
+	if(slide.precisePeriod < target)
+		slide.precisePeriod = std::min(target, slide.precisePeriod * std::exp2(octaves));
+	else
+		slide.precisePeriod = std::max(target, slide.precisePeriod * std::exp2(-octaves));
+	chn.nPeriod = static_cast<int32>(std::lround(slide.precisePeriod));
+	if(slide.precisePeriod == target && (m_furnaceSlides & FurnaceStopAtTarget))
+		slide.mode = CMD_NONE;
 }
 
 
@@ -6150,6 +6263,8 @@ void CSoundFile::NoteCut(CHANNELINDEX nChn, uint32 nTick, bool cutSample)
 	{
 		if(cutSample)
 		{
+			if((m_furnaceSlides & FurnaceStopOnNoteOff) && chn.furnaceSlide.mode == CMD_TONEPORTAMENTO)
+				chn.furnaceSlide.mode = CMD_NONE;
 			// IT compatibility: Picking up a note after a Note Cut effect through a lone instrument number also restores the
 			// original note pitch without any portamento slides, as if there was a note.
 			// Test case: SCx-Reset.it
@@ -6178,6 +6293,8 @@ void CSoundFile::NoteCut(CHANNELINDEX nChn, uint32 nTick, bool cutSample)
 void CSoundFile::KeyOff(ModChannel &chn) const
 {
 	const bool keyIsOn = !chn.dwFlags[CHN_KEYOFF];
+	if((m_furnaceSlides & FurnaceStopOnNoteOff) && chn.furnaceSlide.mode == CMD_TONEPORTAMENTO)
+		chn.furnaceSlide.mode = CMD_NONE;
 	chn.dwFlags.set(CHN_KEYOFF);
 	if(chn.pModInstrument != nullptr && !chn.VolEnv.flags[ENV_ENABLED])
 	{

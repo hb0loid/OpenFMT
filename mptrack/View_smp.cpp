@@ -424,18 +424,30 @@ void CViewSample::UpdateOPLEditor()
 		return;
 	}
 	CSoundFile &sndFile = GetDocument()->GetSoundFile();
+	ModSample &sample = sndFile.GetSample(m_nSample);
+	if(sample.psg)
+	{
+		if(m_oplEditor)
+			m_oplEditor->SetEnabled(false);
+		return;
+	}
+	if(m_oplEditor && m_oplEditor->IsOPN2() != sample.isOPN2)
+		m_oplEditor.reset();
 	if(!m_oplEditor)
 	{
 		try
 		{
-			m_oplEditor = std::make_unique<OPLInstrDlg>(*this, sndFile);
+			m_oplEditor = std::make_unique<OPLInstrDlg>(*this, sndFile, sample.isOPN2);
 		} catch(mpt::out_of_memory e)
 		{
 			mpt::delete_out_of_memory(e);
 			return;
 		}
 	}
-	m_oplEditor->SetPatch(sndFile.GetSample(m_nSample).adlib);
+	if(sample.isOPN2)
+		m_oplEditor->SetPatch(sample.opn2, sample.isOPM);
+	else
+		m_oplEditor->SetPatch(sample.adlib);
 	auto size = m_oplEditor->GetMinimumSize();
 	m_oplEditor->SetWindowPos(nullptr, -m_nScrollPosX, -m_nScrollPosY, std::max(size.cx, m_rcClient.right), std::max(size.cy, m_rcClient.bottom), SWP_NOZORDER | SWP_NOACTIVATE);
 	m_oplEditor->SetEnabled(true);
@@ -866,7 +878,7 @@ LRESULT CViewSample::OnModViewMsg(WPARAM wParam, LPARAM lParam)
 		break;
 
 	case VIEWMSG_PREPAREUNDO:
-		GetDocument()->GetSampleUndo().PrepareUndo(m_nSample, sundo_none, "Edit OPL Patch");
+		GetDocument()->GetSampleUndo().PrepareUndo(m_nSample, sundo_none, m_oplEditor && m_oplEditor->IsOPN2() ? "Edit YM2612 Patch" : "Edit OPL Patch");
 		break;
 
 	default:
@@ -894,12 +906,6 @@ void CViewSample::UpdateView(UpdateHint hint, CObject *pObj)
 	if(hintType[HINT_MPTOPTIONS | HINT_MODTYPE]
 		|| (hintType[HINT_SAMPLEDATA] && (m_nSample == updateSmp || updateSmp == 0)))
 	{
-		if(hintType[HINT_SAMPLEDATA] && m_oplEditor && m_nSample <= sndFile.GetNumSamples())
-		{
-			ModSample &sample = sndFile.GetSample(m_nSample);
-			if(sample.uFlags[CHN_ADLIB])
-				m_oplEditor->SetPatch(sample.adlib);
-		}
 		UpdateOPLEditor();
 		UpdateScrollSize();
 		UpdateNcButtonState();

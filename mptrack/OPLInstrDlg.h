@@ -26,13 +26,19 @@ class OPLInstrDlg : public DialogBase
 	CWnd &m_parent;
 	HWND m_lastFocusItem = nullptr;
 	const CSoundFile &m_sndFile;
-	OPLPatch *m_patch;
+	OPLPatch *m_patch = nullptr;
+	OPN2Patch *m_opn2Patch = nullptr;
+	const bool m_isOPN2;
+
+	void OPN2ParamsChanged();
 
 public:
-	OPLInstrDlg(CWnd &parent, const CSoundFile &sndFile);
+	OPLInstrDlg(CWnd &parent, const CSoundFile &sndFile, bool opn2);
 	~OPLInstrDlg();
 	void SetEnabled(bool enabled);
 	void SetPatch(OPLPatch &patch);
+	void SetPatch(OPN2Patch &patch, bool opm);
+	bool IsOPN2() const { return m_isOPN2; }
 	CSize GetMinimumSize() const { return m_windowSize; }
 
 protected:

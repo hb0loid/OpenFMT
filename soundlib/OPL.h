@@ -16,6 +16,10 @@
 OPENMPT_NAMESPACE_BEGIN
 
 class Opal;
+class OPN2;
+class SN76489;
+struct ModSample;
+struct ModChannel;
 
 class OPL
 {
@@ -85,7 +89,7 @@ public:
 	~OPL();
 
 	void Initialize(uint32 sampleRate);
-	void Mix(int32 *buffer, size_t count, uint32 volumeFactorQ16);
+	void Mix(int32 *buffer, size_t count, uint32 volumeFactorQ16, const ModChannel *channels);
 
 	void NoteOff(CHANNELINDEX c);
 	void NoteCut(CHANNELINDEX c, bool unassign = true);
@@ -93,9 +97,12 @@ public:
 	void Volume(CHANNELINDEX c, uint8 vol, bool applyToModulator);
 	int8 Pan(CHANNELINDEX c, int32 pan);
 	void Patch(CHANNELINDEX c, const OPLPatch &patch);
-	bool IsActive(CHANNELINDEX c) const { return GetVoice(c) != OPL_CHANNEL_INVALID; }
+	void Patch(CHANNELINDEX c, const ModSample &sample);
+	bool IsActive(CHANNELINDEX c) const;
 	void MoveChannel(CHANNELINDEX from, CHANNELINDEX to);
 	void Reset();
+	void PSGNoiseMode(CHANNELINDEX c, uint8 mode);
+	void FMOperatorLevel(CHANNELINDEX c, uint8 op, uint8 level);
 
 	// A list of all registers for channels and operators if oplCh == 0xFF, otherwise all registers for the given channel and its operators
 	static std::vector<Register> AllVoiceRegisters(uint8 oplCh = 0xFF);
@@ -122,6 +129,9 @@ protected:
 	};
 
 	std::unique_ptr<Opal> m_opl;
+	std::unique_ptr<OPN2> m_opn2;
+	std::unique_ptr<SN76489> m_psg;
+	uint32 m_sampleRate = OPL_BASERATE;
 	IRegisterLogger *m_logger = nullptr;
 
 	std::array<uint8, OPL_CHANNELS> m_KeyOnBlock;

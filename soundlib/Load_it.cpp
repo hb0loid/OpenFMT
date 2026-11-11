@@ -394,9 +394,74 @@ mpt::ustring CSoundFile::GetSchismTrackerVersion(uint16 cwtv, uint32 reserved)
 }
 
 
+// Version 1 of the native YM2612 extension to MPTM.
+static constexpr char FmtSignature[] = "OPN1";
+static constexpr char FmtOPMSignature[] = "FMP2";
+static constexpr char FmtPSGSignature[] = "FMP3";
+static constexpr char FmtFurnaceSignature[] = "FMP4";
+static constexpr uint8 FmtOPN2Sample = 0x41, FmtOPMSample = 0x42, FmtPSGSample = 0x43;
+
+static std::shared_ptr<PSGPatch> ReadPSGPatch(FileReader &file)
+{
+	if(!file.CanRead(5))
+		return {};
+	auto patch = std::make_shared<PSGPatch>();
+	patch->lane = file.ReadUint8();
+	patch->chip = file.ReadUint8();
+	const auto chipFlags = file.ReadUint8();
+	patch->easyPitch = (chipFlags & 1) != 0;
+	patch->resetNoise = (chipFlags & 2) != 0;
+	patch->furnacePitch = (chipFlags & 4) != 0;
+	patch->mixGain = std::min<uint16>(512, file.ReadUint16LE());
+	if(patch->lane >= 4 || patch->chip >= 32)
+		return {};
+	for(auto &macro : patch->macros)
+	{
+		if(!file.CanRead(6))
+			return {};
+		const auto length = file.ReadUint8();
+		macro.loop = file.ReadUint8();
+		macro.release = file.ReadUint8();
+		macro.delay = file.ReadUint8();
+		macro.speed = std::max<uint8>(1, file.ReadUint8());
+		const auto flags = file.ReadUint8();
+		macro.relative = (flags & 1) != 0;
+		macro.instantRelease = (flags & 2) != 0;
+		if(!file.CanRead(length * 4u))
+			return {};
+		macro.values.reserve(length);
+		for(size_t i = 0; i < length; i++)
+			macro.values.push_back(file.ReadInt32LE());
+	}
+	return patch;
+}
+
+#ifndef MODPLUG_NO_FILESAVE
+static size_t WritePSGPatch(std::ostream &file, const PSGPatch &patch)
+{
+	mpt::IO::WriteIntLE(file, patch.lane);
+	mpt::IO::WriteIntLE(file, patch.chip);
+	mpt::IO::WriteIntLE(file, static_cast<uint8>((patch.easyPitch ? 1 : 0) | (patch.resetNoise ? 2 : 0) | (patch.furnacePitch ? 4 : 0)));
+	mpt::IO::WriteIntLE(file, patch.mixGain);
+	size_t bytes = 5;
+	for(const auto &macro : patch.macros)
+	{
+		const auto length = mpt::saturate_cast<uint8>(macro.values.size());
+		const uint8 flags = (macro.relative ? 1 : 0) | (macro.instantRelease ? 2 : 0);
+		const uint8 header[] = {length, macro.loop, macro.release, macro.delay, macro.speed, flags};
+		mpt::IO::WriteRaw(file, header, sizeof(header));
+		for(size_t i = 0; i < length; i++)
+			mpt::IO::WriteIntLE(file, macro.values[i]);
+		bytes += sizeof(header) + length * sizeof(int32);
+	}
+	return bytes;
+}
+#endif
+
+
 static bool ValidateHeader(const ITFileHeader &fileHeader)
 {
-	if((std::memcmp(fileHeader.id, "IMPM", 4) && std::memcmp(fileHeader.id, "tpm.", 4))
+	if((std::memcmp(fileHeader.id, "IMPM", 4) && std::memcmp(fileHeader.id, "tpm.", 4) && std::memcmp(fileHeader.id, FmtSignature, 4) && std::memcmp(fileHeader.id, FmtOPMSignature, 4) && std::memcmp(fileHeader.id, FmtPSGSignature, 4) && std::memcmp(fileHeader.id, FmtFurnaceSignature, 4))
 		|| fileHeader.insnum > 0xFF
 		|| fileHeader.smpnum >= MAX_SAMPLES
 		)
@@ -450,6 +515,10 @@ bool CSoundFile::ReadIT(FileReader &file, ModLoadingFlags loadFlags)
 		return true;
 	}
 
+	const bool hasFurnaceHeader = !std::memcmp(fileHeader.id, FmtFurnaceSignature, 4);
+	const bool hasPSGHeader = hasFurnaceHeader || !std::memcmp(fileHeader.id, FmtPSGSignature, 4);
+	const bool hasOPMHeader = hasPSGHeader || !std::memcmp(fileHeader.id, FmtOPMSignature, 4);
+	const bool isFmt = hasOPMHeader || !std::memcmp(fileHeader.id, FmtSignature, 4);
 	InitializeGlobals(MOD_TYPE_IT, 0);
 
 	bool interpretModPlugMade = false;
@@ -520,6 +589,9 @@ bool CSoundFile::ReadIT(FileReader &file, ModLoadingFlags loadFlags)
 			}
 		}
 	}
+
+	if(isFmt && GetType() != MOD_TYPE_MPT)
+		return false;
 
 	m_SongFlags.set(SONG_LINEARSLIDES, (fileHeader.flags & ITFileHeader::linearSlides) != 0);
 	m_SongFlags.set(SONG_ITOLDEFFECTS, (fileHeader.flags & ITFileHeader::itOldEffects) != 0);
@@ -806,6 +878,11 @@ bool CSoundFile::ReadIT(FileReader &file, ModLoadingFlags loadFlags)
 		if(smpPos[i] > 0 && file.Seek(smpPos[i]) && file.ReadStruct(sampleHeader))
 		{
 			ModSample &sample = Samples[i + 1];
+			const bool isOPM = hasOPMHeader && sampleHeader.cvt == FmtOPMSample;
+			const bool isOPN2 = isOPM || (isFmt && sampleHeader.cvt == FmtOPN2Sample);
+			const bool isPSG = hasPSGHeader && sampleHeader.cvt == FmtPSGSample;
+			if(isOPN2 || isPSG)
+				sampleHeader.cvt = ITSample::cvtOPLInstrument;
 			size_t sampleOffset = sampleHeader.ConvertToMPT(sample);
 			if(muteBuggySamples && !(sampleHeader.flags & ITSample::sampleDataPresent))
 				sample.nLength = 0;
@@ -818,11 +895,27 @@ bool CSoundFile::ReadIT(FileReader &file, ModLoadingFlags loadFlags)
 			lastSampleCompressed = false;
 			if(sample.uFlags[CHN_ADLIB])
 			{
-				// FM instrument in MPTM
-				OPLPatch patch;
-				if(file.ReadArray(patch))
+				if(isPSG)
 				{
-					sample.SetAdlib(true, patch);
+					auto patch = ReadPSGPatch(file);
+					if(!patch)
+						return false;
+					sample.SetAdlib(true);
+					sample.psg = std::move(patch);
+				} else if(isOPN2)
+				{
+					OPN2Patch patch;
+					if(!file.ReadArray(patch))
+						return false;
+					sample.SetAdlib(true);
+					sample.opn2 = patch;
+					sample.isOPN2 = true;
+					sample.isOPM = isOPM;
+				} else
+				{
+					OPLPatch patch;
+					if(file.ReadArray(patch))
+						sample.SetAdlib(true, patch);
 				}
 			} else if(!sample.uFlags[SMP_KEEPONDISK])
 			{
@@ -1166,7 +1259,14 @@ bool CSoundFile::ReadIT(FileReader &file, ModLoadingFlags loadFlags)
 			if(chnMask[ch] & 8)
 			{
 				const auto [command, param] = patternData.ReadArray<uint8, 2>();
-				S3MConvert(m, command, param, true);
+				if(hasPSGHeader && command >= 0x80 && command < 0x85)
+				{
+					m.command = static_cast<ModCommand::COMMAND>(CMD_PSG_NOISE + command - 0x80);
+					m.param = param;
+				} else
+				{
+					S3MConvert(m, command, param, true);
+				}
 
 				// IT 1.xx does not support high offset command
 				if(m.command == CMD_S3MCMDEX && (m.param & 0xF0) == 0xA0 && fileHeader.cwtv < 0x0200)
@@ -1387,8 +1487,8 @@ bool CSoundFile::ReadIT(FileReader &file, ModLoadingFlags loadFlags)
 		}
 	}
 
-	m_modFormat.formatName = (GetType() == MOD_TYPE_MPT) ? U_("OpenMPT MPTM") : MPT_UFORMAT("Impulse Tracker {}.{}")(fileHeader.cmwt >> 8, mpt::ufmt::hex0<2>(fileHeader.cmwt & 0xFF));
-	m_modFormat.type = (GetType() == MOD_TYPE_MPT) ? U_("mptm") : U_("it");
+	m_modFormat.formatName = isFmt ? U_("OpenMPT Chip FMT") : (GetType() == MOD_TYPE_MPT) ? U_("OpenMPT MPTM") : MPT_UFORMAT("Impulse Tracker {}.{}")(fileHeader.cmwt >> 8, mpt::ufmt::hex0<2>(fileHeader.cmwt & 0xFF));
+	m_modFormat.type = isFmt ? U_("fmt") : (GetType() == MOD_TYPE_MPT) ? U_("mptm") : U_("it");
 	m_modFormat.madeWithTracker = std::move(madeWithTracker);
 	m_modFormat.charset = m_dwLastSavedWithVersion ? mpt::Charset::Windows1252 : mpt::Charset::CP437;
 #if MPT_TIME_UTC_ON_DISK
@@ -1510,8 +1610,10 @@ static uint32 SaveITEditHistory(const CSoundFile &sndFile, std::ostream *file)
 }
 
 
-bool CSoundFile::SaveIT(std::ostream &f, const mpt::PathString &filename, bool compatibilityExport)
+bool CSoundFile::SaveIT(std::ostream &f, const mpt::PathString &filename, bool compatibilityExport, bool fmt)
 {
+	if(fmt ? GetType() != MOD_TYPE_MPT || compatibilityExport : HasNativeChipSamples())
+		return false;
 
 	const CModSpecifications &specs = (GetType() == MOD_TYPE_MPT ? ModSpecs::mptm : (compatibilityExport ? ModSpecs::it : ModSpecs::itEx));
 
@@ -1523,7 +1625,35 @@ bool CSoundFile::SaveIT(std::ostream &f, const mpt::PathString &filename, bool c
 	// Writing Header
 	MemsetZero(itHeader);
 	dwChnNamLen = 0;
-	memcpy(itHeader.id, "IMPM", 4);
+	const char *signature = fmt ? FmtSignature : "IMPM";
+	if(fmt)
+	{
+		for(SAMPLEINDEX smp = 1; smp <= GetNumSamples(); smp++)
+		{
+			if(Samples[smp].psg)
+			{
+				signature = FmtPSGSignature;
+				break;
+			}
+			if(Samples[smp].isOPM)
+				signature = FmtOPMSignature;
+		}
+		if(signature != FmtPSGSignature)
+		{
+			for(const auto &pat : Patterns)
+			{
+				if(pat.IsValid() && std::any_of(pat.begin(), pat.end(), [](const ModCommand &m)
+					{ return m.command >= CMD_PSG_NOISE && m.command <= CMD_FM_LEVEL4; }))
+				{
+					signature = FmtPSGSignature;
+					break;
+				}
+			}
+		}
+	}
+	if(fmt && m_furnaceSlides)
+		signature = FmtFurnaceSignature;
+	memcpy(itHeader.id, signature, 4);
 	mpt::String::WriteBuf(mpt::String::nullTerminated, itHeader.songname) = m_songName;
 
 	itHeader.highlight_minor = mpt::saturate_cast<uint8>(m_nDefaultRowsPerBeat);
@@ -1859,7 +1989,14 @@ bool CSoundFile::SaveIT(std::ostream &f, const mpt::PathString &filename, bool c
 					b |= 4;
 				} else if(m->command != CMD_NONE)
 				{
-					S3MSaveConvert(*m, command, param, true, compatibilityExport);
+					if((signature == FmtPSGSignature || signature == FmtFurnaceSignature) && m->command >= CMD_PSG_NOISE && m->command <= CMD_FM_LEVEL4)
+					{
+						command = static_cast<uint8>(0x80 + m->command - CMD_PSG_NOISE);
+						param = m->param;
+					} else
+					{
+						S3MSaveConvert(*m, command, param, true, compatibilityExport);
+					}
 					if (command) b |= 8;
 				}
 				if(writePatternBreak && !(b & 8))
@@ -1993,6 +2130,10 @@ bool CSoundFile::SaveIT(std::ostream &f, const mpt::PathString &filename, bool c
 
 		mpt::String::WriteBuf(mpt::String::nullTerminated, itss.name) = m_szNames[smp];
 
+		if(fmt && sample.psg)
+			itss.cvt = FmtPSGSample;
+		else if(fmt && sample.isOPN2)
+			itss.cvt = sample.isOPM ? FmtOPMSample : FmtOPN2Sample;
 		itss.samplepointer = static_cast<uint32>(dwPos);
 		if(dwPos > uint32_max)
 		{
@@ -2017,7 +2158,17 @@ bool CSoundFile::SaveIT(std::ostream &f, const mpt::PathString &filename, bool c
 				// Sample length does not fit into IT header!
 				AddToLog(LogWarning, MPT_UFORMAT("Truncating sample {}: Length exceeds exceeds 4 gigasamples.")(smp));
 			}
-			dwPos += itss.GetSampleFormat().WriteSample(f, sample, smpLength);
+			if(fmt && sample.psg)
+			{
+				dwPos += WritePSGPatch(f, *sample.psg);
+			} else if(fmt && sample.isOPN2)
+			{
+				mpt::IO::WriteRaw(f, sample.opn2.data(), sample.opn2.size());
+				dwPos += sample.opn2.size();
+			} else
+			{
+				dwPos += itss.GetSampleFormat().WriteSample(f, sample, smpLength);
+			}
 		} else
 		{
 #ifdef MPT_EXTERNAL_SAMPLES
@@ -2380,6 +2531,8 @@ void CSoundFile::SaveExtendedSongProperties(std::ostream &f) const
 		WriteModular(f, MagicBE("SPA."), m_nSamplePreAmp);
 	}
 	WriteModular(f, MagicBE("VSTV"), m_nVSTiVolume);
+	if(m_furnaceSlides)
+		WriteModular(f, MagicLE("FPSL"), m_furnaceSlides);
 
 	if(GetType() == MOD_TYPE_XM && m_nDefaultGlobalVolume != MAX_GLOBAL_VOLUME)
 	{
@@ -2584,6 +2737,7 @@ bool CSoundFile::LoadExtendedSongProperties(FileReader &file, bool ignoreChannel
 			case MagicBE("LSWV"): { uint32 ver = 0; ReadField(chunk, size, ver); if(ver != 0) { m_dwLastSavedWithVersion = Version(ver); } break; }
 			case MagicBE("SPA."): ReadField(chunk, size, m_nSamplePreAmp); break;
 			case MagicBE("VSTV"): ReadField(chunk, size, m_nVSTiVolume); break;
+			case MagicLE("FPSL"): ReadField(chunk, size, m_furnaceSlides); break;
 			case MagicBE("DGV."): ReadField(chunk, size, m_nDefaultGlobalVolume); break;
 			case MagicBE("RP.."): if(GetType() != MOD_TYPE_XM) { ORDERINDEX restartPos; ReadField(chunk, size, restartPos); Order().SetRestartPos(restartPos); } break;
 			case MagicLE("RSMP"):

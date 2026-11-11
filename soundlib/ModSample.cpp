@@ -133,6 +133,10 @@ void ModSample::Convert(MODTYPE fromType, MODTYPE toType)
 // Initialize sample slot with default values.
 void ModSample::Initialize(MODTYPE type)
 {
+	isOPN2 = false;
+	isOPM = false;
+	psg.reset();
+	opn2 = {};
 	FreeSample();
 	nLength = 0;
 	nLoopStart = nLoopEnd = 0;
@@ -649,6 +653,9 @@ void ModSample::RemoveAllCuePoints()
 
 void ModSample::SetAdlib(bool enable, OPLPatch patch)
 {
+	isOPN2 = false;
+	isOPM = false;
+	psg.reset();
 	if(!enable && uFlags[CHN_ADLIB])
 	{
 		SetDefaultCuePoints();

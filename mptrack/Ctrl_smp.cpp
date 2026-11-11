@@ -16,6 +16,7 @@
 #include "dlg_misc.h"
 #include "Dlsbank.h"
 #include "FileDialog.h"
+#include "../soundlib/YM2612Preset.h"
 #include "Globals.h"
 #include "HighDPISupport.h"
 #include "ImageLists.h"
@@ -91,6 +92,7 @@ BEGIN_MESSAGE_MAP(CCtrlSamples, CModControlDlg)
 	ON_COMMAND(IDC_BUTTON2,				&CCtrlSamples::OnEstimateSampleSize)
 	ON_COMMAND(IDC_CHECK3,				&CCtrlSamples::OnToggleTimestretchQuality)
 	ON_COMMAND(IDC_SAMPLE_INITOPL,		&CCtrlSamples::OnInitOPLInstrument)
+	ON_COMMAND(IDC_SAMPLE_INITOPN2,		&CCtrlSamples::OnInitOPN2Instrument)
 	
 	ON_EN_CHANGE(IDC_SAMPLE_NAME,		&CCtrlSamples::OnNameChanged)
 	ON_EN_CHANGE(IDC_SAMPLE_FILENAME,	&CCtrlSamples::OnFileNameChanged)
@@ -788,7 +790,7 @@ void CCtrlSamples::UpdateView(UpdateHint hint, CObject *pObj)
 
 		// Length / Type
 		if(isOPL)
-			s = _T("OPL instrument");
+			s = sample.psg ? _T("SN76489 instrument") : sample.isOPM ? _T("YM2151 instrument") : sample.isOPN2 ? _T("YM2612 instrument") : _T("OPL instrument");
 		else
 			s = MPT_CFORMAT("{}-bit {}, len: {}")(sample.GetElementarySampleSize() * 8, CString(sample.uFlags[CHN_STEREO] ? _T("stereo") : _T("mono")), mpt::cfmt::dec(3, _T(","), sample.nLength));
 		SetDlgItemText(IDC_TEXT5, s);
@@ -969,10 +971,36 @@ bool CCtrlSamples::OpenSample(const mpt::PathString &fileName, FlagSet<OpenSampl
 		return false;
 	}
 
-	PrepareUndo("Replace", sundo_replace);
+	const auto presetFormat = types[OpenSampleKnown]
+		? GetYM2612PresetFormat(fileName.GetFilenameExtension().ToUTF8()) : YM2612PresetFormat::None;
+	std::optional<YM2612Preset> preset;
+	if(presetFormat != YM2612PresetFormat::None)
+	{
+		if(m_sndFile.GetType() == MOD_TYPE_MPT)
+			preset = ReadYM2612Preset(file, presetFormat);
+		if(!preset)
+		{
+			EndWaitCursor();
+			return false;
+		}
+	}
+
+	PrepareUndo(preset ? "Import YM2612 Preset" : "Replace", sundo_replace);
 	const auto parentIns = m_modDoc.GetParentInstrumentWithSameName(m_nSample);
 	bool bOk = false;
-	if(types[OpenSampleKnown])
+	if(preset)
+	{
+		CriticalSection cs;
+		m_sndFile.DestroySample(m_nSample);
+		auto &sample = m_sndFile.GetSample(m_nSample);
+		sample.Initialize(MOD_TYPE_MPT);
+		sample.SetAdlib(true);
+		sample.isOPN2 = true;
+		sample.opn2 = preset->patch;
+		m_sndFile.m_szNames[m_nSample] = preset->name;
+		m_sndFile.InitOPL();
+		bOk = true;
+	} else if(types[OpenSampleKnown])
 	{
 		bOk = m_sndFile.ReadSampleFromFile(m_nSample, file, TrackerSettings::Instance().m_MayNormalizeSamplesOnLoad);
 
@@ -1291,6 +1319,7 @@ void CCtrlSamples::OnTbnDropDownToolBar(NMHDR *pNMHDR, LRESULT *pResult)
 		menu.CreatePopupMenu();
 		menu.AppendMenu(MF_STRING, IDC_SAMPLE_DUPLICATE, ih->GetKeyTextFromCommand(kcSampleDuplicate, m_sndFile.GetSample(m_nSample).uFlags[CHN_ADLIB] ? _T("&Duplicate Instrument") : _T("&Duplicate Sample")));
 		menu.AppendMenu(MF_STRING | (m_sndFile.SupportsOPL() ? 0 : MF_DISABLED), IDC_SAMPLE_INITOPL, ih->GetKeyTextFromCommand(kcSampleInitializeOPL, _T("Initialize &OPL Instrument")));
+		menu.AppendMenu(MF_STRING | (m_sndFile.GetType() == MOD_TYPE_MPT ? 0 : MF_DISABLED), IDC_SAMPLE_INITOPN2, _T("Initialize &YM2612 Instrument"));
 		menu.TrackPopupMenu(TPM_LEFTALIGN | TPM_RIGHTBUTTON, x, y, this);
 		menu.DestroyMenu();
 		break;
@@ -3096,16 +3125,33 @@ bool CCtrlSamples::IsOPLInstrument() const
 
 void CCtrlSamples::OnInitOPLInstrument()
 {
-	if(m_sndFile.SupportsOPL())
+	InitFMInstrument(false);
+}
+
+
+void CCtrlSamples::OnInitOPN2Instrument()
+{
+	InitFMInstrument(true);
+}
+
+
+void CCtrlSamples::InitFMInstrument(bool opn2)
+{
+	if(opn2 ? m_sndFile.GetType() == MOD_TYPE_MPT : m_sndFile.SupportsOPL())
 	{
 		CriticalSection cs;
-		PrepareUndo("Initialize OPL Instrument", sundo_replace);
+		PrepareUndo(opn2 ? "Initialize YM2612 Instrument" : "Initialize OPL Instrument", sundo_replace);
 		m_sndFile.DestroySample(m_nSample);
 		m_sndFile.InitOPL();
 		ModSample &sample = m_sndFile.GetSample(m_nSample);
 		sample.nC5Speed = 8363;
 		// Initialize with instant attack, release and enabled sustain for carrier and instant attack for modulator
 		sample.SetAdlib(true, { 0x00, 0x20, 0x00, 0x00, 0xF0, 0xF0, 0x00, 0x0F, 0x00, 0x00, 0x00, 0x00 });
+		if(opn2)
+		{
+			sample.opn2 = DefaultOPN2Patch;
+			sample.isOPN2 = true;
+		}
 		SetModified(SampleHint().Info().Data().Names(), true, true);
 		SwitchToViewIfMouse();
 	}

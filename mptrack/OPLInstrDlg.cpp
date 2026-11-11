@@ -37,6 +37,8 @@ END_MESSAGE_MAP()
 void OPLInstrDlg::DoDataExchange(CDataExchange *pDX)
 {
 	DialogBase::DoDataExchange(pDX);
+	if(m_isOPN2)
+		return;
 	DDX_Control(pDX, IDC_CHECK1, m_additive);
 	DDX_Control(pDX, IDC_SLIDER1, m_feedback);
 
@@ -60,11 +62,12 @@ void OPLInstrDlg::DoDataExchange(CDataExchange *pDX)
 }
 
 
-OPLInstrDlg::OPLInstrDlg(CWnd &parent, const CSoundFile &sndFile)
+OPLInstrDlg::OPLInstrDlg(CWnd &parent, const CSoundFile &sndFile, bool opn2)
 	: m_parent(parent)
 	, m_sndFile(sndFile)
+	, m_isOPN2(opn2)
 {
-	Create(IDD_OPL_PARAMS, &parent);
+	Create(opn2 ? IDD_OPN2_PARAMS : IDD_OPL_PARAMS, &parent);
 	CRect rect;
 	GetClientRect(rect);
 	m_windowSize = rect.BottomRight();
@@ -77,9 +80,48 @@ OPLInstrDlg::~OPLInstrDlg()
 }
 
 
+namespace
+{
+struct OPN2Param
+{
+	uint8 reg, shift, mask;
+};
+
+constexpr OPN2Param Algorithm{0, 0, 7}, Feedback{0, 3, 7};
+constexpr OPN2Param OperatorParams[] = {
+	{0, 0, 15}, {0, 4, 7}, {1, 0, 127}, {2, 6, 3}, {2, 0, 31},
+	{3, 0, 31}, {4, 0, 31}, {5, 4, 15}, {5, 0, 15},
+};
+
+template<typename Callback>
+void ForEachOPN2Param(Callback callback)
+{
+	int id = IDC_OPN2_FIRST;
+	callback(id++, Algorithm);
+	callback(id++, Feedback);
+	for(uint8 op = 0; op < 4; op++)
+	{
+		for(auto param : OperatorParams)
+		{
+			param.reg += 1 + op * 7;
+			callback(id++, param);
+		}
+	}
+}
+} // namespace
+
+
 BOOL OPLInstrDlg::OnInitDialog()
 {
 	DialogBase::OnInitDialog();
+	if(m_isOPN2)
+	{
+		ForEachOPN2Param([&](int id, OPN2Param param)
+		{
+			GetDlgItem(id)->SendMessage(TBM_SETRANGEMAX, TRUE, param.mask);
+		});
+		return TRUE;
+	}
 	m_feedback.SetRange(0, 7);
 	for(int op = 0; op < 2; op++)
 	{
@@ -205,8 +247,43 @@ void OPLInstrDlg::SetPatch(OPLPatch &patch)
 }
 
 
+void OPLInstrDlg::SetPatch(OPN2Patch &patch, bool opm)
+{
+	SetDlgItemText(2558, opm ? _T("YM2151 / OPM") : _T("YM2612 / OPN2"));
+	ForEachOPN2Param([&](int id, OPN2Param param)
+	{
+		GetDlgItem(id)->SendMessage(TBM_SETPOS, TRUE, (patch[param.reg] >> param.shift) & param.mask);
+	});
+	m_opn2Patch = &patch;
+}
+
+
+void OPLInstrDlg::OPN2ParamsChanged()
+{
+	if(!m_opn2Patch)
+		return;
+	OPN2Patch patch = *m_opn2Patch;
+	ForEachOPN2Param([&](int id, OPN2Param param)
+	{
+		const auto value = GetDlgItem(id)->SendMessage(TBM_GETPOS);
+		patch[param.reg] = static_cast<uint8>((patch[param.reg] & ~(param.mask << param.shift)) | (value << param.shift));
+	});
+	if(patch != *m_opn2Patch)
+	{
+		m_parent.SendMessage(WM_MOD_VIEWMSG, VIEWMSG_PREPAREUNDO);
+		*m_opn2Patch = patch;
+		m_parent.SendMessage(WM_MOD_VIEWMSG, VIEWMSG_SETMODIFIED, SampleHint().Data().AsLPARAM());
+	}
+}
+
+
 void OPLInstrDlg::ParamsChanged()
 {
+	if(m_isOPN2)
+	{
+		OPN2ParamsChanged();
+		return;
+	}
 	OPLPatch patch{{}};
 	if(m_additive.GetCheck() != BST_UNCHECKED) patch[10] |= OPL::CONNECTION_BIT;
 	patch[10] |= static_cast<uint8>(m_feedback.GetPos() << 1);

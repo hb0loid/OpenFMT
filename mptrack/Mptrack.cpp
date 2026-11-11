@@ -2826,6 +2826,7 @@ static constexpr std::pair<const mpt::uchar*, const mpt::uchar*> SampleFormats[]
 	{ UL_("Impulse Tracker Samples (*.its)"), UL_("*.its") },
 	{ UL_("Scream Tracker Samples (*.s3i,*.smp)"), UL_("*.s3i;*.smp") },
 	{ UL_("OPL Instruments (*.sb0,*.sb2,*.sbi)"), UL_("*.sb0;*.sb2;*.sbi") },
+	{ UL_("YM2612 Presets (*.fui,*.dmp,*.tfi,*.opni)"), UL_("*.fui;*.dmp;*.tfi;*.opni") },
 	{ UL_("GF1 Patches (*.pat)"), UL_("*.pat") },
 	{ UL_("Wave64 Files (*.w64)"), UL_("*.w64") },
 	{ UL_("CAF Files (*.wav)"), UL_("*.caf") },
