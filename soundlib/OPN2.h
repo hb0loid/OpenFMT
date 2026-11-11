@@ -209,8 +209,11 @@ private:
 		// того чтобы начаться заново. Пока у каждого голоса был свой экземпляр
 		// чипа, это получалось само, потому что выделение голоса сбрасывало весь
 		// чип; у общего экземпляра так делать нельзя.
+		// hasPlayed ставится только когда ключ действительно записан, в Mix.
+		// Иначе голос, который уже занят под ноту этого тика, но ещё не запущен,
+		// выглядит освободившимся, и соседний канал его отбирает: в аккорде
+		// часть нот просто пропадает.
 		slot.keyOnDelay = 1;
-		slot.hasPlayed = true;
 		chip.keyPending = true;
 	}
 
@@ -330,7 +333,9 @@ public:
 		{
 			for(uint8 i = 0; i < count; i++)
 			{
-				if(!chip.slots[i].keyed && chip.slots[i].hasPlayed)
+				// Голос с ожидающим ключом занят нотой этого тика, отбирать его
+				// нельзя: иначе в аккорде часть нот пропадёт.
+				if(!chip.slots[i].keyed && chip.slots[i].hasPlayed && !chip.slots[i].keyOnDelay)
 				{
 					found = i;
 					break;
@@ -560,6 +565,7 @@ public:
 							{
 								WriteKey(chip, slot, true);
 								chip.slots[slot].keyed = true;
+								chip.slots[slot].hasPlayed = true;
 							} else
 								pending = true;
 						}
