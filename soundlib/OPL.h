@@ -101,6 +101,7 @@ public:
 	bool IsActive(CHANNELINDEX c) const;
 	void MoveChannel(CHANNELINDEX from, CHANNELINDEX to);
 	void Reset();
+	void MuteVoice(CHANNELINDEX c, bool muted);
 	void PSGNoiseMode(CHANNELINDEX c, uint8 mode);
 	void FMOperatorLevel(CHANNELINDEX c, uint8 op, uint8 level);
 

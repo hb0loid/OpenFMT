@@ -66,7 +66,7 @@ void OPL::Mix(int32 *target, size_t count, uint32 volumeFactorQ16, const ModChan
 	if(m_psg)
 		m_psg->Mix(target, count, volumeFactorQ16, channels);
 	if(m_opn2)
-		m_opn2->Mix(target, count, volumeFactorQ16, channels);
+		m_opn2->Mix(target, count, volumeFactorQ16);
 	if(!m_isActive)
 		return;
 
@@ -290,8 +290,12 @@ int8 OPL::Pan(CHANNELINDEX c, int32 pan)
 {
 	if(m_psg && m_psg->Pan(c, pan))
 		return static_cast<int8>(pan <= 84 ? -1 : pan >= 171 ? 1 : 0);
-	if(m_opn2 && m_opn2->Pan(c, pan))
-		return static_cast<int8>(pan <= 84 ? -1 : pan >= 171 ? 1 : 0);
+	if(m_opn2)
+	{
+		int8 panning = 0;
+		if(m_opn2->Pan(c, pan, panning))
+			return panning;
+	}
 	uint8 oplCh = GetVoice(c);
 	if(oplCh == OPL_CHANNEL_INVALID || m_opl == nullptr)
 		return 0;
@@ -374,6 +378,16 @@ void OPL::Patch(CHANNELINDEX c, const ModSample &sample)
 bool OPL::IsActive(CHANNELINDEX c) const
 {
 	return (m_psg && m_psg->HasChannel(c)) || (m_opn2 && m_opn2->HasChannel(c)) || GetVoice(c) != OPL_CHANNEL_INVALID;
+}
+
+
+// The per-channel update in Sndmix is skipped for muted channels, so a chip that shares
+// one instance between its channels has to be told about the mute explicitly.
+// The OPL keeps its upstream behaviour, and the PSG is still silenced while mixing.
+void OPL::MuteVoice(CHANNELINDEX c, bool muted)
+{
+	if(m_opn2)
+		m_opn2->Mute(c, muted);
 }
 
 

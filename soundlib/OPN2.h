@@ -1,6 +1,12 @@
 /*
  * OPN2.h
- * Native four-operator YM2612 voices driven by the tracker mixer.
+ * ------
+ * Purpose: Native Yamaha FM voices (YM2612 and YM2151) driven by the tracker mixer.
+ * Notes  : One chip instance serves all of its own channels, the way OpenMPT drives
+ *          the OPL. Channel volume is applied to the total level of the operators that
+ *          reach the output, panning is applied through the chip's own output enable
+ *          bits, and the chip's stereo output is mixed once per rendered chunk.
+ *
  */
 
 #pragma once
@@ -10,80 +16,229 @@
 #include "../include/ymfm/ymfm_opn.h"
 #include "../include/ymfm/ymfm_opm.h"
 
+#include <cmath>
+
 OPENMPT_NAMESPACE_BEGIN
 
 class OPN2
 {
-	static constexpr uint32 Clock = 7670454;
-	static constexpr uint32 OPMClock = 3579545;
-	static constexpr size_t OPN2Voices = 6, OPMVoices = 8;
+public:
+	static constexpr uint8 OPN2Channels = 6, OPMChannels = 8;
 
-	struct Voice
+private:
+	static constexpr uint32 OPN2Clock = 7670454;  // YM2612 as clocked in the Mega Drive
+	static constexpr uint32 OPMClock = 3579545;   // YM2151
+
+	// OpenMPT scales the OPL's 16-bit output by this factor so that a chip voice ends up
+	// about as loud as a sample voice (see OPL::Mix). ymfm normalises both FM chips to the
+	// same 16-bit full scale, so reusing the identical factor keeps every chip on the
+	// mixer's single reference level instead of a constant tuned per chip by ear.
+	static constexpr int32 MixerReference = 6169;
+
+	// Patch byte 0 holds algorithm and feedback, followed by seven register values for each
+	// of the four operators, in logical operator order 1, 2, 3, 4.
+	static constexpr uint8 OPN2OperatorOffset[] = {0, 8, 4, 12};
+	static constexpr uint8 OPMOperatorOffset[] = {0, 16, 8, 24};
+	static constexpr uint8 OPN2RegisterMask[] = {0x7F, 0x7F, 0xDF, 0x9F, 0x1F, 0xFF, 0x0F};
+	static constexpr uint8 OPMRegisterMask[] = {0x7F, 0x7F, 0xDF, 0x9F, 0xDF, 0xFF};
+	// Operators that reach the output for each of the eight algorithms, bit 0 = operator 1.
+	static constexpr uint8 CarrierMask[] = {0x08, 0x08, 0x08, 0x08, 0x0A, 0x0E, 0x0E, 0x0F};
+	static constexpr size_t LevelRegister = 1;  // Total level is the second register of an operator
+	static constexpr uint8 MaxLevel = 127;      // Total level is seven bits, 127 is silence
+	static constexpr double DCCutoff = 5.0;     // Hz, removes the YM2612 DAC's idle offset
+
+	struct Slot
 	{
-		ymfm::ymfm_interface host;
-		ymfm::ym2612 chip{host};
-		std::unique_ptr<ymfm::ym2151> opm;
-		uint32 sampleRate = chip.sample_rate(Clock);
+		OPN2Patch patch = DefaultOPN2Patch;
 		CHANNELINDEX channel = CHANNELINDEX_INVALID;
-		bool keyed = false, hasPlayed = false;
-		uint8 volume = 63;
-		int32 pan = 128;
-		uint64 phase = 0;
-		double previous = 0, current = 0, dc = 0;
-
-		void Write(uint8 reg, uint8 value)
-		{
-			if(opm)
-			{
-				opm->write_address(reg);
-				opm->write_data(value);
-			} else
-			{
-				chip.write_address(reg);
-				chip.write_data(value);
-			}
-		}
-
-		void Key(bool on)
-		{
-			if(keyed == on)
-				return;
-			Write(opm ? 0x08 : 0x28, on ? (opm ? 0x78 : 0xF0) : 0);
-			keyed = on;
-			hasPlayed |= on;
-		}
-
-		void Reset(bool useOPM)
-		{
-			if(useOPM)
-			{
-				if(!opm)
-					opm = std::make_unique<ymfm::ym2151>(host);
-				opm->reset();
-				sampleRate = opm->sample_rate(OPMClock);
-			} else
-			{
-				chip.reset();
-			}
-			phase = 0;
-			previous = current = 0;
-			dc = useOPM ? 0 : 504;  // ymfm idle value of the six summed OPN2 DAC lanes
-			keyed = hasPlayed = false;
-			volume = 63;
-			pan = 128;
-		}
+		uint8 volume = 63, modVolume = 63;
+		int8 panning = 0;
+		bool keyed = false, hasPlayed = false, muted = false;
 	};
 
-	std::array<Voice, OPN2Voices + OPMVoices> m_voices;
-	uint32 m_rate;
-	std::array<size_t, 2> m_nextVoice{};
-
-	Voice *Find(CHANNELINDEX channel)
+	struct Chip
 	{
-		for(auto &voice : m_voices)
-			if(voice.channel == channel)
-				return &voice;
+		ymfm::ymfm_interface host;
+		std::unique_ptr<ymfm::ym2612> opn;
+		std::unique_ptr<ymfm::ym2151> opm;
+		std::array<Slot, OPMChannels> slots;
+		uint32 rate = 0;
+		uint64 phase = 0;
+		std::array<double, 2> previous{}, current{}, dc{};
+		double dcCoef = 0.0;
+		size_t next = 0;
+		bool isOPM = false;
+
+		uint8 NumChannels() const { return isOPM ? OPMChannels : OPN2Channels; }
+		bool Exists() const { return opn != nullptr || opm != nullptr; }
+	};
+
+	std::array<Chip, 2> m_chips;  // Index 0 drives the YM2612, index 1 the YM2151
+	uint32 m_rate;
+
+	static void Write(Chip &chip, uint16 reg, uint8 value)
+	{
+		if(chip.opm)
+		{
+			chip.opm->write_address(static_cast<uint8>(reg));
+			chip.opm->write_data(value);
+		} else if(chip.opn)
+		{
+			if(reg & 0x100)
+			{
+				chip.opn->write_address_hi(static_cast<uint8>(reg));
+				chip.opn->write_data_hi(value);
+			} else
+			{
+				chip.opn->write_address(static_cast<uint8>(reg));
+				chip.opn->write_data(value);
+			}
+		}
+	}
+
+	// Register address of a channel register such as 0xA0 or 0xB4. The YM2612 keeps its
+	// last three channels on the second port, which bit 8 of the returned address selects.
+	static uint16 ChannelRegister(const Chip &chip, uint8 channel, uint8 base)
+	{
+		if(chip.isOPM)
+			return static_cast<uint16>(base + channel);
+		return static_cast<uint16>((channel >= 3 ? 0x100 : 0x000) + base + (channel % 3));
+	}
+
+	static uint16 OperatorRegister(const Chip &chip, uint8 channel, size_t op, size_t reg)
+	{
+		if(chip.isOPM)
+			return static_cast<uint16>(0x40 + reg * 0x20 + OPMOperatorOffset[op] + channel);
+		return static_cast<uint16>((channel >= 3 ? 0x100 : 0x000) + 0x30 + reg * 0x10 + OPN2OperatorOffset[op] + (channel % 3));
+	}
+
+	// Tracker volume is a linear amplitude, while total level attenuates in steps of
+	// 0.75 dB, so the two are related by a logarithm. Volume 63 leaves the patch untouched.
+	// The OPL's own curve is not reused here: it spans six bits, and stretching it over
+	// these seven-bit levels would double the attenuation in dB at every volume.
+	static uint8 CalcLevel(uint8 baseLevel, uint8 vol)
+	{
+		baseLevel &= MaxLevel;
+		if(vol >= 63)
+			return baseLevel;
+		if(vol == 0)
+			return MaxLevel;
+		const double decibels = -20.0 * std::log10(static_cast<double>(vol) / 63.0);
+		const int steps = static_cast<int>(std::lround(decibels / 0.75));
+		return static_cast<uint8>(std::min<int>(MaxLevel, baseLevel + steps));
+	}
+
+	void InitChip(Chip &chip, bool useOPM)
+	{
+		chip.isOPM = useOPM;
+		if(useOPM)
+		{
+			if(!chip.opm)
+				chip.opm = std::make_unique<ymfm::ym2151>(chip.host);
+			chip.opm->reset();
+			chip.rate = chip.opm->sample_rate(OPMClock);
+		} else
+		{
+			if(!chip.opn)
+				chip.opn = std::make_unique<ymfm::ym2612>(chip.host);
+			chip.opn->reset();
+			chip.rate = chip.opn->sample_rate(OPN2Clock);
+		}
+		chip.phase = 0;
+		chip.previous.fill(0.0);
+		chip.current.fill(0.0);
+		chip.dc.fill(0.0);
+		// One-pole high pass at a fixed audio frequency, derived from the rate the chip is
+		// actually clocked at rather than a hand-picked coefficient.
+		constexpr double twoPi = 6.283185307179586;
+		chip.dcCoef = chip.rate ? 1.0 - std::exp(-twoPi * DCCutoff / chip.rate) : 0.0;
+		chip.next = 0;
+		for(auto &slot : chip.slots)
+			slot = Slot{};
+	}
+
+	Slot *Find(CHANNELINDEX channel, Chip **owner = nullptr, uint8 *index = nullptr)
+	{
+		for(auto &chip : m_chips)
+		{
+			if(!chip.Exists())
+				continue;
+			for(uint8 i = 0; i < chip.NumChannels(); i++)
+			{
+				if(chip.slots[i].channel != channel)
+					continue;
+				if(owner)
+					*owner = &chip;
+				if(index)
+					*index = i;
+				return &chip.slots[i];
+			}
+		}
 		return nullptr;
+	}
+
+	void KeyOn(Chip &chip, uint8 channel, bool on)
+	{
+		Slot &slot = chip.slots[channel];
+		if(slot.keyed == on)
+			return;
+		if(chip.isOPM)
+			Write(chip, 0x08, static_cast<uint8>((on ? 0x78 : 0x00) | channel));
+		else
+			Write(chip, 0x28, static_cast<uint8>((on ? 0xF0 : 0x00) | (channel < 3 ? channel : (channel - 3) + 4)));
+		slot.keyed = on;
+		slot.hasPlayed |= on;
+	}
+
+	// Algorithm, feedback and the output enable bits share one register on the YM2151,
+	// so panning and the algorithm are always written together.
+	void WriteAlgorithmAndPanning(Chip &chip, uint8 channel)
+	{
+		const Slot &slot = chip.slots[channel];
+		const uint8 algorithmFeedback = slot.patch[0] & 0x3F;
+		if(chip.isOPM)
+		{
+			const uint8 outputs = slot.muted ? 0x00 : (slot.panning < 0 ? 0x40 : slot.panning > 0 ? 0x80 : 0xC0);
+			Write(chip, ChannelRegister(chip, channel, 0x20), static_cast<uint8>(algorithmFeedback | outputs));
+		} else
+		{
+			const uint8 outputs = slot.muted ? 0x00 : (slot.panning < 0 ? 0x80 : slot.panning > 0 ? 0x40 : 0xC0);
+			Write(chip, ChannelRegister(chip, channel, 0xB0), algorithmFeedback);
+			Write(chip, ChannelRegister(chip, channel, 0xB4), outputs);
+		}
+	}
+
+	void WriteLevels(Chip &chip, uint8 channel)
+	{
+		const Slot &slot = chip.slots[channel];
+		const uint8 algorithm = slot.patch[0] & 0x07;
+		for(size_t op = 0; op < 4; op++)
+		{
+			const uint8 baseLevel = slot.patch[1 + op * 7 + LevelRegister] & MaxLevel;
+			const bool carrier = (CarrierMask[algorithm] & (1u << op)) != 0;
+			uint8 level = CalcLevel(baseLevel, carrier ? slot.volume : slot.modVolume);
+			if(slot.muted)
+				level = MaxLevel;
+			Write(chip, OperatorRegister(chip, channel, op, LevelRegister), level);
+		}
+	}
+
+	void WritePatch(Chip &chip, uint8 channel)
+	{
+		const Slot &slot = chip.slots[channel];
+		const size_t registers = chip.isOPM ? std::size(OPMRegisterMask) : std::size(OPN2RegisterMask);
+		for(size_t op = 0; op < 4; op++)
+		{
+			for(size_t reg = 0; reg < registers; reg++)
+			{
+				if(reg == LevelRegister)
+					continue;  // Written by WriteLevels, which folds in the channel volume
+				const uint8 mask = chip.isOPM ? OPMRegisterMask[reg] : OPN2RegisterMask[reg];
+				Write(chip, OperatorRegister(chip, channel, op, reg), slot.patch[1 + op * 7 + reg] & mask);
+			}
+		}
+		WriteLevels(chip, channel);
+		WriteAlgorithmAndPanning(chip, channel);
 	}
 
 public:
@@ -92,140 +247,163 @@ public:
 
 	bool HasChannel(CHANNELINDEX channel) const
 	{
-		for(const auto &voice : m_voices)
-			if(voice.channel == channel)
-				return true;
+		for(const auto &chip : m_chips)
+		{
+			if(!chip.Exists())
+				continue;
+			for(uint8 i = 0; i < chip.NumChannels(); i++)
+				if(chip.slots[i].channel == channel)
+					return true;
+		}
 		return false;
 	}
 
 	void Reset()
 	{
-		for(auto &voice : m_voices)
-			voice.channel = CHANNELINDEX_INVALID;
-		m_nextVoice.fill(0);
+		for(auto &chip : m_chips)
+		{
+			if(chip.Exists())
+				InitChip(chip, chip.isOPM);
+		}
 	}
 
 	void Patch(CHANNELINDEX channel, const OPN2Patch &patch, bool useOPM)
 	{
-		auto *voice = Find(channel);
-		if(voice && static_cast<bool>(voice->opm) != useOPM)
-		{
+		Chip &chip = m_chips[useOPM ? 1 : 0];
+		if(!chip.Exists())
+			InitChip(chip, useOPM);
+
+		// A channel that moves between the two chips has to release its old voice first.
+		Chip *previousChip = nullptr;
+		uint8 previousIndex = 0;
+		if(Find(channel, &previousChip, &previousIndex) && previousChip != &chip)
 			NoteCut(channel, true);
-			voice = nullptr;
-		}
-		if(!voice)
+
+		const uint8 count = chip.NumChannels();
+		uint8 found = count;
+		for(uint8 i = 0; i < count; i++)
 		{
-			const size_t start = useOPM ? OPN2Voices : 0;
-			const size_t count = useOPM ? OPMVoices : OPN2Voices;
-			const auto first = m_voices.begin() + start;
-			const auto last = first + count;
-			// Notes for the same tick are assigned before any of them are keyed on.
-			// Keep their reservations while there are unused hardware voices.
-			const auto free = std::find_if(first, last, [](const Voice &candidate)
-				{ return candidate.channel == CHANNELINDEX_INVALID; });
-			if(free != last)
-				voice = &*free;
-			if(!voice)
+			if(chip.slots[i].channel == channel)
 			{
-				const auto released = std::find_if(first, last, [](const Voice &candidate)
-					{ return !candidate.keyed && candidate.hasPlayed; });
-				if(released != last)
-					voice = &*released;
+				found = i;
+				break;
 			}
-			if(!voice)
+		}
+		if(found == count)
+		{
+			// Notes starting on the same tick are assigned before any of them are keyed on,
+			// so keep their reservations while there are unused channels left.
+			for(uint8 i = 0; i < count; i++)
 			{
-				auto &next = m_nextVoice[useOPM];
-				voice = &m_voices[start + next];
-				next = (next + 1) % count;
+				if(chip.slots[i].channel == CHANNELINDEX_INVALID)
+				{
+					found = i;
+					break;
+				}
 			}
-			voice->Reset(useOPM);
-			voice->channel = channel;
+		}
+		if(found == count)
+		{
+			for(uint8 i = 0; i < count; i++)
+			{
+				if(!chip.slots[i].keyed && chip.slots[i].hasPlayed)
+				{
+					found = i;
+					break;
+				}
+			}
+		}
+		if(found == count)
+		{
+			found = static_cast<uint8>(chip.next);
+			chip.next = (chip.next + 1) % count;
 		}
 
-		if(useOPM)
+		Slot &slot = chip.slots[found];
+		if(slot.channel != channel)
 		{
-			constexpr uint8 offsets[] = {0, 16, 8, 24};
-			constexpr uint8 masks[] = {0x7f, 0x7f, 0xdf, 0x9f, 0xdf, 0xff};
-			for(size_t op = 0; op < 4; op++)
-				for(size_t reg = 0; reg < std::size(masks); reg++)
-					voice->Write(static_cast<uint8>(0x40 + reg * 0x20 + offsets[op]), patch[1 + op * 7 + reg] & masks[reg]);
-			voice->Write(0x20, (patch[0] & 0x3f) | 0xc0);
-			return;
+			KeyOn(chip, found, false);
+			slot = Slot{};
+			slot.channel = channel;
 		}
-
-		static constexpr uint8 OperatorOffset[] = {0, 8, 4, 12};
-		static constexpr uint8 RegisterMask[] = {0x7F, 0x7F, 0xDF, 0x9F, 0x1F, 0xFF, 0x0F};
-		for(size_t op = 0; op < 4; op++)
-			for(size_t reg = 0; reg < 7; reg++)
-				voice->Write(static_cast<uint8>(0x30 + reg * 0x10 + OperatorOffset[op]), patch[1 + op * 7 + reg] & RegisterMask[reg]);
-		voice->Write(0xB0, patch[0] & 0x3F);
-		voice->Write(0xB4, 0xC0);
+		slot.patch = patch;
+		WritePatch(chip, found);
 	}
 
+	// Furnace commands 12xx to 15xx set the level of a single operator.
 	void OperatorLevel(CHANNELINDEX channel, uint8 op, uint8 level)
 	{
-		if(auto *voice = Find(channel))
+		Chip *chip = nullptr;
+		uint8 index = 0;
+		if(Slot *slot = Find(channel, &chip, &index); slot != nullptr && op < 4)
 		{
-			constexpr uint8 opmOffset[] = {0, 16, 8, 24};
-			constexpr uint8 opnOffset[] = {0, 8, 4, 12};
-			voice->Write(voice->opm ? 0x60 + opmOffset[op] : 0x40 + opnOffset[op], level);
+			slot->patch[1 + op * 7 + LevelRegister] = level & MaxLevel;
+			WriteLevels(*chip, index);
 		}
 	}
 
 	bool NoteOff(CHANNELINDEX channel)
 	{
-		auto *voice = Find(channel);
-		if(!voice)
+		Chip *chip = nullptr;
+		uint8 index = 0;
+		if(!Find(channel, &chip, &index))
 			return false;
-		voice->Key(false);
+		KeyOn(*chip, index, false);
 		return true;
 	}
 
 	bool NoteCut(CHANNELINDEX channel, bool unassign)
 	{
-		auto *voice = Find(channel);
-		if(!voice)
+		Chip *chip = nullptr;
+		uint8 index = 0;
+		Slot *slot = Find(channel, &chip, &index);
+		if(!slot)
 			return false;
-		voice->Key(false);
-		voice->volume = 0;
+		KeyOn(*chip, index, false);
+		slot->volume = slot->modVolume = 0;
+		WriteLevels(*chip, index);
 		if(unassign)
-			voice->channel = CHANNELINDEX_INVALID;
+			slot->channel = CHANNELINDEX_INVALID;
 		return true;
 	}
 
 	bool MoveChannel(CHANNELINDEX from, CHANNELINDEX to)
 	{
-		auto *voice = Find(from);
-		if(!voice)
+		Chip *chip = nullptr;
+		uint8 index = 0;
+		Slot *slot = Find(from, &chip, &index);
+		if(!slot)
 			return false;
 		if(from != to)
 		{
 			NoteCut(to, true);
-			voice->channel = to;
+			slot->channel = to;
 		}
 		return true;
 	}
 
 	bool Frequency(CHANNELINDEX channel, uint32 milliHertz, bool keyOff)
 	{
-		auto *voice = Find(channel);
-		if(!voice)
+		Chip *chip = nullptr;
+		uint8 index = 0;
+		Slot *slot = Find(channel, &chip, &index);
+		if(!slot)
 			return false;
-		if(milliHertz && voice->opm)
+		if(milliHertz && chip->isOPM)
 		{
-			// Key code starts at C-sharp; the remaining quarter-octave codes are skipped.
+			// Key code starts at C sharp; the remaining quarter-octave codes are skipped.
 			constexpr uint8 codes[] = {0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14};
 			// OPM key fraction at concert A for the 3.579545 MHz clock.
 			const double key = 56.0 + 12.0 * std::log2(milliHertz / 440000.0);
 			const int fraction = std::clamp(static_cast<int>(std::lround(key * 64)), 0, 96 * 64 - 1);
 			const int note = fraction / 64;
-			voice->Write(0x28, static_cast<uint8>((note / 12) * 16 + codes[note % 12]));
-			voice->Write(0x30, static_cast<uint8>((fraction % 64) * 4));
+			Write(*chip, ChannelRegister(*chip, index, 0x28), static_cast<uint8>((note / 12) * 16 + codes[note % 12]));
+			Write(*chip, ChannelRegister(*chip, index, 0x30), static_cast<uint8>((fraction % 64) * 4));
 		} else if(milliHertz)
 		{
 			// The OPN2 phase accumulator advances F-number * 2^block / 2 at the chip rate.
 			const uint64 numerator = static_cast<uint64>(milliHertz) * (uint64{1} << 21) * 144;
-			const uint64 denominator = static_cast<uint64>(Clock) * 1000;
+			const uint64 denominator = static_cast<uint64>(OPN2Clock) * 1000;
 			uint8 block = 0;
 			uint64 fnum = (numerator + denominator / 2) / denominator;
 			while(fnum > 2047 && block < 7)
@@ -235,71 +413,116 @@ public:
 				fnum = (numerator + scaled / 2) / scaled;
 			}
 			fnum = std::clamp<uint64>(fnum, 1, 2047);
-			voice->Write(0xA4, static_cast<uint8>((block << 3) | (fnum >> 8)));
-			voice->Write(0xA0, static_cast<uint8>(fnum & 0xFF));
+			Write(*chip, ChannelRegister(*chip, index, 0xA4), static_cast<uint8>((block << 3) | (fnum >> 8)));
+			Write(*chip, ChannelRegister(*chip, index, 0xA0), static_cast<uint8>(fnum & 0xFF));
 		}
-		voice->Key(!keyOff && milliHertz != 0);
+		KeyOn(*chip, index, !keyOff && milliHertz != 0);
 		return true;
 	}
 
 	bool Volume(CHANNELINDEX channel, uint8 volume, bool applyToModulator)
 	{
-		auto *voice = Find(channel);
-		if(!voice)
+		Chip *chip = nullptr;
+		uint8 index = 0;
+		Slot *slot = Find(channel, &chip, &index);
+		if(!slot)
 			return false;
-		if(!applyToModulator)
-			voice->volume = std::min<uint8>(volume, 63);
-		return true;
-	}
-
-	bool Pan(CHANNELINDEX channel, int32 pan)
-	{
-		auto *voice = Find(channel);
-		if(!voice)
-			return false;
-		voice->pan = std::clamp<int32>(pan, 0, 256);
-		return true;
-	}
-
-	void Mix(int32 *target, size_t count, uint32 volumeFactorQ16, const ModChannel *channels)
-	{
-		for(auto &voice : m_voices)
+		const uint8 clamped = std::min<uint8>(volume, 63);
+		uint8 &target = applyToModulator ? slot->modVolume : slot->volume;
+		if(target != clamped)
 		{
-			if(voice.channel == CHANNELINDEX_INVALID)
+			target = clamped;
+			WriteLevels(*chip, index);
+		}
+		return true;
+	}
+
+	// These chips only choose between left, right and both, which is what the mixer expects
+	// back from OPL::Pan as -1, 0 and 1.
+	bool Pan(CHANNELINDEX channel, int32 pan, int8 &result)
+	{
+		Chip *chip = nullptr;
+		uint8 index = 0;
+		Slot *slot = Find(channel, &chip, &index);
+		if(!slot)
+			return false;
+		const int8 panning = static_cast<int8>(pan <= 84 ? -1 : pan >= 171 ? 1 : 0);
+		if(slot->panning != panning)
+		{
+			slot->panning = panning;
+			WriteAlgorithmAndPanning(*chip, index);
+		}
+		result = panning;
+		return true;
+	}
+
+	// Muted channels stop receiving volume updates, so the chip has to be silenced here.
+	bool Mute(CHANNELINDEX channel, bool muted)
+	{
+		Chip *chip = nullptr;
+		uint8 index = 0;
+		Slot *slot = Find(channel, &chip, &index);
+		if(!slot)
+			return false;
+		if(slot->muted != muted)
+		{
+			slot->muted = muted;
+			WriteLevels(*chip, index);
+			WriteAlgorithmAndPanning(*chip, index);
+		}
+		return true;
+	}
+
+	void Mix(int32 *target, size_t count, uint32 volumeFactorQ16)
+	{
+		for(auto &chip : m_chips)
+		{
+			if(!chip.Exists() || !chip.rate)
 				continue;
-			const bool muted = channels[voice.channel].dwFlags[CHN_MUTE | CHN_SYNCMUTE];
-			const double chipGain = voice.opm ? 240.0 : 1200.0;
-			const double gain = muted ? 0.0 : (chipGain / (63.0 * 65536.0)) * volumeFactorQ16 * voice.volume;
-			const double left = gain * std::min<int32>(256 - voice.pan, 128) / 128.0;
-			const double right = gain * std::min<int32>(voice.pan, 128) / 128.0;
+			bool assigned = false;
+			for(uint8 i = 0; i < chip.NumChannels(); i++)
+				assigned |= chip.slots[i].channel != CHANNELINDEX_INVALID;
+			if(!assigned)
+				continue;
+
+			const double gain = static_cast<double>(MixerReference) * volumeFactorQ16 / 65536.0;
 			for(size_t i = 0; i < count; i++)
 			{
-				voice.phase += voice.sampleRate;
-				while(voice.phase >= m_rate)
+				chip.phase += chip.rate;
+				while(chip.phase >= m_rate)
 				{
-					voice.phase -= m_rate;
-					voice.previous = voice.current;
-					if(voice.opm)
+					chip.phase -= m_rate;
+					chip.previous = chip.current;
+					std::array<double, 2> raw{};
+					if(chip.opm)
 					{
 						ymfm::ym2151::output_data sample;
-						voice.opm->generate(&sample);
-						voice.current = sample.data[0];
+						chip.opm->generate(&sample);
+						raw[0] = sample.data[0];
+						raw[1] = sample.data[1];
 					} else
 					{
 						ymfm::ym2612::output_data sample;
-						voice.chip.generate(&sample);
-						// Remove the YM2612 DAC's idle offset without changing its waveform.
-						voice.dc += 0.001 * (sample.data[0] - voice.dc);
-						voice.current = sample.data[0] - voice.dc;
+						chip.opn->generate(&sample);
+						raw[0] = sample.data[0];
+						raw[1] = sample.data[1];
+					}
+					for(size_t ch = 0; ch < 2; ch++)
+					{
+						// Remove the DAC's idle offset without changing the waveform.
+						chip.dc[ch] += chip.dcCoef * (raw[ch] - chip.dc[ch]);
+						chip.current[ch] = raw[ch] - chip.dc[ch];
 					}
 				}
-				const double sample = voice.previous + (voice.current - voice.previous) * (static_cast<double>(voice.phase) / m_rate);
-				target[2 * i] += static_cast<int32>(sample * left);
-				target[2 * i + 1] += static_cast<int32>(sample * right);
+				const double fraction = static_cast<double>(chip.phase) / m_rate;
+				for(size_t ch = 0; ch < 2; ch++)
+				{
+					const double sample = chip.previous[ch] + (chip.current[ch] - chip.previous[ch]) * fraction;
+					target[2 * i + ch] += static_cast<int32>(sample * gain);
+				}
 			}
 		}
 	}
 };
 
 OPENMPT_NAMESPACE_END
-

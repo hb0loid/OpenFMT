@@ -2406,6 +2406,8 @@ bool CSoundFile::ReadNote()
 			}
 			chn.increment = ninc;
 
+			if(chn.dwFlags[CHN_ADLIB] && m_opl)
+				m_opl->MuteVoice(nChn, chn.dwFlags[CHN_MUTE | CHN_SYNCMUTE]);
 			if((chn.dwFlags & (CHN_ADLIB | CHN_MUTE | CHN_SYNCMUTE)) == CHN_ADLIB && m_opl)
 			{
 				const bool doProcess = m_playBehaviour[kOPLFlexibleNoteOff] || !chn.dwFlags[CHN_NOTEFADE] || GetType() == MOD_TYPE_S3M;
