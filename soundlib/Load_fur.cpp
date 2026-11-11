@@ -857,7 +857,47 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 			grooves.emplace_back(sequence.begin(), sequence.begin() + length);
 		}
 	}
-	const bool timing = !grooves.empty() || std::adjacent_find(speeds.begin(), speeds.end(), std::not_equal_to<uint8>()) != speeds.end();
+	// Furnace держит набор скоростей и чередует их по строкам, а эффекты 09xx и
+	// 0Fxx меняют их по отдельности. Если песня начинается с равных скоростей,
+	// а эффект потом их разводит, чередование обязан вести служебный канал: без
+	// него импорт ставит на строку одну скорость, и темп уезжает на всю песню.
+	// Поэтому паттерны просматриваются заранее, до выбора числа каналов.
+	bool speedEffects = false;
+	if((flags & loadPatternData) && speeds.size() > 1)
+	{
+		std::vector<FurRow> scan;
+		for(auto offset : patternOffsets)
+		{
+			std::string blockID;
+			auto block = FurBlock(file, offset, blockID);
+			const bool packed = blockID == "PATN";
+			if(!packed && blockID != "PATR")
+				continue;
+			const auto subsong = packed ? block.ReadUint8() : 0;
+			const uint16 channel = packed ? block.ReadUint8() : block.ReadUint16LE();
+			block.Skip(2);
+			const uint16 oldSubsong = packed ? 0 : block.ReadUint16LE();
+			if(!packed)
+				block.Skip(2);
+			if(subsong || oldSubsong || channel >= voices.size())
+				continue;
+			scan.assign(rows, FurRow{});
+			if(!ReadFurPattern(block, packed, scan, columns[channel]))
+				continue;
+			for(const auto &row : scan)
+			{
+				for(const auto &[code, value] : row.effects)
+				{
+					if(code == 0x09 || code == 0x0f)
+						speedEffects = true;
+				}
+			}
+			if(speedEffects)
+				break;
+		}
+	}
+	const bool timing = !grooves.empty() || speedEffects
+		|| std::adjacent_find(speeds.begin(), speeds.end(), std::not_equal_to<uint8>()) != speeds.end();
 	InitializeGlobals(MOD_TYPE_MPT, static_cast<CHANNELINDEX>(voices.size() + (timing ? 1 : 0)));
 	m_SongFlags.set(SONG_IMPORTED | SONG_LINEARSLIDES);
 	// Громкость микросхем из chipGains здесь намеренно не применяется. Furnace
