@@ -54,6 +54,8 @@ private:
 		uint8 volume = 63, modVolume = 63;
 		int8 panning = 0;
 		bool keyed = false, hasPlayed = false, muted = false;
+		// Сколько отсчётов чипа осталось выждать до постановки ключа.
+		uint8 keyOnDelay = 0;
 	};
 
 	struct Chip
@@ -68,6 +70,7 @@ private:
 		double dcCoef = 0.0;
 		size_t next = 0;
 		bool isOPM = false;
+		bool keyPending = false;  // Хоть у одного голоса ключ ждёт постановки
 
 		uint8 NumChannels() const { return isOPM ? OPMChannels : OPN2Channels; }
 		bool Exists() const { return opn != nullptr || opm != nullptr; }
@@ -177,17 +180,38 @@ private:
 		return nullptr;
 	}
 
-	void KeyOn(Chip &chip, uint8 channel, bool on)
+	static void WriteKey(Chip &chip, uint8 channel, bool on)
 	{
-		Slot &slot = chip.slots[channel];
-		if(slot.keyed == on)
-			return;
 		if(chip.isOPM)
 			Write(chip, 0x08, static_cast<uint8>((on ? 0x78 : 0x00) | channel));
 		else
 			Write(chip, 0x28, static_cast<uint8>((on ? 0xF0 : 0x00) | (channel < 3 ? channel : (channel - 3) + 4)));
-		slot.keyed = on;
-		slot.hasPlayed |= on;
+	}
+
+	void KeyOn(Chip &chip, uint8 channel, bool on)
+	{
+		Slot &slot = chip.slots[channel];
+		if(!on)
+		{
+			slot.keyOnDelay = 0;
+			if(!slot.keyed)
+				return;
+			WriteKey(chip, channel, false);
+			slot.keyed = false;
+			return;
+		}
+		if(slot.keyed || slot.keyOnDelay)
+			return;
+		// Ключ ставится не сразу, а после того как чип отработает хотя бы один
+		// свой отсчёт со снятым ключом. На смене ноты микшер присылает снятие и
+		// постановку в одном тике, то есть до того как чип успеет тактироваться,
+		// и генератор огибающей перехода не видит: нота тянется дальше вместо
+		// того чтобы начаться заново. Пока у каждого голоса был свой экземпляр
+		// чипа, это получалось само, потому что выделение голоса сбрасывало весь
+		// чип; у общего экземпляра так делать нельзя.
+		slot.keyOnDelay = 1;
+		slot.hasPlayed = true;
+		chip.keyPending = true;
 	}
 
 	// Algorithm, feedback and the output enable bits share one register on the YM2151,
@@ -522,6 +546,24 @@ public:
 						// Remove the DAC's idle offset without changing the waveform.
 						chip.dc[ch] += chip.dcCoef * (raw[ch] - chip.dc[ch]);
 						chip.current[ch] = raw[ch] - chip.dc[ch];
+					}
+					// Отсчёт со снятым ключом отработан, теперь можно ставить
+					// ключ: огибающая начнётся заново.
+					if(chip.keyPending)
+					{
+						bool pending = false;
+						for(uint8 slot = 0; slot < chip.NumChannels(); slot++)
+						{
+							if(!chip.slots[slot].keyOnDelay)
+								continue;
+							if(--chip.slots[slot].keyOnDelay == 0)
+							{
+								WriteKey(chip, slot, true);
+								chip.slots[slot].keyed = true;
+							} else
+								pending = true;
+						}
+						chip.keyPending = pending;
 					}
 				}
 				const double fraction = static_cast<double>(chip.phase) / m_rate;
