@@ -61,7 +61,10 @@ private:
 	struct Chip
 	{
 		ymfm::ymfm_interface host;
-		std::unique_ptr<ymfm::ym2612> opn;
+		// ym3438 — та же YM2612 без разрыва ЦАП. Furnace по умолчанию считает
+		// именно так, а ladder effect включается отдельным флагом песни. С
+		// обычной ym2612 выход заметно шумит.
+		std::unique_ptr<ymfm::ym3438> opn;
 		std::unique_ptr<ymfm::ym2151> opm;
 		std::array<Slot, OPMChannels> slots;
 		uint32 rate = 0;
@@ -126,9 +129,19 @@ private:
 			return baseLevel;
 		if(vol == 0)
 			return MaxLevel;
-		const double decibels = -20.0 * std::log10(static_cast<double>(vol) / 63.0);
-		const int steps = static_cast<int>(std::lround(decibels / 0.75));
-		return static_cast<uint8>(std::min<int>(MaxLevel, baseLevel + steps));
+		// Затухание линейно по децибелам: к Total Level добавляется столько
+		// шагов по 0,75 дБ, сколько громкости недостаёт до максимума. Шкала
+		// взята та же, что у штатного OPL, то есть 63 шага, около 47 дБ на весь
+		// ход ползунка и 23 дБ на половине. Так регулировка ведёт себя как у
+		// встроенного OPL, с которым её и сравнивают.
+		//
+		// Furnace отображает громкость на все 127 шагов, то есть вдвое круче по
+		// децибелам. Если понадобится точное совпадение с ним по динамике
+		// громкости, менять нужно здесь.
+		//
+		// Перевод амплитуды в децибелы логарифмом здесь неверен: он даёт на
+		// половине громкости 6 дБ, и регулировка почти не работает.
+		return static_cast<uint8>(std::min<int>(MaxLevel, baseLevel + (63 - vol)));
 	}
 
 	void InitChip(Chip &chip, bool useOPM)
@@ -143,7 +156,7 @@ private:
 		} else
 		{
 			if(!chip.opn)
-				chip.opn = std::make_unique<ymfm::ym2612>(chip.host);
+				chip.opn = std::make_unique<ymfm::ym3438>(chip.host);
 			chip.opn->reset();
 			chip.rate = chip.opn->sample_rate(OPN2Clock);
 		}
