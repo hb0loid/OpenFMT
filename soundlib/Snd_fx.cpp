@@ -3208,10 +3208,6 @@ bool CSoundFile::ProcessEffects()
 					if(m_playBehaviour[kOPLNoteStopWith0Hz])
 						m_opl->Frequency(nChn, 0, true, false);
 					m_opl->NoteOff(nChn);
-					// У нативных чипов `^^^` должен глушить голос сразу, как в
-					// Furnace, а не отпускать огибающую по RR патча.
-					if(note == NOTE_NOTECUT)
-						m_opl->NoteCutNative(nChn);
 				}
 			}
 			// Tick-0 only volume commands

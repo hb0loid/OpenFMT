@@ -391,21 +391,6 @@ void OPL::MuteVoice(CHANNELINDEX c, bool muted)
 }
 
 
-// Обрыв ноты в Furnace глушит голос сразу, а не отпускает огибающую. Штатный
-// путь для OPL присылает на `^^^` только снятие ключа, после чего нота уходит в
-// релиз по RR патча и тянется дальше. Для нативных чипов это неверно: партии в
-// импортированных модулях держатся на обрывах, и без настоящего обрыва ноты
-// сливаются в один тянущийся звук. Штатного OPL это не касается, его поведение
-// остаётся прежним.
-void OPL::NoteCutNative(CHANNELINDEX c)
-{
-	if(m_psg)
-		m_psg->NoteCut(c, false);
-	if(m_opn2)
-		m_opn2->NoteCut(c, false);
-}
-
-
 void OPL::FMOperatorLevel(CHANNELINDEX c, uint8 op, uint8 level)
 {
 	if(m_opn2)

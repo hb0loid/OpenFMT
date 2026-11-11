@@ -1100,9 +1100,11 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 					const int note = sourceRow.note;
 					if(note >= 0 && note < 180)
 						cell.note = static_cast<ModCommand::NOTE>(ConvertNote(note - 60));
-					else if(note == 180)
-						cell.note = NOTE_NOTECUT;
-					else if(note == 181)
+					else if(note == 180 || note == 181)
+						// В Furnace и note off, и note release снимают ключ, то есть
+						// отпускают огибающую: у YM2612 команда ставит keyOff, а не
+						// глушит канал. Поэтому обоим соответствует `===`, а не `^^^`.
+						// Разница между ними только в освобождении макросов.
 						cell.note = NOTE_KEYOFF;
 					else if(note == 182)
 						unsupported++;
