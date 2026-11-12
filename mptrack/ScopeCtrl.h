@@ -41,9 +41,8 @@ protected:
 	CSize m_offScreenSize;
 	std::vector<float> m_samples;
 
-	// Ищет начало картинки так, чтобы одиночная нота стояла неподвижно: без
-	// этого волна бежит по экрану и разглядеть в ней нечего.
-	static uint32 Trigger(const float *samples, uint32 count);
+	// Ищет начало картинки так, чтобы волна стояла на месте, а не ездила.
+	static uint32 Trigger(const float *samples, uint32 count, float peak);
 
 	afx_msg void OnPaint();
 	afx_msg void OnTimer(UINT_PTR id);

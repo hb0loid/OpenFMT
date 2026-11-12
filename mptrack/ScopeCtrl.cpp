@@ -62,18 +62,39 @@ void ScopeCtrl::OnTimer(UINT_PTR id)
 }
 
 
-uint32 ScopeCtrl::Trigger(const float *samples, uint32 count)
+uint32 ScopeCtrl::Trigger(const float *samples, uint32 count, float peak)
 {
-	// Переход через ноль снизу вверх: у любой периодической волны он случается
-	// раз за период, поэтому картинка от кадра к кадру встаёт на одно место.
-	// Берём самый поздний из найденных, чтобы показывать как можно более свежее.
-	uint32 found = 0;
+	// Картинка начинается с перехода через ноль снизу вверх: у периодической
+	// волны он случается раз за период, поэтому кадры встают на одно место.
+	//
+	// Но у волны FM переходов за период бывает несколько: мелкая рябь на спаде
+	// пересекает ноль не хуже основного фронта. Цепляясь то за один, то за
+	// другой, картинка ездит влево-вправо. Поэтому переход засчитывается только
+	// после того, как волна сходила достаточно глубоко вниз: рябь столько не
+	// проходит, а настоящий период проходит всегда. Так в осциллографах и
+	// сделано, и порог там тоже берётся от размаха сигнала, а не абсолютный —
+	// иначе на тихой ноте он не сработает вовсе.
+	const float level = peak * 0.3f;
+	if(level <= 0.0f)
+		return 0;
+	bool armed = false;
+	uint32 fallback = 0;
 	for(uint32 i = 1; i < count; i++)
 	{
-		if(samples[i - 1] <= 0.0f && samples[i] > 0.0f)
-			found = i;
+		if(samples[i] < -level)
+		{
+			armed = true;
+		} else if(samples[i - 1] <= 0.0f && samples[i] > 0.0f)
+		{
+			if(armed)
+				return i;
+			if(!fallback)
+				fallback = i;
+		}
 	}
-	return found;
+	// Волна, которая не уходит ниже порога, бывает: например смещённая вверх.
+	// Для неё берём первый же переход, это всё равно лучше, чем нулевой сдвиг.
+	return fallback;
 }
 
 
@@ -119,7 +140,10 @@ void ScopeCtrl::OnPaint()
 
 	if(got)
 	{
-		const uint32 start = Trigger(m_samples.data(), search);
+		float whole = 0.0f;
+		for(const float value : m_samples)
+			whole = std::max(whole, std::abs(value));
+		const uint32 start = Trigger(m_samples.data(), search, whole);
 		const float *shown = m_samples.data() + start;
 
 		float peak = 0.0f;
