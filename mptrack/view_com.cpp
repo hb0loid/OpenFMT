@@ -400,7 +400,10 @@ void CViewComments::UpdateView(UpdateHint hint, CObject *)
 						break;
 					case SMPLIST_TYPE:
 						if(sample.uFlags[CHN_ADLIB])
-							s = _T("OPL");
+							// Флаг общий на все синтетические сэмплы, поэтому сам по
+							// себе он уже не говорит, какой это чип: так же, как на
+							// вкладке Samples, спрашиваем именно чип.
+							s = sample.psg ? _T("SN76489") : sample.isOPM ? _T("YM2151") : sample.isOPN2 ? _T("YM2612") : _T("OPL");
 						else if(sample.HasSampleData())
 							s = MPT_CFORMAT("{}-bit {}")(sample.GetElementarySampleSize() * 8, (sample.GetNumChannels() == 2) ? CString(_T("stereo")) : CString(_T("mono")));
 						break;
