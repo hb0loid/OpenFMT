@@ -19,6 +19,7 @@ OPENMPT_NAMESPACE_BEGIN
 
 BEGIN_MESSAGE_MAP(OPLInstrDlg, DialogBase)
 	ON_WM_HSCROLL()
+	ON_WM_SIZE()
 	ON_MESSAGE(WM_MOD_DRAGONDROPPING, &OPLInstrDlg::OnDragonDropping)
 	ON_COMMAND(IDC_CHECK1, &OPLInstrDlg::ParamsChanged)
 	ON_COMMAND(IDC_CHECK2, &OPLInstrDlg::ParamsChanged)
@@ -88,6 +89,8 @@ struct OPN2Param
 };
 
 constexpr OPN2Param Algorithm{0, 0, 7}, Feedback{0, 3, 7};
+constexpr int OPN2Rows = 9;   // параметров в операторе
+constexpr int OPN2MinRow = 16;
 constexpr OPN2Param OperatorParams[] = {
 	{0, 0, 15}, {0, 4, 7}, {1, 0, 127}, {2, 6, 3}, {2, 0, 31},
 	{3, 0, 31}, {4, 0, 31}, {5, 4, 15}, {5, 0, 15},
@@ -120,6 +123,36 @@ BOOL OPLInstrDlg::OnInitDialog()
 		{
 			GetDlgItem(id)->SendMessage(TBM_SETRANGEMAX, TRUE, param.mask);
 		});
+
+		CRect client;
+		GetClientRect(client);
+		m_designed = client.Size();
+		const auto remember = [this](int id)
+		{
+			if(const CWnd *wnd = GetDlgItem(id))
+			{
+				CRect rect;
+				wnd->GetWindowRect(rect);
+				ScreenToClient(rect);
+				m_designedRects[id] = rect;
+			}
+		};
+		remember(IDC_OPN2_ALGLABEL);
+		remember(IDC_OPN2_FBLABEL);
+		remember(IDC_OPN2_FIRST);
+		remember(IDC_OPN2_FIRST + 1);
+		for(int op = 0; op < 4; op++)
+		{
+			remember(IDC_OPN2_GROUP1 + op);
+			for(int row = 0; row < OPN2Rows; row++)
+			{
+				remember(IDC_OPN2_LABEL1 + op * OPN2Rows + row);
+				remember(IDC_OPN2_FIRST + 2 + op * OPN2Rows + row);
+			}
+		}
+		// Минимум нарочно меньше нарисованного: вкладке сэмплов часто достаётся
+		// полоса ниже диалога, и тогда нижние ряды уезжали бы за край.
+		m_minimumHeight = m_designedRects[IDC_OPN2_GROUP1].top + OPN2Rows * OPN2MinRow + 20;
 		return TRUE;
 	}
 	m_feedback.SetRange(0, 7);
@@ -136,6 +169,70 @@ BOOL OPLInstrDlg::OnInitDialog()
 	}
 
 	return TRUE;
+}
+
+
+void OPLInstrDlg::OnSize(UINT type, int cx, int cy)
+{
+	DialogBase::OnSize(type, cx, cy);
+	if(m_isOPN2)
+		LayoutOPN2();
+}
+
+
+// Крутилки нарисованы под фиксированный размер и не пользовались свободным
+// местом: на широкой вкладке слайдер в 55 единиц это полсотни пикселей на
+// 127 шагов Total Level. Теперь колонки операторов делят всю ширину, а ряды
+// всю высоту.
+void OPLInstrDlg::LayoutOPN2()
+{
+	if(!::IsWindow(m_hWnd) || m_designedRects.empty())
+		return;
+	CRect client;
+	GetClientRect(client);
+	if(client.Width() < 240 || client.Height() < 80)
+		return;
+
+	const auto place = [&](int id, int x, int y, int width, int height)
+	{
+		if(CWnd *wnd = GetDlgItem(id))
+			wnd->SetWindowPos(nullptr, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+	};
+	const CRect &group = m_designedRects[IDC_OPN2_GROUP1];
+	const CRect &label = m_designedRects[IDC_OPN2_LABEL1];
+	const int margin = group.left;
+	const int columnWidth = (client.Width() - margin * 2) / 4;
+	const int groupTop = group.top;
+	const int groupHeight = std::max<int>(client.Height() - groupTop - 6, OPN2Rows * OPN2MinRow + 18);
+	const int labelWidth = label.Width();
+	const int rowTop = label.top - groupTop;
+	const int rowHeight = std::max((groupHeight - rowTop - 8) / OPN2Rows, OPN2MinRow);
+
+	// Верхний ряд: алгоритм и обратная связь делят ширину пополам.
+	const int topSlider = (client.Width() - margin * 2) / 2 - m_designedRects[IDC_OPN2_ALGLABEL].Width() - 12;
+	const CRect &algSlider = m_designedRects[IDC_OPN2_FIRST];
+	place(IDC_OPN2_FIRST, m_designedRects[IDC_OPN2_ALGLABEL].right + 6, algSlider.top,
+		std::max(topSlider, 40), algSlider.Height());
+	const int fbLabel = margin + (client.Width() - margin * 2) / 2 + 6;
+	place(IDC_OPN2_FBLABEL, fbLabel, m_designedRects[IDC_OPN2_FBLABEL].top,
+		m_designedRects[IDC_OPN2_FBLABEL].Width(), m_designedRects[IDC_OPN2_FBLABEL].Height());
+	place(IDC_OPN2_FIRST + 1, fbLabel + m_designedRects[IDC_OPN2_FBLABEL].Width() + 6, algSlider.top,
+		std::max(topSlider, 40), algSlider.Height());
+
+	for(int op = 0; op < 4; op++)
+	{
+		const int left = margin + op * columnWidth;
+		place(IDC_OPN2_GROUP1 + op, left, groupTop, columnWidth - 3, groupHeight);
+		for(int row = 0; row < OPN2Rows; row++)
+		{
+			const int y = groupTop + rowTop + row * rowHeight;
+			const int sliderLeft = left + 5 + labelWidth;
+			place(IDC_OPN2_LABEL1 + op * OPN2Rows + row, left + 5, y, labelWidth, label.Height());
+			place(IDC_OPN2_FIRST + 2 + op * OPN2Rows + row, sliderLeft, y - 2,
+				std::max(left + columnWidth - 9 - sliderLeft, 30), rowHeight - 4);
+		}
+	}
+	Invalidate(TRUE);
 }
 
 

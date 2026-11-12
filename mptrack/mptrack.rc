@@ -569,87 +569,87 @@ STYLE DS_SETFONT | DS_FIXEDSYS | DS_CONTROL | WS_CHILD
 EXSTYLE WS_EX_ACCEPTFILES
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    LTEXT "YM2612 / OPN2",2558,7,9,66,9
-    LTEXT "Algorithm",IDC_STATIC,88,9,36,9
-    CONTROL "",2520,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,124,7,78,12
-    LTEXT "Feedback",IDC_STATIC,223,9,37,9
-    CONTROL "",2521,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,261,7,78,12
-    GROUPBOX "Operator 1",IDC_STATIC,6,25,110,141
-    LTEXT "Multiplier",IDC_STATIC,11,39,44,9
-    CONTROL "",2522,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,55,37,55,12
-    LTEXT "Detune",IDC_STATIC,11,53,44,9
-    CONTROL "",2523,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,55,51,55,12
-    LTEXT "Total Level",IDC_STATIC,11,67,44,9
-    CONTROL "",2524,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,55,65,55,12
-    LTEXT "Rate Scale",IDC_STATIC,11,81,44,9
-    CONTROL "",2525,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,55,79,55,12
-    LTEXT "Attack Rate",IDC_STATIC,11,95,44,9
-    CONTROL "",2526,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,55,93,55,12
-    LTEXT "Decay Rate",IDC_STATIC,11,109,44,9
-    CONTROL "",2527,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,55,107,55,12
-    LTEXT "Sustain Rate",IDC_STATIC,11,123,44,9
-    CONTROL "",2528,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,55,121,55,12
-    LTEXT "Sustain Level",IDC_STATIC,11,137,44,9
-    CONTROL "",2529,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,55,135,55,12
-    LTEXT "Release Rate",IDC_STATIC,11,151,44,9
-    CONTROL "",2530,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,55,149,55,12
-    GROUPBOX "Operator 2",IDC_STATIC,119,25,110,141
-    LTEXT "Multiplier",IDC_STATIC,124,39,44,9
-    CONTROL "",2531,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,168,37,55,12
-    LTEXT "Detune",IDC_STATIC,124,53,44,9
-    CONTROL "",2532,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,168,51,55,12
-    LTEXT "Total Level",IDC_STATIC,124,67,44,9
-    CONTROL "",2533,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,168,65,55,12
-    LTEXT "Rate Scale",IDC_STATIC,124,81,44,9
-    CONTROL "",2534,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,168,79,55,12
-    LTEXT "Attack Rate",IDC_STATIC,124,95,44,9
-    CONTROL "",2535,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,168,93,55,12
-    LTEXT "Decay Rate",IDC_STATIC,124,109,44,9
-    CONTROL "",2536,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,168,107,55,12
-    LTEXT "Sustain Rate",IDC_STATIC,124,123,44,9
-    CONTROL "",2537,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,168,121,55,12
-    LTEXT "Sustain Level",IDC_STATIC,124,137,44,9
-    CONTROL "",2538,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,168,135,55,12
-    LTEXT "Release Rate",IDC_STATIC,124,151,44,9
-    CONTROL "",2539,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,168,149,55,12
-    GROUPBOX "Operator 3",IDC_STATIC,232,25,110,141
-    LTEXT "Multiplier",IDC_STATIC,237,39,44,9
-    CONTROL "",2540,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,281,37,55,12
-    LTEXT "Detune",IDC_STATIC,237,53,44,9
-    CONTROL "",2541,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,281,51,55,12
-    LTEXT "Total Level",IDC_STATIC,237,67,44,9
-    CONTROL "",2542,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,281,65,55,12
-    LTEXT "Rate Scale",IDC_STATIC,237,81,44,9
-    CONTROL "",2543,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,281,79,55,12
-    LTEXT "Attack Rate",IDC_STATIC,237,95,44,9
-    CONTROL "",2544,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,281,93,55,12
-    LTEXT "Decay Rate",IDC_STATIC,237,109,44,9
-    CONTROL "",2545,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,281,107,55,12
-    LTEXT "Sustain Rate",IDC_STATIC,237,123,44,9
-    CONTROL "",2546,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,281,121,55,12
-    LTEXT "Sustain Level",IDC_STATIC,237,137,44,9
-    CONTROL "",2547,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,281,135,55,12
-    LTEXT "Release Rate",IDC_STATIC,237,151,44,9
-    CONTROL "",2548,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,281,149,55,12
-    GROUPBOX "Operator 4",IDC_STATIC,345,25,110,141
-    LTEXT "Multiplier",IDC_STATIC,350,39,44,9
-    CONTROL "",2549,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,394,37,55,12
-    LTEXT "Detune",IDC_STATIC,350,53,44,9
-    CONTROL "",2550,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,394,51,55,12
-    LTEXT "Total Level",IDC_STATIC,350,67,44,9
-    CONTROL "",2551,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,394,65,55,12
-    LTEXT "Rate Scale",IDC_STATIC,350,81,44,9
-    CONTROL "",2552,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,394,79,55,12
-    LTEXT "Attack Rate",IDC_STATIC,350,95,44,9
-    CONTROL "",2553,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,394,93,55,12
-    LTEXT "Decay Rate",IDC_STATIC,350,109,44,9
-    CONTROL "",2554,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,394,107,55,12
-    LTEXT "Sustain Rate",IDC_STATIC,350,123,44,9
-    CONTROL "",2555,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,394,121,55,12
-    LTEXT "Sustain Level",IDC_STATIC,350,137,44,9
-    CONTROL "",2556,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,394,135,55,12
-    LTEXT "Release Rate",IDC_STATIC,350,151,44,9
-    CONTROL "",2557,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,394,149,55,12
+    LTEXT           "YM2612 / OPN2",2558,7,9,66,9
+    LTEXT           "Algorithm",2650,88,9,36,9
+    CONTROL         "",2520,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,124,7,78,12
+    LTEXT           "Feedback",2651,223,9,37,9
+    CONTROL         "",2521,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,261,7,78,12
+    GROUPBOX        "Operator 1",2600,6,25,110,141
+    LTEXT           "Multiplier",2610,11,39,44,9
+    CONTROL         "",2522,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,55,37,55,12
+    LTEXT           "Detune",2611,11,53,44,9
+    CONTROL         "",2523,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,55,51,55,12
+    LTEXT           "Total Level",2612,11,67,44,9
+    CONTROL         "",2524,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,55,65,55,12
+    LTEXT           "Rate Scale",2613,11,81,44,9
+    CONTROL         "",2525,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,55,79,55,12
+    LTEXT           "Attack Rate",2614,11,95,44,9
+    CONTROL         "",2526,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,55,93,55,12
+    LTEXT           "Decay Rate",2615,11,109,44,9
+    CONTROL         "",2527,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,55,107,55,12
+    LTEXT           "Sustain Rate",2616,11,123,44,9
+    CONTROL         "",2528,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,55,121,55,12
+    LTEXT           "Sustain Level",2617,11,137,44,9
+    CONTROL         "",2529,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,55,135,55,12
+    LTEXT           "Release Rate",2618,11,151,44,9
+    CONTROL         "",2530,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,55,149,55,12
+    GROUPBOX        "Operator 2",2601,119,25,110,141
+    LTEXT           "Multiplier",2619,124,39,44,9
+    CONTROL         "",2531,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,168,37,55,12
+    LTEXT           "Detune",2620,124,53,44,9
+    CONTROL         "",2532,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,168,51,55,12
+    LTEXT           "Total Level",2621,124,67,44,9
+    CONTROL         "",2533,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,168,65,55,12
+    LTEXT           "Rate Scale",2622,124,81,44,9
+    CONTROL         "",2534,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,168,79,55,12
+    LTEXT           "Attack Rate",2623,124,95,44,9
+    CONTROL         "",2535,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,168,93,55,12
+    LTEXT           "Decay Rate",2624,124,109,44,9
+    CONTROL         "",2536,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,168,107,55,12
+    LTEXT           "Sustain Rate",2625,124,123,44,9
+    CONTROL         "",2537,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,168,121,55,12
+    LTEXT           "Sustain Level",2626,124,137,44,9
+    CONTROL         "",2538,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,168,135,55,12
+    LTEXT           "Release Rate",2627,124,151,44,9
+    CONTROL         "",2539,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,168,149,55,12
+    GROUPBOX        "Operator 3",2602,232,25,110,141
+    LTEXT           "Multiplier",2628,237,39,44,9
+    CONTROL         "",2540,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,281,37,55,12
+    LTEXT           "Detune",2629,237,53,44,9
+    CONTROL         "",2541,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,281,51,55,12
+    LTEXT           "Total Level",2630,237,67,44,9
+    CONTROL         "",2542,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,281,65,55,12
+    LTEXT           "Rate Scale",2631,237,81,44,9
+    CONTROL         "",2543,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,281,79,55,12
+    LTEXT           "Attack Rate",2632,237,95,44,9
+    CONTROL         "",2544,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,281,93,55,12
+    LTEXT           "Decay Rate",2633,237,109,44,9
+    CONTROL         "",2545,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,281,107,55,12
+    LTEXT           "Sustain Rate",2634,237,123,44,9
+    CONTROL         "",2546,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,281,121,55,12
+    LTEXT           "Sustain Level",2635,237,137,44,9
+    CONTROL         "",2547,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,281,135,55,12
+    LTEXT           "Release Rate",2636,237,151,44,9
+    CONTROL         "",2548,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,281,149,55,12
+    GROUPBOX        "Operator 4",2603,345,25,110,141
+    LTEXT           "Multiplier",2637,350,39,44,9
+    CONTROL         "",2549,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,394,37,55,12
+    LTEXT           "Detune",2638,350,53,44,9
+    CONTROL         "",2550,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,394,51,55,12
+    LTEXT           "Total Level",2639,350,67,44,9
+    CONTROL         "",2551,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,394,65,55,12
+    LTEXT           "Rate Scale",2640,350,81,44,9
+    CONTROL         "",2552,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,394,79,55,12
+    LTEXT           "Attack Rate",2641,350,95,44,9
+    CONTROL         "",2553,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,394,93,55,12
+    LTEXT           "Decay Rate",2642,350,109,44,9
+    CONTROL         "",2554,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,394,107,55,12
+    LTEXT           "Sustain Rate",2643,350,123,44,9
+    CONTROL         "",2555,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,394,121,55,12
+    LTEXT           "Sustain Level",2644,350,137,44,9
+    CONTROL         "",2556,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,394,135,55,12
+    LTEXT           "Release Rate",2645,350,151,44,9
+    CONTROL         "",2557,"msctls_trackbar32",TBS_TOOLTIPS | WS_TABSTOP,394,149,55,12
 END
 
 IDD_PSG_PARAMS DIALOGEX 0, 0, 462, 174
