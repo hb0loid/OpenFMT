@@ -947,6 +947,8 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 
 	std::vector<FurInstrument> furInstruments(instrumentCount);
 	std::map<std::pair<CHANNELINDEX, int>, INSTRUMENTINDEX> psgInstruments;
+	const bool songHasOPM = std::find(voices.begin(), voices.end(), FurVoice::OPM) != voices.end();
+	const bool songHasFM = songHasOPM || std::find(voices.begin(), voices.end(), FurVoice::OPN2) != voices.end();
 	std::vector<bool> usedPSGInstrument(instrumentCount);
 	std::vector<INSTRUMENTINDEX> rawSamples(sampleCount);
 	m_nInstruments = instrumentCount;
@@ -980,7 +982,24 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		} else if(fur.type == 4 || fur.type == 41)
 		{
 			if(fur.sample >= 0 && fur.sample < sampleCount)
+			{
 				mappedSample = static_cast<SAMPLEINDEX>(fur.sample + 1);
+			} else if(songHasFM)
+			{
+				// Инструмент без своих данных: ни FM-патча, ни сэмпла. Furnace
+				// такой нотой играет тем, что уже лежит в регистрах чипа, то есть
+				// звук есть. Пустой инструмент в OpenMPT вместо этого молчит,
+				// поэтому ему даётся патч по умолчанию: тембр не тот, зато нота
+				// слышна там, где её ждёшь.
+				mappedSample = ++m_nSamples;
+				auto &sample = Samples[mappedSample];
+				sample.Initialize(MOD_TYPE_MPT);
+				sample.SetAdlib(true);
+				sample.isOPN2 = true;
+				sample.isOPM = songHasOPM;
+				sample.opn2 = DefaultOPN2Patch;
+				m_szNames[mappedSample] = fur.name;
+			}
 		} else if(fur.type != 0)
 		{
 			unsupported++;
