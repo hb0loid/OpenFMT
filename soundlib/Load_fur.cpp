@@ -508,6 +508,19 @@ void SetFurEnvelope(ModInstrument &ins, const FurInstrument &fur, int maxVolume)
 		env.nLoopStart = static_cast<uint8>(fur.volumeLoop + offset);
 		env.nLoopEnd = env.LastPoint();
 		env.dwFlags.set(ENV_LOOP);
+	} else
+	{
+		// Макрос без петли и без release в Furnace не кончается: он доходит до
+		// последнего значения и держит его, пока нота звучит. Огибающая OpenMPT
+		// ведёт себя иначе — дойдя до конца, она по правилам IT включает Fade
+		// Out, и нота плавно гаснет за пару секунд. На `life will go on` это и
+		// давало «паузы»: у инструмента 19 макрос это одно значение 118, нота
+		// уходила на −50 дБ за две секунды, хотя Furnace держал уровень до
+		// следующей ноты. Поэтому на последнюю точку ставится sustain: пока
+		// нота держится, уровень стоит, а на `===` sustain отпускается,
+		// огибающая доходит до конца и нота гаснет, как и положено.
+		env.nSustainStart = env.nSustainEnd = env.LastPoint();
+		env.dwFlags.set(ENV_SUSTAIN);
 	}
 }
 
@@ -961,8 +974,6 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 
 	std::vector<FurInstrument> furInstruments(instrumentCount);
 	std::map<std::pair<CHANNELINDEX, int>, INSTRUMENTINDEX> psgInstruments;
-	const bool songHasOPM = std::find(voices.begin(), voices.end(), FurVoice::OPM) != voices.end();
-	const bool songHasFM = songHasOPM || std::find(voices.begin(), voices.end(), FurVoice::OPN2) != voices.end();
 	std::vector<bool> usedPSGInstrument(instrumentCount);
 	std::vector<INSTRUMENTINDEX> rawSamples(sampleCount);
 	m_nInstruments = instrumentCount;
@@ -996,24 +1007,7 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		} else if(fur.type == 4 || fur.type == 41)
 		{
 			if(fur.sample >= 0 && fur.sample < sampleCount)
-			{
 				mappedSample = static_cast<SAMPLEINDEX>(fur.sample + 1);
-			} else if(songHasFM)
-			{
-				// Инструмент без своих данных: ни FM-патча, ни сэмпла. Furnace
-				// такой нотой играет тем, что уже лежит в регистрах чипа, то есть
-				// звук есть. Пустой инструмент в OpenMPT вместо этого молчит,
-				// поэтому ему даётся патч по умолчанию: тембр не тот, зато нота
-				// слышна там, где её ждёшь.
-				mappedSample = ++m_nSamples;
-				auto &sample = Samples[mappedSample];
-				sample.Initialize(MOD_TYPE_MPT);
-				sample.SetAdlib(true);
-				sample.isOPN2 = true;
-				sample.isOPM = songHasOPM;
-				sample.opn2 = fur.patch;
-				m_szNames[mappedSample] = fur.name;
-			}
 		} else if(fur.type != 0)
 		{
 			unsupported++;
@@ -1106,6 +1100,37 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		std::vector<unsigned> bank(voices.size(), 0);
 		std::vector<bool> legacyDAC(voices.size(), false);
 		std::vector<int> lastInstrument(voices.size(), 0);
+		// Инструмент без FM-патча, попавший на FM-канал, у Furnace звучит
+		// патчем по умолчанию: на note on чип читает поля `DivInstrumentFM`
+		// как есть, а сэмпл ему не нужен — проверено по `DIV_CMD_NOTE_ON` в
+		// `arcade.cpp` и `genesis.cpp`. У нас же такой инструмент тянет за
+		// собой свой PCM-сэмпл, и партия канала расходится. Поэтому на такую
+		// пару «инструмент и чип» создаётся отдельный инструмент: патч по
+		// умолчанию, но своя огибающая, потому что макрос громкости Furnace
+		// применяет независимо от типа.
+		std::map<std::pair<int, bool>, INSTRUMENTINDEX> fmFallback;
+		const auto assignFMFallback = [&](int furIns, bool opm) -> INSTRUMENTINDEX
+		{
+			auto &mapped = fmFallback[{furIns, opm}];
+			if(mapped)
+				return mapped;
+			if(m_nInstruments >= 255 || m_nSamples >= MAX_SAMPLES - 1)
+				return 0;
+			const auto &fur = furInstruments[furIns];
+			const SAMPLEINDEX smp = ++m_nSamples;
+			auto &sample = Samples[smp];
+			sample.Initialize(MOD_TYPE_MPT);
+			sample.SetAdlib(true);
+			sample.isOPN2 = true;
+			sample.isOPM = opm;
+			sample.opn2 = fur.patch;
+			m_szNames[smp] = fur.name;
+			const INSTRUMENTINDEX index = ++m_nInstruments;
+			if(auto *shadow = createInstrument(index, smp, fur.name + " FM"))
+				SetFurEnvelope(*shadow, fur, 127);
+			mapped = index;
+			return mapped;
+		};
 		Order().resize(orders);
 		size_t phase = 0;
 		for(ORDERINDEX order = 0; order < orders; order++)
@@ -1290,6 +1315,12 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 							ins = mapped;
 							cell.note = NOTE_MIDDLEC;
 						}
+					}
+					if(ins && furIns >= 0 && !furInstruments[furIns].hasFMPatch
+						&& (voice == FurVoice::OPM || (voice == FurVoice::OPN2 && !(dacChannel && legacyDAC[c]))))
+					{
+						if(const auto fallback = assignFMFallback(furIns, voice == FurVoice::OPM))
+							ins = fallback;
 					}
 					if(ins && (sourceRow.instrument >= 0 || ((cell.IsNote() || noiseMode) && lastInstrument[c] != ins)))
 					{
