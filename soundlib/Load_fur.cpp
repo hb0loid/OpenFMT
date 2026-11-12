@@ -77,6 +77,20 @@ bool FurString(FileReader &file, std::string &value)
 
 constexpr uint8 Detune[] = {7, 6, 5, 0, 1, 2, 3, 4};
 
+// Инструмент Furnace, у которого в файле нет FM-блока, всё равно приходит в чип:
+// там читаются поля `DivInstrumentFM`, оставшиеся значениями по умолчанию из
+// конструктора. Это не «какой-то» патч, а вполне определённый, поэтому он
+// выписан здесь по тем же значениям: alg 0, fb 4 и четыре оператора из
+// `instrument.h`. Порядок операторов тот же, что у чтения FM-блока: слоты идут
+// как op0, op2, op1, op3.
+constexpr OPN2Patch FurnaceDefaultPatch = {
+	0x20,
+	0x25,  42, 0x1F, 0x08, 0x00, 0xF3, 0,
+	0x71,  18, 0x1F, 0x0A, 0x00, 0xF4, 0,
+	0x21,  48, 0x1F, 0x04, 0x00, 0xB1, 0,
+	0x71,   2, 0x1F, 0x09, 0x00, 0xF9, 0,
+};
+
 FileReader FurBlock(FileReader file, uint32 offset, std::string &id, bool legacyStandalone = false)
 {
 	id.clear();
@@ -109,7 +123,7 @@ struct FurInstrument
 	std::string name;
 	uint16 type = 0;
 	int sample = -1;
-	OPN2Patch patch = DefaultOPN2Patch;
+	OPN2Patch patch = FurnaceDefaultPatch;
 	bool hasFMPatch = false;
 	std::array<std::pair<int16, int16>, 120> noteMap{};
 	bool mapped = false;
@@ -997,7 +1011,7 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 				sample.SetAdlib(true);
 				sample.isOPN2 = true;
 				sample.isOPM = songHasOPM;
-				sample.opn2 = DefaultOPN2Patch;
+				sample.opn2 = fur.patch;
 				m_szNames[mappedSample] = fur.name;
 			}
 		} else if(fur.type != 0)
