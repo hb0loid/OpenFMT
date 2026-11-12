@@ -185,24 +185,6 @@ void ScopeCtrl::OnPaint()
 	const COLORREF wave = colors[MODCOLOR_SAMPLE];
 	const int width = rect.Width(), height = rect.Height();
 
-	// Раз в секунду пересчитываем, сколько кадров нарисовано и сколько раз
-	// пришёл новый звук: если второе число мало, рисовать чаще бессмысленно,
-	// кадры просто повторяют друг друга.
-	m_frames++;
-	if(const uint32 written = m_buffer->Written(); written != m_lastWritten)
-	{
-		m_lastWritten = written;
-		m_arrivals++;
-	}
-	const uint32 now = static_cast<uint32>(GetTickCount64());
-	if(now - m_countedAt >= 1000)
-	{
-		m_shownFrames = static_cast<int>(m_frames);
-		m_shownArrivals = static_cast<int>(m_arrivals);
-		m_frames = m_arrivals = 0;
-		m_countedAt = now;
-	}
-
 	// Холст заводится один раз и переживает кадры: при шестидесяти кадрах в
 	// секунду создавать его заново значит занимать процессор впустую.
 	if(!m_offScreenDC.m_hDC)
@@ -291,13 +273,9 @@ void ScopeCtrl::OnPaint()
 		}
 
 		// Уровень подписывается настоящий, до усиления: иначе цифра врала бы.
-		CString text = (peak > 0.0f)
+		const CString text = (peak > 0.0f)
 			? mpt::cfmt::fix(20.0 * std::log10(static_cast<double>(peak)), 1) + _T(" dB")
 			: CString(_T("-inf dB"));
-		// Только латиница: подписи здесь идут через узкие строки Windows, и
-		// кириллица в исходнике приезжает на экран крокозябрами.
-		if(m_shownFrames)
-			text = mpt::cfmt::val(m_shownFrames) + _T(" fps, audio ") + mpt::cfmt::val(m_shownArrivals) + _T("/s   ") + text;
 		m_offScreenDC.SetBkMode(TRANSPARENT);
 		m_offScreenDC.SetTextColor(wave);
 		m_offScreenDC.SelectObject(CMainFrame::GetGUIFont());
