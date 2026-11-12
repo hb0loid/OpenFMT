@@ -231,15 +231,18 @@ void ScopeCtrl::OnPaint()
 			return middle - static_cast<int>(std::clamp(value * m_gain, -1.0f, 1.0f) * (height - thickness * 2) / 2);
 		};
 
-		CPen wavePen(PS_SOLID, thickness, wave);
+		// Перо ровно в один пиксель: толстое включает в GDI совсем другой,
+		// медленный путь, и кадров выходило двадцать пять вместо сорока трёх.
+		// Толщина набирается повторной отрисовкой со сдвигом — это всё равно
+		// считанные вызовы против тысяч.
+		CPen wavePen(PS_SOLID, 1, wave);
 		m_offScreenDC.SelectObject(&wavePen);
-		// Вся волна рисуется одним вызовом. По вызову на столбец пикселей
-		// выходило под две с половиной тысячи обращений к системе на кадр, и
-		// упиралось именно в них: кадров получалось сорок три при любом
-		// таймере. Ломаная идёт зигзагом через верх и низ каждого столбца,
-		// поэтому она же и соединяет столбцы между собой: на широком окне, где
-		// отсчётов меньше, чем столбцов, линия иначе распадается на точки.
-		m_points.resize(static_cast<size_t>(width) * 2);
+		// Ломаная идёт зигзагом через верх и низ каждого столбца, поэтому она
+		// же соединяет столбцы между собой: на широком окне, где отсчётов
+		// меньше, чем столбцов, линия иначе распадается на точки. Там, где
+		// столбец вырождается в точку, вторая вершина не нужна.
+		m_points.clear();
+		m_points.reserve(static_cast<size_t>(width) * 2);
 		for(int x = 0; x < width; x++)
 		{
 			const uint32 from = static_cast<uint32>(static_cast<int64>(x) * span / width);
@@ -250,11 +253,20 @@ void ScopeCtrl::OnPaint()
 				low = std::min(low, shown[i]);
 				high = std::max(high, shown[i]);
 			}
+			const int top = place(high), bottom = place(low);
 			const bool downwards = (x & 1) != 0;
-			m_points[x * 2 + 0] = CPoint(x, place(downwards ? high : low));
-			m_points[x * 2 + 1] = CPoint(x, place(downwards ? low : high));
+			m_points.emplace_back(x, downwards ? top : bottom);
+			if(top != bottom)
+				m_points.emplace_back(x, downwards ? bottom : top);
 		}
-		m_offScreenDC.Polyline(m_points.data(), static_cast<int>(m_points.size()));
+		const int count = static_cast<int>(m_points.size());
+		m_offScreenDC.Polyline(m_points.data(), count);
+		for(int pass = 1; pass < thickness; pass++)
+		{
+			for(CPoint &point : m_points)
+				point.y++;
+			m_offScreenDC.Polyline(m_points.data(), count);
+		}
 
 		// Уровень подписывается настоящий, до усиления: иначе цифра врала бы.
 		CString text = (peak > 0.0f)
