@@ -1222,23 +1222,6 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 						cell.volcmd = VOLCMD_VOLUME;
 						cell.vol = static_cast<ModCommand::VOL>(currentVolume[c]);
 					}
-					// Скорость скольжения громкости у Furnace задана в долях его
-					// собственной шкалы: шаг `(x & 15) * 64` при громкости в
-					// формате 8.8, то есть четверть единицы за тик. У FM шкала
-					// 0–127, у PSG 0–15, а у нас всегда 0–64, и один и тот же
-					// `0A0F` означает совсем разную скорость. Без пересчёта на
-					// FM мы гасили ноту в восемь раз быстрее нужного, и стоило
-					// сделать скольжение непрерывным, как ноты стали пропадать.
-					const auto rescaleSlide = [maxVolume](uint8 nibble) -> uint8
-					{
-						if(!nibble)
-							return 0;
-						// Нибл `F` в OpenMPT означает не скорость, а «тонкое»
-						// скольжение — другой эффект, который к тому же
-						// применяется иначе. Поэтому до него не доводим.
-						const int scaled = (nibble * 16 + maxVolume / 2) / maxVolume;
-						return static_cast<uint8>(std::clamp(scaled, 1, 14));
-					};
 					for(const auto &[fx, param] : sourceRow.effects)
 					{
 						if(fx < 0) continue;
@@ -1269,8 +1252,6 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 							continue;
 						}
 						auto [command, argument] = FurEffect(fx, value);
-						if(command == CMD_VOLUMESLIDE && argument)
-							argument = static_cast<uint8>((rescaleSlide(argument >> 4) << 4) | rescaleSlide(argument & 15));
 						if(fx == 0x20 && voice == FurVoice::Noise)
 						{
 							command = CMD_PSG_NOISE;

@@ -3478,9 +3478,19 @@ bool CSoundFile::ProcessEffects()
 
 		// Volume Slide
 		case CMD_VOLUMESLIDE:
+			// В фёрнейсовском режиме скольжение громкости считается само, в
+			// своих единицах: здесь только запоминаем скорость и останавливаем
+			// нулём. Наше обычное скольжение сюда пускать нельзя, иначе шаг
+			// применится дважды и разными величинами.
 			if(m_furnaceSlides)
+			{
+				if(chn.furnaceSlide.volSlide != param)
+					chn.furnaceSlide.volAccum = 0;
 				chn.furnaceSlide.volSlide = static_cast<uint8>(param);
-			if (param || (GetType() != MOD_TYPE_MOD)) VolumeSlide(chn, static_cast<ModCommand::PARAM>(param));
+			} else if(param || (GetType() != MOD_TYPE_MOD))
+			{
+				VolumeSlide(chn, static_cast<ModCommand::PARAM>(param));
+			}
 			break;
 
 		// Tone-Portamento
@@ -4037,15 +4047,50 @@ bool CSoundFile::IsFurnaceTonePorta(const ModChannel &chn, const ModCommand &m) 
 void CSoundFile::ProcessFurnaceSlide(ModChannel &chn, ModCommand::COMMAND cmd, uint8 param, bool newRow) const
 {
 	auto &slide = chn.furnaceSlide;
-	// Скольжение громкости у Furnace тоже непрерывное, но продолжать его здесь
-	// нельзя, пока не сойдётся скорость. Проверено прямо: с продолжением на
-	// hidden palace девятнадцать мест без звука вместо одного, на mushroom hill
-	// alt 2 шесть вместо нуля. Скорость у Furnace задана в долях его шкалы
-	// (0–127 у FM, 0–15 у PSG) и в формате 8.8, а наша команда несёт целый
-	// нибл на шкале 0–64; пересчёт нибла сюда не влезает, и канал уезжает в
-	// тишину там, где у Furnace он ещё звучит. Нужен дробный шаг за тик в
-	// состоянии канала, а не параметр команды. Вибрато и тремоло продолжаются
-	// как прежде: они громкость не уводят.
+	// Скольжение громкости у Furnace едет само, пока его не остановят нулём.
+	//
+	// Скорость там задана в долях его собственной шкалы: шаг `(x & 15) * 64`
+	// при громкости в формате 8.8, то есть четверть единицы шкалы за тик. Шкала
+	// у FM 0–127, у PSG 0–15, у сэмплов 0–255, а наша громкость это 0–256. На
+	// FM один шаг выходит в половину нашей единицы, и округлить его к целому
+	// нельзя ни вверх, ни вниз: вверх гасит ноту вдвое быстрее нужного, вниз не
+	// гасит вовсе. Поэтому шаг копится дробным, в двести пятьдесят шестых долях
+	// нашей единицы, и к громкости прибавляется только накопившееся целое.
+	//
+	// Шкалу чипа берём у сэмпла канала: она же определяет, во сколько раз наши
+	// единицы крупнее фёрнейсовских.
+	if(slide.volSlide && !(m_furnaceSlides & FurnaceSkipFirstTick && chn.isFirstTick))
+	{
+		const int up = slide.volSlide >> 4, down = slide.volSlide & 0x0f;
+		// При обоих ниблах у Furnace побеждает нижний: `(x & 15) != 0` проверяется
+		// первым и даёт скольжение вниз (playback.cpp, эффект 0A).
+		const int step = down ? -down : up;
+		int chipScale = 255;
+		if(const ModSample *sample = chn.pModSample; sample != nullptr)
+		{
+			if(sample->psg)
+				chipScale = 15;
+			else if(sample->uFlags[CHN_ADLIB])
+				chipScale = 127;
+		}
+		slide.volAccum += step * 16384 / chipScale;
+		const int whole = slide.volAccum / 256;
+		if(whole)
+		{
+			slide.volAccum -= whole * 256;
+			const int volume = chn.nVolume + whole;
+			chn.nVolume = std::clamp(volume, 0, 256);
+			// Упёршись в ноль или в максимум, Furnace скольжение останавливает
+			// (флаг совместимости noVolSlideReset мы не читаем, он по умолчанию
+			// выключен). Без остановки скольжение ехало бы дальше и гасило
+			// следующую ноту, которой громкость задали заново.
+			if(volume < 0 || volume > 256)
+			{
+				slide.volSlide = 0;
+				slide.volAccum = 0;
+			}
+		}
+	}
 	if(newRow)
 	{
 		switch(cmd)
