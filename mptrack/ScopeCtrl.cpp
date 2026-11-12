@@ -16,19 +16,21 @@
 
 OPENMPT_NAMESPACE_BEGIN
 
-static constexpr UINT_PTR ScopeTimer = 1;
+static constexpr UINT WM_SCOPE_FRAME = WM_APP + 1;
 
 static std::vector<ScopeCtrl *> s_scopes;
 
 BEGIN_MESSAGE_MAP(ScopeCtrl, CWnd)
 	ON_WM_PAINT()
-	ON_WM_TIMER()
+	ON_WM_DESTROY()
 	ON_WM_ERASEBKGND()
+	ON_MESSAGE(WM_SCOPE_FRAME, &ScopeCtrl::OnFrame)
 END_MESSAGE_MAP()
 
 
 ScopeCtrl::~ScopeCtrl()
 {
+	Stop();
 	s_scopes.erase(std::remove(s_scopes.begin(), s_scopes.end(), this), s_scopes.end());
 }
 
@@ -73,44 +75,64 @@ bool ScopeCtrl::Create(CWnd *parent, UINT id)
 
 void ScopeCtrl::Start()
 {
-	if(!m_running && m_hWnd)
+	if(m_ticking || !m_hWnd)
+		return;
+	// Кадров столько, сколько показывает экран, но не больше ста двадцати:
+	// выше разницы не видно, а процессор занят.
+	int refresh = 0;
+	if(CDC *dc = GetDC(); dc != nullptr)
 	{
-		// Кадров столько, сколько показывает экран: рисовать чаще его частоты
-		// обновления бессмысленно, лишние кадры всё равно будут выброшены.
-		// Если частоту узнать не удалось, берём обычные шестьдесят.
-		int refresh = 0;
-		if(CDC *dc = GetDC(); dc != nullptr)
-		{
-			refresh = dc->GetDeviceCaps(VREFRESH);
-			ReleaseDC(dc);
-		}
-		if(refresh < 24 || refresh > 1000)
-			refresh = 60;
-		// Выше ста двадцати разницы уже не видно, а процессор занят: на экране
-		// с большей частотой лишние кадры просто не нужны.
-		refresh = std::min(refresh, 120);
-		m_clock = std::make_unique<Util::MultimediaClock>(1);
-		SetTimer(ScopeTimer, std::max(1, 1000 / refresh), nullptr);
-		m_running = true;
+		refresh = dc->GetDeviceCaps(VREFRESH);
+		ReleaseDC(dc);
 	}
+	if(refresh < 24 || refresh > 1000)
+		refresh = 60;
+	m_interval = std::max(1, 1000 / std::min(refresh, 120));
+	// Без мелкого шага системного таймера сон потока округляется до
+	// пятнадцати миллисекунд, и весь смысл отдельного потока теряется.
+	m_clock = std::make_unique<Util::MultimediaClock>(1);
+	m_pending = false;
+	m_ticking = true;
+	m_ticker = std::thread([this]()
+	{
+		while(m_ticking)
+		{
+			Sleep(static_cast<DWORD>(m_interval));
+			// Пока прошлый кадр не нарисован, новый такт не нужен: иначе
+			// сообщения копятся в очереди и окно отстаёт всё сильнее.
+			if(m_ticking && !m_pending.exchange(true))
+				PostMessage(WM_SCOPE_FRAME);
+			else
+				m_pending = m_pending.load();
+		}
+	});
 }
 
 
 void ScopeCtrl::Stop()
 {
-	if(m_running && m_hWnd)
-	{
-		KillTimer(ScopeTimer);
-		m_clock.reset();
-		m_running = false;
-	}
+	if(!m_ticking)
+		return;
+	m_ticking = false;
+	if(m_ticker.joinable())
+		m_ticker.join();
+	m_clock.reset();
 }
 
 
-void ScopeCtrl::OnTimer(UINT_PTR id)
+LRESULT ScopeCtrl::OnFrame(WPARAM, LPARAM)
 {
-	if(id == ScopeTimer && IsWindowVisible())
+	m_pending = false;
+	if(IsWindowVisible())
 		Invalidate(FALSE);
+	return 0;
+}
+
+
+void ScopeCtrl::OnDestroy()
+{
+	Stop();
+	CWnd::OnDestroy();
 }
 
 

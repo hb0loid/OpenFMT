@@ -15,6 +15,8 @@
 #include "ScopeBuffer.h"
 #include "../misc/mptClock.h"
 #include <memory>
+#include <atomic>
+#include <thread>
 
 OPENMPT_NAMESPACE_BEGIN
 
@@ -43,12 +45,21 @@ protected:
 	// и без этого была бы неразличимой чертой посреди экрана.
 	float m_gain = 1.0f;
 	float m_peak = 0.0f;
-	bool m_running = false;
 	// Пока осциллограф рисует, системному таймеру задаётся миллисекундный шаг:
 	// по умолчанию он срабатывает примерно раз в 15 мс, и чаще 60 кадров в
 	// секунду не выйдет при любом заданном периоде. Отпускается на остановке,
 	// потому что мелкий шаг таймера мешает процессору спать.
 	std::unique_ptr<Util::MultimediaClock> m_clock;
+	// Таймеры окон не умеют чаще сотни раз в секунду, и на деле упираются в
+	// шаг системного таймера — выходит шестьдесят четыре кадра, сколько ни
+	// проси. Поэтому такты шлёт отдельный поток: он только спит и отправляет
+	// сообщение, рисование по-прежнему происходит в потоке окна.
+	std::thread m_ticker;
+	std::atomic<bool> m_ticking = false;
+	// Поток может обогнать рисование, и тогда сообщения копились бы в очереди.
+	// Пока кадр не нарисован, следующий такт не отправляется.
+	std::atomic<bool> m_pending = false;
+	int m_interval = 8;
 	CRect m_place;
 	bool m_fits = false;
 	void Apply();
@@ -69,6 +80,8 @@ protected:
 	// Ищет начало картинки так, чтобы волна стояла на месте, а не ездила.
 	static uint32 Trigger(const float *samples, uint32 count, float peak);
 
+	afx_msg LRESULT OnFrame(WPARAM, LPARAM);
+	afx_msg void OnDestroy();
 	afx_msg void OnPaint();
 	afx_msg void OnTimer(UINT_PTR id);
 	afx_msg BOOL OnEraseBkgnd(CDC *) { return TRUE; }
