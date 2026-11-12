@@ -56,6 +56,13 @@ public:
 	CSize GetMinimumSize() const { return m_windowSize; }
 
 protected:
+	// Размеры, с которыми диалог нарисован в ресурсах: от них считается
+	// растяжка, когда вкладке достаётся больше места. Запоминаются при создании,
+	// потому что после первой же раскладки настоящие размеры уже другие.
+	CSize m_designed;
+	std::map<int, CRect> m_designedRects;
+
+	void LayoutMacros();
 	void ParamsChanged();
 	// Обработчики диапазона получают номер элемента, а правка всегда читает
 	// все поля разом, поэтому номер здесь не нужен.
@@ -66,6 +73,7 @@ protected:
 
 	void DoDataExchange(CDataExchange *pDX) override;
 	BOOL OnInitDialog() override;
+	afx_msg void OnSize(UINT type, int cx, int cy);
 	void OnOK() override { }
 	void OnCancel() override { }
 	DECLARE_MESSAGE_MAP()

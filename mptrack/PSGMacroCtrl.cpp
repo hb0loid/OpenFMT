@@ -10,6 +10,7 @@
 #include "stdafx.h"
 #include "PSGMacroCtrl.h"
 #include "resource.h"
+#include "Mainfrm.h"
 
 OPENMPT_NAMESPACE_BEGIN
 
@@ -28,6 +29,7 @@ BEGIN_MESSAGE_MAP(PSGMacroCtrl, CWnd)
 	ON_WM_ERASEBKGND()
 	ON_WM_LBUTTONDOWN()
 	ON_WM_MOUSEMOVE()
+	ON_WM_MOUSELEAVE()
 	ON_WM_LBUTTONUP()
 	ON_WM_RBUTTONDOWN()
 	ON_WM_MOUSEWHEEL()
@@ -147,6 +149,14 @@ void PSGMacroCtrl::OnPaint()
 	if(m_low < 0)
 		memDC.FillSolidRect(0, ValueTop(0, rect.Height()), rect.Width(), 1, zero);
 
+	// Горизонтальная сетка по уровням, пока ступени не слишком мелкие.
+	const int32 levels = m_high - m_low;
+	if(levels > 0 && rect.Height() / (levels + 1) >= 4)
+	{
+		for(int32 value = m_low; value <= m_high; value++)
+			memDC.FillSolidRect(0, ValueTop(value, rect.Height()), rect.Width(), 1, grid);
+	}
+
 	for(size_t i = 0; i < length && static_cast<int>(i) <= columns; i++)
 	{
 		const int32 value = m_sequence->values[i];
@@ -167,6 +177,20 @@ void PSGMacroCtrl::OnPaint()
 		};
 		marker(m_sequence->loop, RGB(0, 160, 0));
 		marker(m_sequence->release, RGB(200, 0, 0));
+	}
+
+	if(m_hoverColumn >= 0)
+	{
+		// Подпись у курсора: номер шага и значение.
+		CString text;
+		text.Format(_T("%d: %d"), m_hoverColumn + 1, static_cast<int>(m_hoverValue));
+		memDC.SetBkMode(TRANSPARENT);
+		memDC.SetTextColor(GetSysColor(COLOR_WINDOWTEXT));
+		auto *oldFont = memDC.SelectObject(CMainFrame::GetGUIFont());
+		CRect textRect = rect;
+		textRect.DeflateRect(4, 1);
+		memDC.DrawText(text, textRect, DT_RIGHT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+		memDC.SelectObject(oldFont);
 	}
 
 	memDC.Draw3dRect(rect, frame, frame);
@@ -197,7 +221,23 @@ void PSGMacroCtrl::OnLButtonDown(UINT, CPoint point)
 
 void PSGMacroCtrl::OnMouseMove(UINT, CPoint point)
 {
-	if(!m_dragging || !m_sequence)
+	if(!m_sequence)
+		return;
+	if(!m_tracking)
+	{
+		TRACKMOUSEEVENT track{sizeof(TRACKMOUSEEVENT), TME_LEAVE, m_hWnd, 0};
+		m_tracking = TrackMouseEvent(&track) != FALSE;
+	}
+	const int hover = ColumnAt(point.x);
+	const int32 hoverValue = (static_cast<size_t>(hover) < m_sequence->values.size())
+		? m_sequence->values[hover] : ValueAt(point.y);
+	if(hover != m_hoverColumn || hoverValue != m_hoverValue)
+	{
+		m_hoverColumn = hover;
+		m_hoverValue = hoverValue;
+		Invalidate(FALSE);
+	}
+	if(!m_dragging)
 		return;
 	const int column = ColumnAt(point.x);
 	const int32 value = ValueAt(point.y);
@@ -209,6 +249,17 @@ void PSGMacroCtrl::OnMouseMove(UINT, CPoint point)
 		PaintColumn(c, value);
 	m_lastColumn = column;
 	Changed();
+}
+
+
+void PSGMacroCtrl::OnMouseLeave()
+{
+	m_tracking = false;
+	if(m_hoverColumn >= 0)
+	{
+		m_hoverColumn = -1;
+		Invalidate(FALSE);
+	}
 }
 
 

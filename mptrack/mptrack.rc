@@ -663,39 +663,39 @@ BEGIN
     CONTROL         "Reset noise on key",2561,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,186,8,78,10
     CONTROL         "Easy pitch",2562,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,270,8,52,10
     CONTROL         "Furnace pitch",2563,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,328,8,62,10
-    GROUPBOX        "Macros",IDC_STATIC,6,22,450,130
-    LTEXT           "Volume",IDC_STATIC,12,37,40,9
+    GROUPBOX        "Macros",2596,6,22,450,130
+    LTEXT           "Volume",2581,12,37,40,9
     CONTROL         "",2565,"Static",SS_NOTIFY | WS_TABSTOP,54,30,292,22
-    LTEXT           "Speed",IDC_STATIC,350,37,22,9
+    LTEXT           "Speed",2586,350,37,22,9
     EDITTEXT        2570,374,34,20,13,ES_AUTOHSCROLL | ES_NUMBER
-    LTEXT           "Delay",IDC_STATIC,398,37,22,9
+    LTEXT           "Delay",2591,398,37,22,9
     EDITTEXT        2575,422,34,20,13,ES_AUTOHSCROLL | ES_NUMBER
-    LTEXT           "Arpeggio",IDC_STATIC,12,61,40,9
+    LTEXT           "Arpeggio",2582,12,61,40,9
     CONTROL         "",2566,"Static",SS_NOTIFY | WS_TABSTOP,54,54,292,22
-    LTEXT           "Speed",IDC_STATIC,350,61,22,9
+    LTEXT           "Speed",2587,350,61,22,9
     EDITTEXT        2571,374,58,20,13,ES_AUTOHSCROLL | ES_NUMBER
-    LTEXT           "Delay",IDC_STATIC,398,61,22,9
+    LTEXT           "Delay",2592,398,61,22,9
     EDITTEXT        2576,422,58,20,13,ES_AUTOHSCROLL | ES_NUMBER
-    LTEXT           "Noise mode",IDC_STATIC,12,85,40,9
+    LTEXT           "Noise mode",2583,12,85,40,9
     CONTROL         "",2567,"Static",SS_NOTIFY | WS_TABSTOP,54,78,292,22
-    LTEXT           "Speed",IDC_STATIC,350,85,22,9
+    LTEXT           "Speed",2588,350,85,22,9
     EDITTEXT        2572,374,82,20,13,ES_AUTOHSCROLL | ES_NUMBER
-    LTEXT           "Delay",IDC_STATIC,398,85,22,9
+    LTEXT           "Delay",2593,398,85,22,9
     EDITTEXT        2577,422,82,20,13,ES_AUTOHSCROLL | ES_NUMBER
-    LTEXT           "Pitch",IDC_STATIC,12,109,40,9
+    LTEXT           "Pitch",2584,12,109,40,9
     CONTROL         "",2568,"Static",SS_NOTIFY | WS_TABSTOP,54,102,292,22
-    LTEXT           "Speed",IDC_STATIC,350,109,22,9
+    LTEXT           "Speed",2589,350,109,22,9
     EDITTEXT        2573,374,106,20,13,ES_AUTOHSCROLL | ES_NUMBER
-    LTEXT           "Delay",IDC_STATIC,398,109,22,9
+    LTEXT           "Delay",2594,398,109,22,9
     EDITTEXT        2578,422,106,20,13,ES_AUTOHSCROLL | ES_NUMBER
-    LTEXT           "Phase reset",IDC_STATIC,12,133,40,9
+    LTEXT           "Phase reset",2585,12,133,40,9
     CONTROL         "",2569,"Static",SS_NOTIFY | WS_TABSTOP,54,126,292,22
-    LTEXT           "Speed",IDC_STATIC,350,133,22,9
+    LTEXT           "Speed",2590,350,133,22,9
     EDITTEXT        2574,374,130,20,13,ES_AUTOHSCROLL | ES_NUMBER
-    LTEXT           "Delay",IDC_STATIC,398,133,22,9
+    LTEXT           "Delay",2595,398,133,22,9
     EDITTEXT        2579,422,130,20,13,ES_AUTOHSCROLL | ES_NUMBER
     CONTROL         "Pitch macro is relative",2564,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,8,156,100,10
-    LTEXT           "Draw with the left button, right button for loop and release.",IDC_STATIC,116,157,240,9
+    LTEXT           "Draw with the left button, right button for loop and release.",2597,116,157,240,9
 END
 
 IDD_OPL_PARAMS DIALOGEX 0, 0, 410, 218

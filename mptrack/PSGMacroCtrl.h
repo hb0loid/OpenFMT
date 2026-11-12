@@ -36,7 +36,12 @@ protected:
 	ChangedFunc m_changed;
 	int32 m_low = 0, m_high = 15;
 	int m_lastColumn = -1;
+	// Шаг под курсором: без подписи значения попасть в нужный уровень всё равно
+	// трудно, особенно у громкости с её шестнадцатью ступенями.
+	int m_hoverColumn = -1;
+	int32 m_hoverValue = 0;
 	bool m_dragging = false;
+	bool m_tracking = false;
 
 	int ColumnWidth() const;
 	int ColumnAt(int x) const;
@@ -56,6 +61,7 @@ protected:
 	afx_msg UINT OnGetDlgCode();
 	afx_msg BOOL OnEraseBkgnd(CDC *dc) { return TRUE; }
 	afx_msg void OnCommandRange(UINT id);
+	afx_msg void OnMouseLeave();
 	DECLARE_MESSAGE_MAP()
 };
 

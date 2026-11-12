@@ -112,6 +112,11 @@
 #define IDC_PSG_SEQ1                    2565
 #define IDC_PSG_SPEED1                  2570
 #define IDC_PSG_DELAY1                  2575
+#define IDC_PSG_NAME1                   2581
+#define IDC_PSG_SPEEDLABEL1             2586
+#define IDC_PSG_DELAYLABEL1             2591
+#define IDC_PSG_GROUP                   2596
+#define IDC_PSG_HINT                    2597
 
 #define IDD_CLEANUP_SONG                521
 #define IDD_CHANNELSETTINGS             522
@@ -1357,7 +1362,7 @@
 #define _APS_3D_CONTROLS                     1
 #define _APS_NEXT_RESOURCE_VALUE        545
 #define _APS_NEXT_COMMAND_VALUE         44657
-#define _APS_NEXT_CONTROL_VALUE         2580
+#define _APS_NEXT_CONTROL_VALUE         2598
 #define _APS_NEXT_SYMED_VALUE           901
 #endif
 #endif

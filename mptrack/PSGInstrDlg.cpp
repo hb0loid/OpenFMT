@@ -18,6 +18,7 @@ OPENMPT_NAMESPACE_BEGIN
 
 BEGIN_MESSAGE_MAP(PSGInstrDlg, DialogBase)
 	ON_WM_MOUSEWHEEL()
+	ON_WM_SIZE()
 	ON_COMMAND(IDC_PSG_RESETNOISE, &PSGInstrDlg::ParamsChanged)
 	ON_COMMAND(IDC_PSG_EASYPITCH, &PSGInstrDlg::ParamsChanged)
 	ON_COMMAND(IDC_PSG_FURNACEPITCH, &PSGInstrDlg::ParamsChanged)
@@ -82,7 +83,102 @@ BOOL PSGInstrDlg::OnInitDialog()
 		m_graphs[i].Init(&m_working.macros[i], MacroRanges[i].low, MacroRanges[i].high,
 			[this] { ParamsChanged(); });
 	}
+
+	CRect client;
+	GetClientRect(client);
+	m_designed = client.Size();
+	const auto remember = [this](int id)
+	{
+		CRect rect;
+		if(const CWnd *wnd = GetDlgItem(id))
+		{
+			wnd->GetWindowRect(rect);
+			ScreenToClient(rect);
+			m_designedRects[id] = rect;
+		}
+	};
+	for(int i = 0; i < PSGPatch::Count; i++)
+	{
+		remember(IDC_PSG_SEQ1 + i);
+		remember(IDC_PSG_NAME1 + i);
+		remember(IDC_PSG_SPEEDLABEL1 + i);
+		remember(IDC_PSG_SPEED1 + i);
+		remember(IDC_PSG_DELAYLABEL1 + i);
+		remember(IDC_PSG_DELAY1 + i);
+	}
+	remember(IDC_PSG_GROUP);
+	remember(IDC_PSG_PITCHREL);
+	remember(IDC_PSG_HINT);
 	return TRUE;
+}
+
+
+void PSGInstrDlg::OnSize(UINT type, int cx, int cy)
+{
+	DialogBase::OnSize(type, cx, cy);
+	LayoutMacros();
+}
+
+
+// Вкладке сэмплов обычно достаётся куда больше места, чем нарисовано в
+// ресурсах, и строки по 36 пикселей на шестнадцать уровней громкости означают
+// два пикселя на шаг: попасть мышью невозможно. Поэтому строки растягиваются на
+// всю доступную высоту, а графики на всю ширину.
+void PSGInstrDlg::LayoutMacros()
+{
+	if(!::IsWindow(m_hWnd) || m_designedRects.empty())
+		return;
+	CRect client;
+	GetClientRect(client);
+	const CRect &firstGraph = m_designedRects[IDC_PSG_SEQ1];
+	const CRect &footer = m_designedRects[IDC_PSG_PITCHREL];
+	const int footerHeight = m_designed.cy - footer.top;
+	const int top = firstGraph.top - 8;
+	const int bottom = client.Height() - footerHeight - 6;
+	const int rowHeight = (bottom - top) / PSGPatch::Count;
+	if(rowHeight < 20 || client.Width() < m_designed.cx / 2)
+		return;
+
+	// Поля скорости и задержки держатся правого края.
+	const int blockWidth = m_designed.cx - m_designedRects[IDC_PSG_SPEEDLABEL1].left;
+	const int graphRight = std::max<int>(client.Width() - blockWidth, firstGraph.left + 60);
+
+	const auto place = [&](int id, int x, int y, int width, int height)
+	{
+		if(CWnd *wnd = GetDlgItem(id))
+			wnd->SetWindowPos(nullptr, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+	};
+	for(int i = 0; i < PSGPatch::Count; i++)
+	{
+		const int y = top + 4 + i * rowHeight;
+		const int height = rowHeight - 8;
+		place(IDC_PSG_SEQ1 + i, firstGraph.left, y, graphRight - firstGraph.left, height);
+		const auto centred = [&](int id, int x)
+		{
+			const CRect &designed = m_designedRects[id];
+			place(id, x, y + (height - designed.Height()) / 2, designed.Width(), designed.Height());
+		};
+		const int speedLabel = graphRight + 8;
+		centred(IDC_PSG_SPEEDLABEL1 + i, speedLabel);
+		centred(IDC_PSG_SPEED1 + i, speedLabel + m_designedRects[IDC_PSG_SPEEDLABEL1].Width() + 4);
+		const int delayLabel = speedLabel + m_designedRects[IDC_PSG_SPEEDLABEL1].Width()
+			+ m_designedRects[IDC_PSG_SPEED1].Width() + 12;
+		centred(IDC_PSG_DELAYLABEL1 + i, delayLabel);
+		centred(IDC_PSG_DELAY1 + i, delayLabel + m_designedRects[IDC_PSG_DELAYLABEL1].Width() + 4);
+		centred(IDC_PSG_NAME1 + i, m_designedRects[IDC_PSG_NAME1].left);
+	}
+
+	const CRect &group = m_designedRects[IDC_PSG_GROUP];
+	place(IDC_PSG_GROUP, group.left, group.top, client.Width() - group.left * 2, bottom - group.top + 6);
+	const auto toBottom = [&](int id)
+	{
+		const CRect &designed = m_designedRects[id];
+		place(id, designed.left, client.Height() - (m_designed.cy - designed.top),
+			designed.Width(), designed.Height());
+	};
+	toBottom(IDC_PSG_PITCHREL);
+	toBottom(IDC_PSG_HINT);
+	Invalidate(TRUE);
 }
 
 
