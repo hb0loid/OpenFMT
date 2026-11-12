@@ -36,6 +36,10 @@ namespace
 // Ниже этого строка перестаёт быть редактируемой мышью, но лучше тесная строка,
 // чем строка за краем окна.
 constexpr int MinRowHeight = 26;
+// Выше этого графику уже незачем расти: шестнадцать уровней громкости на сотне
+// пикселей это шесть пикселей на шаг, попасть легко, а дальше строки просто
+// разъезжаются.
+constexpr int MaxRowHeight = 96;
 
 struct MacroRange { int32 low, high; };
 constexpr MacroRange MacroRanges[PSGPatch::Count] =
@@ -146,7 +150,7 @@ void PSGInstrDlg::LayoutMacros()
 	const int footerHeight = m_designed.cy - footer.top;
 	const int top = firstGraph.top - 8;
 	const int bottom = client.Height() - footerHeight - 6;
-	const int rowHeight = std::max((bottom - top) / PSGPatch::Count, MinRowHeight);
+	const int rowHeight = std::clamp((bottom - top) / PSGPatch::Count, MinRowHeight, MaxRowHeight);
 	if(client.Width() < 200)
 		return;
 
@@ -179,16 +183,20 @@ void PSGInstrDlg::LayoutMacros()
 		centred(IDC_PSG_NAME1 + i, m_designedRects[IDC_PSG_NAME1].left);
 	}
 
+	// Рамка кончается сразу под последней строкой.
 	const CRect &group = m_designedRects[IDC_PSG_GROUP];
-	place(IDC_PSG_GROUP, group.left, group.top, client.Width() - group.left * 2, bottom - group.top + 6);
-	const auto toBottom = [&](int id)
+	place(IDC_PSG_GROUP, group.left, group.top, client.Width() - group.left * 2,
+		top + 4 + PSGPatch::Count * rowHeight - group.top + 4);
+	// Флажок с подсказкой идут сразу под рамкой, а не по низу окна: иначе на
+	// развёрнутом окне они уезжали бы от макросов на пол-экрана.
+	const int underGroup = top + 4 + PSGPatch::Count * rowHeight + 10;
+	const auto underneath = [&](int id)
 	{
 		const CRect &designed = m_designedRects[id];
-		place(id, designed.left, client.Height() - (m_designed.cy - designed.top),
-			designed.Width(), designed.Height());
+		place(id, designed.left, underGroup, designed.Width(), designed.Height());
 	};
-	toBottom(IDC_PSG_PITCHREL);
-	toBottom(IDC_PSG_HINT);
+	underneath(IDC_PSG_PITCHREL);
+	underneath(IDC_PSG_HINT);
 	Invalidate(TRUE);
 }
 

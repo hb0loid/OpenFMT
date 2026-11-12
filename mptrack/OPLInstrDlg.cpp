@@ -91,6 +91,10 @@ struct OPN2Param
 constexpr OPN2Param Algorithm{0, 0, 7}, Feedback{0, 3, 7};
 constexpr int OPN2Rows = 9;   // параметров в операторе
 constexpr int OPN2MinRow = 16;
+// Выше этого ряды разъезжаются впустую: на развёрнутом окне между слайдерами
+// получались пустые полосы в полсотни пикселей. Лишнюю высоту лучше оставить
+// пустой под рамками.
+constexpr int OPN2MaxRow = 36;
 constexpr OPN2Param OperatorParams[] = {
 	{0, 0, 15}, {0, 4, 7}, {1, 0, 127}, {2, 6, 3}, {2, 0, 31},
 	{3, 0, 31}, {4, 0, 31}, {5, 4, 15}, {5, 0, 15},
@@ -203,10 +207,12 @@ void OPLInstrDlg::LayoutOPN2()
 	const int margin = group.left;
 	const int columnWidth = (client.Width() - margin * 2) / 4;
 	const int groupTop = group.top;
-	const int groupHeight = std::max<int>(client.Height() - groupTop - 6, OPN2Rows * OPN2MinRow + 18);
 	const int labelWidth = label.Width();
 	const int rowTop = label.top - groupTop;
-	const int rowHeight = std::max((groupHeight - rowTop - 8) / OPN2Rows, OPN2MinRow);
+	const int available = client.Height() - groupTop - 6 - rowTop - 8;
+	const int rowHeight = std::clamp(available / OPN2Rows, OPN2MinRow, OPN2MaxRow);
+	// Рамка кончается сразу под последним рядом, а не тянется до низа окна.
+	const int groupHeight = rowTop + OPN2Rows * rowHeight + 8;
 
 	// Верхний ряд: алгоритм и обратная связь делят ширину пополам.
 	const int topSlider = (client.Width() - margin * 2) / 2 - m_designedRects[IDC_OPN2_ALGLABEL].Width() - 12;
