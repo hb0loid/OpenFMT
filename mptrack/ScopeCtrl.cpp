@@ -37,9 +37,19 @@ void ScopeCtrl::Start()
 {
 	if(!m_running && m_hWnd)
 	{
-		// Шестьдесят кадров в секунду: на волне, которая бежит и меняется от
-		// ручки, двадцать пять уже видно как рывки.
-		SetTimer(ScopeTimer, 16, nullptr);
+		// Кадров столько, сколько показывает экран: рисовать чаще его частоты
+		// обновления бессмысленно, лишние кадры всё равно будут выброшены.
+		// Если частоту узнать не удалось, берём обычные шестьдесят.
+		int refresh = 0;
+		if(CDC *dc = GetDC(); dc != nullptr)
+		{
+			refresh = dc->GetDeviceCaps(VREFRESH);
+			ReleaseDC(dc);
+		}
+		if(refresh < 24 || refresh > 1000)
+			refresh = 60;
+		m_clock = std::make_unique<Util::MultimediaClock>(1);
+		SetTimer(ScopeTimer, std::max(1, 1000 / refresh), nullptr);
 		m_running = true;
 	}
 }
@@ -50,6 +60,7 @@ void ScopeCtrl::Stop()
 	if(m_running && m_hWnd)
 	{
 		KillTimer(ScopeTimer);
+		m_clock.reset();
 		m_running = false;
 	}
 }

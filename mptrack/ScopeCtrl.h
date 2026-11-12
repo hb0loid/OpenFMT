@@ -13,6 +13,8 @@
 
 #include "openmpt/all/BuildSettings.hpp"
 #include "ScopeBuffer.h"
+#include "../misc/mptClock.h"
+#include <memory>
 
 OPENMPT_NAMESPACE_BEGIN
 
@@ -34,6 +36,11 @@ protected:
 	float m_gain = 1.0f;
 	float m_peak = 0.0f;
 	bool m_running = false;
+	// Пока осциллограф рисует, системному таймеру задаётся миллисекундный шаг:
+	// по умолчанию он срабатывает примерно раз в 15 мс, и чаще 60 кадров в
+	// секунду не выйдет при любом заданном периоде. Отпускается на остановке,
+	// потому что мелкий шаг таймера мешает процессору спать.
+	std::unique_ptr<Util::MultimediaClock> m_clock;
 	// Холст и буфер отсчётов живут между кадрами: при шестидесяти кадрах в
 	// секунду заводить их заново значит занимать процессор впустую.
 	CDC m_offScreenDC;
