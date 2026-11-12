@@ -53,7 +53,11 @@ public:
 	// курсор над диалогом; пересылать сообщение туда нельзя — необработанное
 	// колесо диалог вернёт родителю, и получится петля.
 	bool WheelStep(short delta, CPoint screenPoint);
-	CSize GetMinimumSize() const { return m_windowSize; }
+	// Вкладка растягивает диалог до своего размера, но не меньше этого.
+	CSize GetMinimumSize() const
+	{
+		return m_minimumHeight > 0 ? CSize(m_windowSize.cx, m_minimumHeight) : m_windowSize;
+	}
 
 protected:
 	// Размеры, с которыми диалог нарисован в ресурсах: от них считается
@@ -61,6 +65,7 @@ protected:
 	// потому что после первой же раскладки настоящие размеры уже другие.
 	CSize m_designed;
 	std::map<int, CRect> m_designedRects;
+	int m_minimumHeight = 0;
 
 	void LayoutMacros();
 	void ParamsChanged();

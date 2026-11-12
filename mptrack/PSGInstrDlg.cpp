@@ -33,6 +33,10 @@ namespace
 {
 // Пределы значений у макросов разные: громкость это четыре бита, режим шума
 // два, а высота и арпеджио ходят в обе стороны.
+// Ниже этого строка перестаёт быть редактируемой мышью, но лучше тесная строка,
+// чем строка за краем окна.
+constexpr int MinRowHeight = 26;
+
 struct MacroRange { int32 low, high; };
 constexpr MacroRange MacroRanges[PSGPatch::Count] =
 {
@@ -109,6 +113,13 @@ BOOL PSGInstrDlg::OnInitDialog()
 	remember(IDC_PSG_GROUP);
 	remember(IDC_PSG_PITCHREL);
 	remember(IDC_PSG_HINT);
+
+	// Минимальный размер нарочно меньше нарисованного в ресурсах: вкладке
+	// сэмплов часто достаётся полоса ниже диалога, и тогда нижние строки
+	// уезжали за край. Со сжатыми строками видны все пять, а лишнюю высоту
+	// раскладка всё равно раздаёт.
+	const int footerHeight = m_designed.cy - m_designedRects[IDC_PSG_PITCHREL].top;
+	m_minimumHeight = m_designedRects[IDC_PSG_SEQ1].top + MinRowHeight * PSGPatch::Count + footerHeight + 8;
 	return TRUE;
 }
 
@@ -135,8 +146,8 @@ void PSGInstrDlg::LayoutMacros()
 	const int footerHeight = m_designed.cy - footer.top;
 	const int top = firstGraph.top - 8;
 	const int bottom = client.Height() - footerHeight - 6;
-	const int rowHeight = (bottom - top) / PSGPatch::Count;
-	if(rowHeight < 20 || client.Width() < m_designed.cx / 2)
+	const int rowHeight = std::max((bottom - top) / PSGPatch::Count, MinRowHeight);
+	if(client.Width() < 200)
 		return;
 
 	// Поля скорости и задержки держатся правого края.
