@@ -1137,6 +1137,10 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 						currentInstrument[c] = sourceRow.instrument;
 					const int furIns = currentInstrument[c];
 					const bool dacChannel = voice == FurVoice::OPN2 && c % 6 == 5;
+					// Канал 6 бывает и обычным FM-каналом: сэмпл играет либо старый
+					// режим DAC, либо сэмплерный инструмент на нём.
+					const bool dacNote = dacChannel && (legacyDAC[c] || (furIns >= 0
+						&& (furInstruments[furIns].type == 4 || furInstruments[furIns].type == 41)));
 					INSTRUMENTINDEX ins = furIns >= 0 ? static_cast<INSTRUMENTINDEX>(furIns + 1) : 0;
 					const int note = sourceRow.note;
 					if(note >= 0 && note < 180)
@@ -1157,8 +1161,23 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 					if(sourceRow.volume >= 0)
 					{
 						const int maxVolume = voice == FurVoice::PSG || voice == FurVoice::Noise ? 15 : voice == FurVoice::PCM ? 255 : 127;
+						const int value = std::min(sourceRow.volume, maxVolume);
 						cell.volcmd = VOLCMD_VOLUME;
-						cell.vol = static_cast<uint8>((std::min(sourceRow.volume, maxVolume) * 64 + maxVolume / 2) / maxVolume);
+						// У нот, которые играет DAC, громкость в Furnace логарифмическая:
+						// `dacVolTable[127 - i] = 128 * 10^(-i * 0,75 / 20)`, те же 0,75 дБ
+						// на шаг, что и у Total Level. Остальные чипы к такой шкале
+						// приводят сами (PSG трактует громкость как индекс аттенюатора,
+						// FM как TL), а сэмпл идёт обычным путём OpenMPT, где громкость
+						// линейна по амплитуде. Поэтому для DAC она переводится здесь.
+						// Громкость YMZ280B не трогается: там регистр линейный.
+						if(dacNote)
+						{
+							const double amplitude = std::pow(10.0, (value - maxVolume) * 0.75 / 20.0);
+							cell.vol = static_cast<uint8>(std::clamp<int>(mpt::saturate_round<int>(64.0 * amplitude), value > 0 ? 1 : 0, 64));
+						} else
+						{
+							cell.vol = static_cast<uint8>((value * 64 + maxVolume / 2) / maxVolume);
+						}
 						currentVolume[c] = cell.vol;
 					} else if(cell.IsNote() && currentVolume[c] < 64)
 					{
