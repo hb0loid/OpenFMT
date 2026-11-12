@@ -4373,8 +4373,7 @@ BOOL CViewSample::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 		m_psgEditor->ScreenToClient(&inEditor);
 		CRect editorRect;
 		m_psgEditor->GetClientRect(editorRect);
-		if(editorRect.PtInRect(inEditor)
-			&& m_psgEditor->SendMessage(WM_MOUSEWHEEL, MAKEWPARAM(nFlags, zDelta), MAKELPARAM(pt.x, pt.y)))
+		if(editorRect.PtInRect(inEditor) && m_psgEditor->WheelStep(zDelta, pt))
 			return TRUE;
 	}
 

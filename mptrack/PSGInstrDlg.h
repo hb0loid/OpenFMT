@@ -31,12 +31,22 @@ class PSGInstrDlg : public DialogBase
 	// Пока поля заполняются из патча, их изменения не считаются правками
 	// пользователя, иначе каждое открытие инструмента писало бы в undo.
 	bool m_filling = false;
+	// Пока правка расходится по документу, вид успевает обновиться и позвать
+	// SetPatch обратно. Без этого флага поля переписывались прямо во время
+	// набора, курсор прыгал в начало, и цифры перемешивались.
+	bool m_applying = false;
 
 public:
 	PSGInstrDlg(CWnd &parent, const CSoundFile &sndFile);
 	~PSGInstrDlg();
 	void SetEnabled(bool enabled);
 	void SetPatch(std::shared_ptr<const PSGPatch> &patch);
+	// Колесо мыши перебирает то число, над которым стоит курсор: в полях
+	// скорости и задержки само значение, а в строке макроса — то, на которое
+	// указывает курсор. Вызывается и своим обработчиком, и видом сэмпла, когда
+	// курсор над диалогом; пересылать сообщение туда нельзя — необработанное
+	// колесо диалог вернёт родителю, и получится петля.
+	bool WheelStep(short delta, CPoint screenPoint);
 	CSize GetMinimumSize() const { return m_windowSize; }
 
 protected:
@@ -45,9 +55,6 @@ protected:
 	// все поля разом, поэтому номер здесь не нужен.
 	void OnFieldChanged(UINT) { ParamsChanged(); }
 
-	// Колесо мыши перебирает то число, над которым стоит курсор: в полях
-	// скорости и задержки само значение, а в строке макроса — то, на которое
-	// указывает курсор.
 	BOOL OnMouseWheel(UINT flags, short delta, CPoint point);
 	bool WheelOnSequence(int id, int macro, int step, CPoint screenPoint);
 

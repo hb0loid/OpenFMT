@@ -130,35 +130,37 @@ bool TokenAt(const CString &text, int position, int &begin, int &end)
 
 BOOL PSGInstrDlg::OnMouseWheel(UINT flags, short delta, CPoint point)
 {
-	if(m_patch == nullptr || !delta)
-		return DialogBase::OnMouseWheel(flags, delta, point);
+	if(WheelStep(delta, point))
+		return TRUE;
+	return DialogBase::OnMouseWheel(flags, delta, point);
+}
+
+
+bool PSGInstrDlg::WheelStep(short delta, CPoint screenPoint)
+{
+	if(m_patch == nullptr || !delta || !::IsWindow(m_hWnd))
+		return false;
 	const int step = delta > 0 ? 1 : -1;
-	CPoint client = point;
+	CPoint client = screenPoint;
 	ScreenToClient(&client);
 	const CWnd *child = ChildWindowFromPoint(client, CWP_SKIPINVISIBLE | CWP_SKIPDISABLED);
-	if(child == nullptr || child == this)
-		return DialogBase::OnMouseWheel(flags, delta, point);
+	if(child == nullptr || child->m_hWnd == m_hWnd)
+		return false;
 	const int id = child->GetDlgCtrlID();
 
 	if(id >= IDC_PSG_SEQ1 && id < IDC_PSG_SEQ1 + PSGPatch::Count)
-	{
-		if(WheelOnSequence(id, id - IDC_PSG_SEQ1, step, point))
-			return TRUE;
-		return DialogBase::OnMouseWheel(flags, delta, point);
-	}
+		return WheelOnSequence(id, id - IDC_PSG_SEQ1, step, screenPoint);
 	if(id >= IDC_PSG_SPEED1 && id < IDC_PSG_SPEED1 + PSGPatch::Count)
 	{
-		const int value = std::clamp(static_cast<int>(GetDlgItemInt(id, nullptr, FALSE)) + step, 1, 255);
-		SetDlgItemInt(id, value, FALSE);
-		return TRUE;
+		SetDlgItemInt(id, std::clamp(static_cast<int>(GetDlgItemInt(id, nullptr, FALSE)) + step, 1, 255), FALSE);
+		return true;
 	}
 	if(id >= IDC_PSG_DELAY1 && id < IDC_PSG_DELAY1 + PSGPatch::Count)
 	{
-		const int value = std::clamp(static_cast<int>(GetDlgItemInt(id, nullptr, FALSE)) + step, 0, 255);
-		SetDlgItemInt(id, value, FALSE);
-		return TRUE;
+		SetDlgItemInt(id, std::clamp(static_cast<int>(GetDlgItemInt(id, nullptr, FALSE)) + step, 0, 255), FALSE);
+		return true;
 	}
-	return DialogBase::OnMouseWheel(flags, delta, point);
+	return false;
 }
 
 
@@ -185,7 +187,7 @@ bool PSGInstrDlg::WheelOnSequence(int id, int macro, int step, CPoint screenPoin
 	edit->SetWindowText(text);
 	// Выделение остаётся на изменённом числе, чтобы его было видно и чтобы
 	// следующий щелчок колеса попал в него же.
-	static_cast<CEdit *>(edit)->SetSel(begin, begin + replacement.GetLength());
+	edit->SendMessage(EM_SETSEL, begin, begin + replacement.GetLength());
 	return true;
 }
 
@@ -252,6 +254,12 @@ void PSGInstrDlg::SetPatch(std::shared_ptr<const PSGPatch> &holder)
 {
 	if(!holder)
 		return;
+	if(m_applying)
+	{
+		// Это отражение нашей же правки: поля трогать нельзя.
+		m_patch = &holder;
+		return;
+	}
 	SetRedraw(FALSE);
 	m_filling = true;
 	m_patch = nullptr;
@@ -314,9 +322,11 @@ void PSGInstrDlg::ParamsChanged()
 					&& a.instantRelease == b.instantRelease;
 			}))
 	{
+		m_applying = true;
 		m_parent.SendMessage(WM_MOD_VIEWMSG, VIEWMSG_PREPAREUNDO);
 		*m_patch = std::make_shared<const PSGPatch>(std::move(patch));
 		m_parent.SendMessage(WM_MOD_VIEWMSG, VIEWMSG_SETMODIFIED, SampleHint().Data().AsLPARAM());
+		m_applying = false;
 	}
 }
 
