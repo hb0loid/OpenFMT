@@ -19,11 +19,9 @@ OPENMPT_NAMESPACE_BEGIN
 class ScopeCtrl : public CWnd
 {
 public:
-	// Сколько отсчётов видно на экране разом: около двадцати миллисекунд при
-	// 48 кГц. Короче — волна дрожит, длиннее — отдельные периоды сливаются.
-	static constexpr uint32 Span = 1024;
-	// Запас, в котором ищется точка синхронизации.
-	static constexpr uint32 Search = Span;
+	// Сколько отсчётов видно разом: не меньше двух на столбец пикселей, иначе
+	// соседние столбцы берут один и тот же отсчёт и линия рассыпается в точки.
+	static constexpr uint32 MinSpan = 1024, MaxSpan = 8192;
 
 	bool Create(CWnd *parent, UINT id);
 	void Start();
@@ -36,6 +34,12 @@ protected:
 	float m_gain = 1.0f;
 	float m_peak = 0.0f;
 	bool m_running = false;
+	// Холст и буфер отсчётов живут между кадрами: при шестидесяти кадрах в
+	// секунду заводить их заново значит занимать процессор впустую.
+	CDC m_offScreenDC;
+	CBitmap m_offScreenBitmap;
+	CSize m_offScreenSize;
+	std::vector<float> m_samples;
 
 	// Ищет начало картинки так, чтобы одиночная нота стояла неподвижно: без
 	// этого волна бежит по экрану и разглядеть в ней нечего.
