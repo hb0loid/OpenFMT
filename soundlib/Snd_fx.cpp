@@ -856,6 +856,9 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 				break;
 			// Volume Slide
 			case CMD_VOLUMESLIDE:
+				if(m_furnaceSlides)
+					chn.furnaceSlide.volSlide = static_cast<uint8>(param);
+				[[fallthrough]];
 			case CMD_TONEPORTAVOL:
 				if (param) chn.nOldVolumeSlide = param;
 				break;
@@ -968,13 +971,23 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 				param = 0;
 				[[fallthrough]];
 			case CMD_VIBRATO:
-				Vibrato(chn, param);
+				// Перемотка считает состояние этой же прокруткой, поэтому
+				// фёрнейсовскую остановку нулём она должна понимать так же:
+				// иначе вибрато, выключенное где-то до точки старта, на ней
+				// оказывалось бы включённым.
+				if(m_furnaceSlides && !param)
+					chn.dwFlags.reset(CHN_VIBRATO);
+				else
+					Vibrato(chn, param);
 				break;
 			case CMD_FINEVIBRATO:
 				FineVibrato(chn, param);
 				break;
 			case CMD_TREMOLO:
-				Tremolo(chn, param);
+				if(m_furnaceSlides && !param)
+					chn.dwFlags.reset(CHN_TREMOLO);
+				else
+					Tremolo(chn, param);
 				break;
 			case CMD_PANBRELLO:
 				Panbrello(chn, param);
