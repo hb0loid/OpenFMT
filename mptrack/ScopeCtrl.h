@@ -64,6 +64,7 @@ protected:
 	CBitmap m_offScreenBitmap;
 	CSize m_offScreenSize;
 	std::vector<float> m_samples;
+	std::vector<CPoint> m_points;
 
 	// Ищет начало картинки так, чтобы волна стояла на месте, а не ездила.
 	static uint32 Trigger(const float *samples, uint32 count, float peak);

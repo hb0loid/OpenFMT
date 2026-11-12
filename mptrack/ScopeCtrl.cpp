@@ -233,7 +233,13 @@ void ScopeCtrl::OnPaint()
 
 		CPen wavePen(PS_SOLID, thickness, wave);
 		m_offScreenDC.SelectObject(&wavePen);
-		int previous = place(shown[0]);
+		// Вся волна рисуется одним вызовом. По вызову на столбец пикселей
+		// выходило под две с половиной тысячи обращений к системе на кадр, и
+		// упиралось именно в них: кадров получалось сорок три при любом
+		// таймере. Ломаная идёт зигзагом через верх и низ каждого столбца,
+		// поэтому она же и соединяет столбцы между собой: на широком окне, где
+		// отсчётов меньше, чем столбцов, линия иначе распадается на точки.
+		m_points.resize(static_cast<size_t>(width) * 2);
 		for(int x = 0; x < width; x++)
 		{
 			const uint32 from = static_cast<uint32>(static_cast<int64>(x) * span / width);
@@ -244,22 +250,20 @@ void ScopeCtrl::OnPaint()
 				low = std::min(low, shown[i]);
 				high = std::max(high, shown[i]);
 			}
-			// Сначала соединяем со столбцом слева, иначе на широком окне, где
-			// отсчётов меньше, чем столбцов, линия распадается на точки.
-			const int top = place(high), bottom = place(low);
-			m_offScreenDC.MoveTo(x, previous);
-			m_offScreenDC.LineTo(x, std::clamp(previous, top, bottom));
-			m_offScreenDC.MoveTo(x, top);
-			m_offScreenDC.LineTo(x, bottom + 1);
-			previous = place(shown[to - 1]);
+			const bool downwards = (x & 1) != 0;
+			m_points[x * 2 + 0] = CPoint(x, place(downwards ? high : low));
+			m_points[x * 2 + 1] = CPoint(x, place(downwards ? low : high));
 		}
+		m_offScreenDC.Polyline(m_points.data(), static_cast<int>(m_points.size()));
 
 		// Уровень подписывается настоящий, до усиления: иначе цифра врала бы.
 		CString text = (peak > 0.0f)
 			? mpt::cfmt::fix(20.0 * std::log10(static_cast<double>(peak)), 1) + _T(" dB")
 			: CString(_T("-inf dB"));
+		// Только латиница: подписи здесь идут через узкие строки Windows, и
+		// кириллица в исходнике приезжает на экран крокозябрами.
 		if(m_shownFrames)
-			text = mpt::cfmt::val(m_shownFrames) + _T(" кадр/с, звук ") + mpt::cfmt::val(m_shownArrivals) + _T("/с   ") + text;
+			text = mpt::cfmt::val(m_shownFrames) + _T(" fps, audio ") + mpt::cfmt::val(m_shownArrivals) + _T("/s   ") + text;
 		m_offScreenDC.SetBkMode(TRANSPARENT);
 		m_offScreenDC.SetTextColor(wave);
 		m_offScreenDC.SelectObject(CMainFrame::GetGUIFont());
