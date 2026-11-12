@@ -48,6 +48,7 @@
 #include "../common/Profiler.h"
 #include "../common/version.h"
 #include "../soundlib/AudioReadTarget.h"
+#include "ScopeCtrl.h"
 #include "../soundlib/Tables.h"
 #include "../soundlib/PlaybackTest.h"
 #include "mpt/audio/span.hpp"
@@ -146,6 +147,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CMDIFrameWnd)
 	ON_COMMAND(ID_MAINBAR_SHOW_ROWSPERBEAT,  &CMainFrame::OnToggleMainBarShowRowsPerBeat)
 	ON_COMMAND(ID_MAINBAR_SHOW_GLOBALVOLUME, &CMainFrame::OnToggleMainBarShowGlobalVolume)
 	ON_COMMAND(ID_MAINBAR_SHOW_VUMETER,      &CMainFrame::OnToggleMainBarShowVUMeter)
+	ON_COMMAND(ID_MAINBAR_SHOW_SCOPE,        &CMainFrame::OnToggleShowOscilloscope)
 	ON_COMMAND(ID_MAINBAR_SHOW_FILE_ICONS,   &CMainFrame::OnToggleMainBarShowFileIcons)
 	ON_COMMAND(ID_MAINBAR_SHOW_EDIT_ICONS,   &CMainFrame::OnToggleMainBarShowEditIcons)
 	ON_COMMAND(ID_MAINBAR_SHOW_PLAY_ICONS,   &CMainFrame::OnToggleMainBarShowPlayIcons)
@@ -2752,6 +2754,9 @@ void CMainFrame::AddToolBarMenuEntries(CMenu &menu) const
 	subMenu.AppendMenu(MF_STRING | (visibleItems[MainToolBarItem::GlobalVolume] ? MF_CHECKED : 0), ID_MAINBAR_SHOW_GLOBALVOLUME, _T("&Global Volume"));
 	subMenu.AppendMenu(MF_STRING | (visibleItems[MainToolBarItem::IconsMisc] ? MF_CHECKED : 0), ID_MAINBAR_SHOW_MISC_ICONS, _T("&Misc Icons"));
 	subMenu.AppendMenu(MF_STRING | (visibleItems[MainToolBarItem::VUMeter] ? MF_CHECKED : 0), ID_MAINBAR_SHOW_VUMETER, _T("&VU Meters"));
+	// Осциллограф живёт не в этой панели, а в панелях вкладок, но прячется он
+	// отсюда же: пользователь ищет такие переключатели в одном месте.
+	subMenu.AppendMenu(MF_STRING | (TrackerSettings::Instance().showOscilloscope ? MF_CHECKED : 0), ID_MAINBAR_SHOW_SCOPE, _T("&Oscilloscope"));
 	menu.AppendMenu(MF_POPUP, reinterpret_cast<UINT_PTR>(subMenu.Detach()), _T("Main Toolbar &Items"));
 }
 
@@ -2762,6 +2767,14 @@ void CMainFrame::OnToggleMainBarShowSpeed() { OnToggleMainBarItem(MainToolBarIte
 void CMainFrame::OnToggleMainBarShowRowsPerBeat() { OnToggleMainBarItem(MainToolBarItem::RowsPerBeat, ID_MAINBAR_SHOW_ROWSPERBEAT); }
 void CMainFrame::OnToggleMainBarShowGlobalVolume() { OnToggleMainBarItem(MainToolBarItem::GlobalVolume, ID_MAINBAR_SHOW_GLOBALVOLUME); }
 void CMainFrame::OnToggleMainBarShowVUMeter() { OnToggleMainBarItem(MainToolBarItem::VUMeter, ID_MAINBAR_SHOW_VUMETER); }
+
+void CMainFrame::OnToggleShowOscilloscope()
+{
+	const bool show = !TrackerSettings::Instance().showOscilloscope;
+	TrackerSettings::Instance().showOscilloscope = show;
+	ScopeCtrl::RefreshAll();
+	GetMenu()->CheckMenuItem(ID_MAINBAR_SHOW_SCOPE, MF_BYCOMMAND | (show ? MF_CHECKED : 0));
+}
 void CMainFrame::OnToggleMainBarShowFileIcons() { OnToggleMainBarItem(MainToolBarItem::IconsFile, ID_MAINBAR_SHOW_FILE_ICONS); }
 void CMainFrame::OnToggleMainBarShowEditIcons() { OnToggleMainBarItem(MainToolBarItem::IconsEdit, ID_MAINBAR_SHOW_EDIT_ICONS); }
 void CMainFrame::OnToggleMainBarShowPlayIcons() { OnToggleMainBarItem(MainToolBarItem::IconsPlayback, ID_MAINBAR_SHOW_PLAY_ICONS); }

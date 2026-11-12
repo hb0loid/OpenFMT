@@ -344,13 +344,7 @@ void CCtrlSamples::RecalcLayout()
 	const int margin = HighDPISupport::ScalePixels(6, m_hWnd);
 	const CRect place(rightRect.right + margin * 2, rightRect.top,
 		client.right - margin, client.bottom - margin);
-	const bool fits = place.Width() >= HighDPISupport::ScalePixels(80, m_hWnd) && place.Height() > 0;
-	m_scope.SetWindowPos(nullptr, place.left, place.top, place.Width(), place.Height(),
-		SWP_NOZORDER | SWP_NOACTIVATE | (fits ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
-	if(fits)
-		m_scope.Start();
-	else
-		m_scope.Stop();
+	m_scope.Place(place, place.Width() >= HighDPISupport::ScalePixels(80, m_hWnd) && place.Height() > 0);
 }
 
 

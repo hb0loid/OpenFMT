@@ -495,6 +495,7 @@ protected:
 	afx_msg void OnToggleMainBarShowRowsPerBeat();
 	afx_msg void OnToggleMainBarShowGlobalVolume();
 	afx_msg void OnToggleMainBarShowVUMeter();
+	afx_msg void OnToggleShowOscilloscope();
 	afx_msg void OnToggleMainBarShowFileIcons();
 	afx_msg void OnToggleMainBarShowEditIcons();
 	afx_msg void OnToggleMainBarShowPlayIcons();

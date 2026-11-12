@@ -766,6 +766,7 @@ public:
 
 	CachedSetting<MainToolBarItem> mainToolBarVisibleItems;
 	Setting<bool> treeViewOnLeft;
+	Setting<bool> showOscilloscope;
 	Setting<uint8> quickStartGroupsCollapsed;
 
 	// Misc

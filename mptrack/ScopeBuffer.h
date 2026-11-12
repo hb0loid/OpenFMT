@@ -33,6 +33,10 @@ private:
 	std::atomic<uint32> m_written = 0;
 
 public:
+	// Сколько отсчётов записано за всё время: по нему видно, как часто звуковая
+	// карта приносит новый звук, и обновляется ли вообще картинка.
+	uint32 Written() const { return m_written.load(std::memory_order_acquire); }
+
 	void Clear()
 	{
 		m_samples.fill(0.0f);

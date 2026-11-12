@@ -18,6 +18,8 @@ OPENMPT_NAMESPACE_BEGIN
 
 static constexpr UINT_PTR ScopeTimer = 1;
 
+static std::vector<ScopeCtrl *> s_scopes;
+
 BEGIN_MESSAGE_MAP(ScopeCtrl, CWnd)
 	ON_WM_PAINT()
 	ON_WM_TIMER()
@@ -25,8 +27,44 @@ BEGIN_MESSAGE_MAP(ScopeCtrl, CWnd)
 END_MESSAGE_MAP()
 
 
+ScopeCtrl::~ScopeCtrl()
+{
+	s_scopes.erase(std::remove(s_scopes.begin(), s_scopes.end(), this), s_scopes.end());
+}
+
+
+void ScopeCtrl::Place(const CRect &rect, bool fits)
+{
+	m_place = rect;
+	m_fits = fits;
+	Apply();
+}
+
+
+void ScopeCtrl::Apply()
+{
+	if(!m_hWnd)
+		return;
+	const bool show = m_fits && TrackerSettings::Instance().showOscilloscope;
+	SetWindowPos(nullptr, m_place.left, m_place.top, m_place.Width(), m_place.Height(),
+		SWP_NOZORDER | SWP_NOACTIVATE | (show ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+	if(show)
+		Start();
+	else
+		Stop();
+}
+
+
+void ScopeCtrl::RefreshAll()
+{
+	for(ScopeCtrl *scope : s_scopes)
+		scope->Apply();
+}
+
+
 bool ScopeCtrl::Create(CWnd *parent, UINT id)
 {
+	s_scopes.push_back(this);
 	m_buffer = &CMainFrame::GetMainFrame()->GetScopeBuffer();
 	const auto wndClass = AfxRegisterWndClass(CS_HREDRAW | CS_VREDRAW, nullptr, nullptr, nullptr);
 	return CWnd::CreateEx(0, wndClass, nullptr, WS_CHILD | WS_VISIBLE, CRect(0, 0, 0, 0), parent, id) != FALSE;
@@ -122,6 +160,24 @@ void ScopeCtrl::OnPaint()
 	const COLORREF wave = colors[MODCOLOR_SAMPLE];
 	const int width = rect.Width(), height = rect.Height();
 
+	// Раз в секунду пересчитываем, сколько кадров нарисовано и сколько раз
+	// пришёл новый звук: если второе число мало, рисовать чаще бессмысленно,
+	// кадры просто повторяют друг друга.
+	m_frames++;
+	if(const uint32 written = m_buffer->Written(); written != m_lastWritten)
+	{
+		m_lastWritten = written;
+		m_arrivals++;
+	}
+	const uint32 now = static_cast<uint32>(GetTickCount64());
+	if(now - m_countedAt >= 1000)
+	{
+		m_shownFrames = static_cast<int>(m_frames);
+		m_shownArrivals = static_cast<int>(m_arrivals);
+		m_frames = m_arrivals = 0;
+		m_countedAt = now;
+	}
+
 	// Холст заводится один раз и переживает кадры: при шестидесяти кадрах в
 	// секунду создавать его заново значит занимать процессор впустую.
 	if(!m_offScreenDC.m_hDC)
@@ -196,9 +252,11 @@ void ScopeCtrl::OnPaint()
 		}
 
 		// Уровень подписывается настоящий, до усиления: иначе цифра врала бы.
-		const CString text = (peak > 0.0f)
+		CString text = (peak > 0.0f)
 			? mpt::cfmt::fix(20.0 * std::log10(static_cast<double>(peak)), 1) + _T(" dB")
 			: CString(_T("-inf dB"));
+		if(m_shownFrames)
+			text = mpt::cfmt::val(m_shownFrames) + _T(" кадр/с, звук ") + mpt::cfmt::val(m_shownArrivals) + _T("/с   ") + text;
 		m_offScreenDC.SetBkMode(TRANSPARENT);
 		m_offScreenDC.SetTextColor(wave);
 		m_offScreenDC.SelectObject(CMainFrame::GetGUIFont());

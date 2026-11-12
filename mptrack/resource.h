@@ -1218,6 +1218,7 @@
 #define ID_MAINBAR_SHOW_EDIT_ICONS      36044
 #define ID_MAINBAR_SHOW_PLAY_ICONS      36045
 #define ID_MAINBAR_SHOW_MISC_ICONS      36046
+#define ID_MAINBAR_SHOW_SCOPE           36047
 #define ID_TREEVIEW_ON_LEFT             36047
 #define ID_KEYPRESET_MPT                36048
 #define ID_KEYPRESET_IT                 36049

@@ -199,6 +199,7 @@ TrackerSettings::TrackerSettings(SettingsContainer &conf)
 	, commentsFont(conf, UL_("Display"), UL_("Comments Font"), FontSetting(UL_("Courier New"), 120))
 	, mainToolBarVisibleItems(conf, UL_("Display"), UL_("MainToolBarVisibleItems"), MainToolBarItem::Default)
 	, treeViewOnLeft(conf, UL_("Display"), UL_("TreeViewOnLeft"), true)
+	, showOscilloscope(conf, UL_("Display"), UL_("ShowOscilloscope"), true)
 	, quickStartGroupsCollapsed(conf, UL_("Display"), UL_("QuickStartGroupsExpanded"), 0)
 	// Misc
 	, defaultModType(conf, UL_("Misc"), UL_("DefaultModType"), MOD_TYPE_IT)
