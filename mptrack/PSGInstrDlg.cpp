@@ -17,6 +17,7 @@
 OPENMPT_NAMESPACE_BEGIN
 
 BEGIN_MESSAGE_MAP(PSGInstrDlg, DialogBase)
+	ON_WM_MOUSEWHEEL()
 	ON_COMMAND(IDC_PSG_RESETNOISE, &PSGInstrDlg::ParamsChanged)
 	ON_COMMAND(IDC_PSG_EASYPITCH, &PSGInstrDlg::ParamsChanged)
 	ON_COMMAND(IDC_PSG_FURNACEPITCH, &PSGInstrDlg::ParamsChanged)
@@ -86,7 +87,107 @@ void ParseSequence(const CString &text, PSGSequence &seq)
 		seq.values.push_back(static_cast<int32>(_ttoi(token.GetString())));
 	}
 }
+
+// Пределы значений у макросов разные: громкость это четыре бита, режим шума
+// два, а высота и арпеджио ходят в обе стороны.
+struct MacroRange { int32 low, high; };
+constexpr MacroRange MacroRanges[PSGPatch::Count] =
+{
+	{0, 15},        // громкость
+	{-120, 120},    // арпеджио
+	{0, 3},         // режим шума
+	{-2048, 2048},  // высота
+	{0, 1},         // сброс фазы
+};
+
+
+// Границы числа, на которое указывает позиция в строке. Возвращает false, если
+// там метка петли или release, а не число.
+bool TokenAt(const CString &text, int position, int &begin, int &end)
+{
+	const auto isSeparator = [](TCHAR c) { return c == _T(' ') || c == _T('	') || c == _T(',') || c == _T(';'); };
+	const int length = text.GetLength();
+	if(!length)
+		return false;
+	position = std::clamp(position, 0, length - 1);
+	if(isSeparator(text[position]) && position > 0)
+		position--;
+	while(position > 0 && isSeparator(text[position]))
+		position--;
+	begin = position;
+	while(begin > 0 && !isSeparator(text[begin - 1]))
+		begin--;
+	end = position;
+	while(end < length && !isSeparator(text[end]))
+		end++;
+	if(end <= begin)
+		return false;
+	const CString token = text.Mid(begin, end - begin);
+	return token != _T("|") && token != _T("/");
+}
 } // namespace
+
+
+BOOL PSGInstrDlg::OnMouseWheel(UINT flags, short delta, CPoint point)
+{
+	if(m_patch == nullptr || !delta)
+		return DialogBase::OnMouseWheel(flags, delta, point);
+	const int step = delta > 0 ? 1 : -1;
+	CPoint client = point;
+	ScreenToClient(&client);
+	const CWnd *child = ChildWindowFromPoint(client, CWP_SKIPINVISIBLE | CWP_SKIPDISABLED);
+	if(child == nullptr || child == this)
+		return DialogBase::OnMouseWheel(flags, delta, point);
+	const int id = child->GetDlgCtrlID();
+
+	if(id >= IDC_PSG_SEQ1 && id < IDC_PSG_SEQ1 + PSGPatch::Count)
+	{
+		if(WheelOnSequence(id, id - IDC_PSG_SEQ1, step, point))
+			return TRUE;
+		return DialogBase::OnMouseWheel(flags, delta, point);
+	}
+	if(id >= IDC_PSG_SPEED1 && id < IDC_PSG_SPEED1 + PSGPatch::Count)
+	{
+		const int value = std::clamp(static_cast<int>(GetDlgItemInt(id, nullptr, FALSE)) + step, 1, 255);
+		SetDlgItemInt(id, value, FALSE);
+		return TRUE;
+	}
+	if(id >= IDC_PSG_DELAY1 && id < IDC_PSG_DELAY1 + PSGPatch::Count)
+	{
+		const int value = std::clamp(static_cast<int>(GetDlgItemInt(id, nullptr, FALSE)) + step, 0, 255);
+		SetDlgItemInt(id, value, FALSE);
+		return TRUE;
+	}
+	return DialogBase::OnMouseWheel(flags, delta, point);
+}
+
+
+bool PSGInstrDlg::WheelOnSequence(int id, int macro, int step, CPoint screenPoint)
+{
+	CWnd *edit = GetDlgItem(id);
+	if(edit == nullptr)
+		return false;
+	CString text;
+	edit->GetWindowText(text);
+	if(text.IsEmpty())
+		return false;
+	CPoint inEdit = screenPoint;
+	edit->ScreenToClient(&inEdit);
+	const LRESULT at = edit->SendMessage(EM_CHARFROMPOS, 0, MAKELPARAM(inEdit.x, inEdit.y));
+	int begin = 0, end = 0;
+	if(!TokenAt(text, LOWORD(at), begin, end))
+		return false;
+	const auto &range = MacroRanges[macro];
+	const int32 value = std::clamp<int32>(static_cast<int32>(_ttoi(text.Mid(begin, end - begin).GetString())) + step,
+		range.low, range.high);
+	const CString replacement = mpt::cfmt::val(value);
+	text = text.Left(begin) + replacement + text.Mid(end);
+	edit->SetWindowText(text);
+	// Выделение остаётся на изменённом числе, чтобы его было видно и чтобы
+	// следующий щелчок колеса попал в него же.
+	static_cast<CEdit *>(edit)->SetSel(begin, begin + replacement.GetLength());
+	return true;
+}
 
 
 void PSGInstrDlg::DoDataExchange(CDataExchange *pDX)

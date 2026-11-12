@@ -4365,6 +4365,19 @@ void CViewSample::DoZoom(int direction, const CPoint &zoomPoint)
 // cppcheck-suppress duplInheritedMember
 BOOL CViewSample::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 {
+	// Над редактором PSG колесо перебирает числа в его полях, а не прокручивает
+	// вид: иначе над диалогом оно работало бы только после щелчка по полю.
+	if(m_psgEditor && m_psgEditor->IsWindowVisible())
+	{
+		CPoint inEditor = pt;
+		m_psgEditor->ScreenToClient(&inEditor);
+		CRect editorRect;
+		m_psgEditor->GetClientRect(editorRect);
+		if(editorRect.PtInRect(inEditor)
+			&& m_psgEditor->SendMessage(WM_MOUSEWHEEL, MAKEWPARAM(nFlags, zDelta), MAKELPARAM(pt.x, pt.y)))
+			return TRUE;
+	}
+
 	// Ctrl + mouse wheel: zoom control.
 	// One scroll direction zooms in and the other zooms out.
 	// This behaviour is different from what would happen if simply scrolling

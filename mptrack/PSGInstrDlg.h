@@ -45,6 +45,12 @@ protected:
 	// все поля разом, поэтому номер здесь не нужен.
 	void OnFieldChanged(UINT) { ParamsChanged(); }
 
+	// Колесо мыши перебирает то число, над которым стоит курсор: в полях
+	// скорости и задержки само значение, а в строке макроса — то, на которое
+	// указывает курсор.
+	BOOL OnMouseWheel(UINT flags, short delta, CPoint point);
+	bool WheelOnSequence(int id, int macro, int step, CPoint screenPoint);
+
 	void DoDataExchange(CDataExchange *pDX) override;
 	BOOL OnInitDialog() override;
 	void OnOK() override { }
