@@ -1777,6 +1777,8 @@
     <ClInclude Include="..\..\mptrack\OPLInstrDlg.h" />
     <ClInclude Include="..\..\mptrack\PSGInstrDlg.h" />
     <ClInclude Include="..\..\mptrack\PSGMacroCtrl.h" />
+    <ClInclude Include="..\..\mptrack\ScopeBuffer.h" />
+    <ClInclude Include="..\..\mptrack\ScopeCtrl.h" />
     <ClInclude Include="..\..\mptrack\PSRatioCalc.h" />
     <ClInclude Include="..\..\mptrack\PathConfigDlg.h" />
     <ClInclude Include="..\..\mptrack\PatternClipboard.h" />
@@ -2247,6 +2249,7 @@
     <ClCompile Include="..\..\mptrack\OPLInstrDlg.cpp" />
     <ClCompile Include="..\..\mptrack\PSGInstrDlg.cpp" />
     <ClCompile Include="..\..\mptrack\PSGMacroCtrl.cpp" />
+    <ClCompile Include="..\..\mptrack\ScopeCtrl.cpp" />
     <ClCompile Include="..\..\mptrack\PSRatioCalc.cpp" />
     <ClCompile Include="..\..\mptrack\PathConfigDlg.cpp" />
     <ClCompile Include="..\..\mptrack\PatternClipboard.cpp" />

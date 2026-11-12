@@ -191,6 +191,8 @@ BOOL CCtrlPatterns::OnInitDialog()
 	m_OrderList.SetFocus();
 
 	UpdateView(PatternHint().Names().ModType(), nullptr);
+	m_scope.Create(this, IDC_SCOPE_PATTERNS);
+	m_scope.Start();
 	RecalcLayout();
 
 	m_initialized = true;
@@ -211,8 +213,37 @@ void CCtrlPatterns::OnDPIChanged()
 Setting<LONG> &CCtrlPatterns::GetSplitPosRef() { return TrackerSettings::Instance().glPatternWindowHeight; }
 
 
+void CCtrlPatterns::LayoutScope()
+{
+	// Панель нарисована уже окна, поэтому пустота справа есть только на широком
+	// окне. Осциллограф занимает её целиком и прячется, когда её не хватает:
+	// в узкой полоске от него всё равно ничего не разглядеть.
+	const CWnd *right = GetDlgItem(IDC_EDIT_SEQUENCE_NAME);
+	const CWnd *bottom = GetDlgItem(IDC_EDIT_PATTERNNAME);
+	if(!m_scope.m_hWnd || !right || !bottom)
+		return;
+	CRect rightRect, bottomRect, client;
+	right->GetWindowRect(&rightRect);
+	bottom->GetWindowRect(&bottomRect);
+	ScreenToClient(&rightRect);
+	ScreenToClient(&bottomRect);
+	GetClientRect(&client);
+	const int margin = HighDPISupport::ScalePixels(6, m_hWnd);
+	const CRect place(rightRect.right + margin * 2, rightRect.top - margin,
+		client.right - margin, bottomRect.bottom + margin);
+	const bool fits = place.Width() >= HighDPISupport::ScalePixels(80, m_hWnd) && place.Height() > 0;
+	m_scope.SetWindowPos(nullptr, place.left, place.top, place.Width(), place.Height(),
+		SWP_NOZORDER | SWP_NOACTIVATE | (fits ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+	if(fits)
+		m_scope.Start();
+	else
+		m_scope.Stop();
+}
+
+
 void CCtrlPatterns::RecalcLayout()
 {
+	LayoutScope();
 	// Update Order List Position
 	if(m_OrderList.m_hWnd)
 	{

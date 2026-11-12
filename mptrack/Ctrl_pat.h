@@ -14,6 +14,7 @@
 #include "openmpt/all/BuildSettings.hpp"
 
 #include "AccessibleControls.h"
+#include "ScopeCtrl.h"
 #include "Globals.h"
 
 OPENMPT_NAMESPACE_BEGIN
@@ -219,6 +220,10 @@ public:
 	BOOL OnInitDialog() override;
 	void DoDataExchange(CDataExchange* pDX) override;	// DDX/DDV support
 	void RecalcLayout() override;
+	// Осциллограф живёт в пустоте справа: эта панель нарисована уже окна, и
+	// место там появляется само, когда окно широкое.
+	void LayoutScope();
+	ScopeCtrl m_scope;
 	void UpdateView(UpdateHint hint = UpdateHint(), CObject *pObj = nullptr) override;
 	CRuntimeClass *GetAssociatedViewClass() override;
 	LRESULT OnModCtrlMsg(WPARAM wParam, LPARAM lParam) override;

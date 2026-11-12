@@ -911,7 +911,8 @@ void CMainFrame::SoundCallbackLockedCallback(SoundDevice::CallbackBuffer<Dithers
 	MPT_ASSERT(buffer.GetNumFrames() <= std::numeric_limits<samplecount_t>::max());
 	samplecount_t framesToRender = static_cast<samplecount_t>(buffer.GetNumFrames());
 	MPT_ASSERT(framesToRender > 0);
-	samplecount_t renderedFrames = m_pSndFile->Read(framesToRender, target, source, std::ref(m_VUMeterOutput), std::ref(m_VUMeterInput));
+	ScopeMonitor outputMonitor(m_VUMeterOutput, m_scopeBuffer);
+	samplecount_t renderedFrames = m_pSndFile->Read(framesToRender, target, source, std::ref(outputMonitor), std::ref(m_VUMeterInput));
 	MPT_ASSERT(renderedFrames <= framesToRender);
 	[[maybe_unused]] samplecount_t remainingFrames = framesToRender - renderedFrames;
 	MPT_ASSERT(remainingFrames >= 0); // remaining buffer is filled with silence automatically
@@ -1540,6 +1541,7 @@ bool CMainFrame::PlayMod(CModDoc *pModDoc)
 
 	m_VUMeterInput = VUMeter();
 	m_VUMeterOutput = VUMeter();
+	m_scopeBuffer.Clear();
 
 	UpdateMetronomeSamples();
 

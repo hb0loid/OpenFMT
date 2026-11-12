@@ -16,6 +16,7 @@
 #include "AccessibleControls.h"
 #include "CDecimalSupport.h"
 #include "Globals.h"
+#include "ScopeCtrl.h"
 #include "Undo.h"
 #include "UpdateHints.h"
 #include "../soundlib/SampleIO.h"
@@ -95,6 +96,9 @@ public:
 	void DoDataExchange(CDataExchange* pDX) override;	// DDX/DDV support
 	CRuntimeClass *GetAssociatedViewClass() override;
 	void RecalcLayout() override;
+	// Осциллограф стоит в пустоте справа: здесь он нужнее всего, потому что
+	// рядом ручки синтов, и слышимое видно сразу.
+	ScopeCtrl m_scope;
 	void OnActivatePage(LPARAM) override;
 	void OnDeactivatePage() override;
 	void UpdateView(UpdateHint hint, CObject *pObj = nullptr) override;

@@ -18,6 +18,7 @@
 #include "Settings.h"
 #include "../soundlib/AudioCriticalSection.h"
 #include "../soundlib/AudioReadTarget.h"
+#include "ScopeBuffer.h"
 #include "../soundlib/Sndfile.h"
 #include "mpt/audio/span.hpp"
 #include "mpt/mutex/mutex.hpp"
@@ -170,9 +171,16 @@ public:
 	UINT_PTR m_NotifyTimer = 0;
 	VUMeter m_VUMeterInput;
 	VUMeter m_VUMeterOutput;
+	// Звук для осциллографа снимается там же, где уровень для индикатора.
+	ScopeBuffer m_scopeBuffer;
 
 	DWORD m_AudioThreadId = 0;
 	bool m_InNotifyHandler = false;
+
+public:
+	const ScopeBuffer &GetScopeBuffer() const { return m_scopeBuffer; }
+
+private:
 
 	// Midi Input
 public:

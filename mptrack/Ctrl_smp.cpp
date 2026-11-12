@@ -215,6 +215,7 @@ BOOL CCtrlSamples::OnInitDialog()
 	CModControlDlg::OnInitDialog();
 	m_initialized = false;
 	SetRedraw(FALSE);
+	m_scope.Create(this, IDC_SCOPE_SAMPLES);
 
 	// Zoom Selection
 	static constexpr std::pair<const TCHAR *, int> ZoomLevels[] =
@@ -330,6 +331,26 @@ Setting<LONG> &CCtrlSamples::GetSplitPosRef() { return TrackerSettings::Instance
 
 void CCtrlSamples::RecalcLayout()
 {
+	// Панель нарисована уже окна, поэтому место справа появляется само на
+	// широком окне. На узком осциллограф прячется: в тонкой полоске от него
+	// всё равно ничего не разглядеть.
+	const CWnd *right = GetDlgItem(IDC_TOOLBAR2);
+	if(!m_scope.m_hWnd || !right)
+		return;
+	CRect rightRect, client;
+	right->GetWindowRect(&rightRect);
+	ScreenToClient(&rightRect);
+	GetClientRect(&client);
+	const int margin = HighDPISupport::ScalePixels(6, m_hWnd);
+	const CRect place(rightRect.right + margin * 2, rightRect.top,
+		client.right - margin, client.bottom - margin);
+	const bool fits = place.Width() >= HighDPISupport::ScalePixels(80, m_hWnd) && place.Height() > 0;
+	m_scope.SetWindowPos(nullptr, place.left, place.top, place.Width(), place.Height(),
+		SWP_NOZORDER | SWP_NOACTIVATE | (fits ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+	if(fits)
+		m_scope.Start();
+	else
+		m_scope.Stop();
 }
 
 
