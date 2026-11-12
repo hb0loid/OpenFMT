@@ -4037,11 +4037,15 @@ bool CSoundFile::IsFurnaceTonePorta(const ModChannel &chn, const ModCommand &m) 
 void CSoundFile::ProcessFurnaceSlide(ModChannel &chn, ModCommand::COMMAND cmd, uint8 param, bool newRow) const
 {
 	auto &slide = chn.furnaceSlide;
-	// Скольжение громкости у Furnace едет само, пока его не остановят нулём.
-	// На строках без команды его продолжаем здесь; строку с командой уже
-	// обслужил разбор эффектов, второй раз двигать не надо.
-	if(slide.volSlide && cmd != CMD_VOLUMESLIDE && cmd != CMD_TONEPORTAVOL && cmd != CMD_VIBRATOVOL)
-		VolumeSlide(chn, static_cast<ModCommand::PARAM>(slide.volSlide));
+	// Скольжение громкости у Furnace тоже непрерывное, но продолжать его здесь
+	// нельзя, пока не сойдётся скорость. Проверено прямо: с продолжением на
+	// hidden palace девятнадцать мест без звука вместо одного, на mushroom hill
+	// alt 2 шесть вместо нуля. Скорость у Furnace задана в долях его шкалы
+	// (0–127 у FM, 0–15 у PSG) и в формате 8.8, а наша команда несёт целый
+	// нибл на шкале 0–64; пересчёт нибла сюда не влезает, и канал уезжает в
+	// тишину там, где у Furnace он ещё звучит. Нужен дробный шаг за тик в
+	// состоянии канала, а не параметр команды. Вибрато и тремоло продолжаются
+	// как прежде: они громкость не уводят.
 	if(newRow)
 	{
 		switch(cmd)

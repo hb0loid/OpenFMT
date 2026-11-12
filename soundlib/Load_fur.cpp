@@ -1154,7 +1154,7 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 			// Ноты, чья задержка длиннее строки, переезжают на ту строку, где
 			// они и прозвучат. Раскладываем их не сразу, а после прохода:
 			// целевую строку цикл ещё не видел и затёр бы перенесённую ноту.
-			std::vector<std::tuple<ROWINDEX, CHANNELINDEX, ModCommand>> delayed;
+			std::vector<std::tuple<ROWINDEX, ROWINDEX, CHANNELINDEX, ModCommand>> delayed;
 			for(ROWINDEX row = 0; row < rows; row++, phase++)
 			{
 				for(CHANNELINDEX c = 0; c < voices.size(); c++)
@@ -1190,9 +1190,9 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 						[](const auto &effect) { return effect.first == 0x20; });
 					if(psg && (sourceRow.instrument >= 0 || cell.IsNote() || noiseMode))
 						ins = assignPSG(c, furIns);
+					const int maxVolume = voice == FurVoice::PSG || voice == FurVoice::Noise ? 15 : voice == FurVoice::PCM ? 255 : 127;
 					if(sourceRow.volume >= 0)
 					{
-						const int maxVolume = voice == FurVoice::PSG || voice == FurVoice::Noise ? 15 : voice == FurVoice::PCM ? 255 : 127;
 						const int value = std::min(sourceRow.volume, maxVolume);
 						cell.volcmd = VOLCMD_VOLUME;
 						// У нот, которые играет DAC, громкость в Furnace логарифмическая:
@@ -1216,6 +1216,23 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 						cell.volcmd = VOLCMD_VOLUME;
 						cell.vol = static_cast<ModCommand::VOL>(currentVolume[c]);
 					}
+					// Скорость скольжения громкости у Furnace задана в долях его
+					// собственной шкалы: шаг `(x & 15) * 64` при громкости в
+					// формате 8.8, то есть четверть единицы за тик. У FM шкала
+					// 0–127, у PSG 0–15, а у нас всегда 0–64, и один и тот же
+					// `0A0F` означает совсем разную скорость. Без пересчёта на
+					// FM мы гасили ноту в восемь раз быстрее нужного, и стоило
+					// сделать скольжение непрерывным, как ноты стали пропадать.
+					const auto rescaleSlide = [maxVolume](uint8 nibble) -> uint8
+					{
+						if(!nibble)
+							return 0;
+						// Нибл `F` в OpenMPT означает не скорость, а «тонкое»
+						// скольжение — другой эффект, который к тому же
+						// применяется иначе. Поэтому до него не доводим.
+						const int scaled = (nibble * 16 + maxVolume / 2) / maxVolume;
+						return static_cast<uint8>(std::clamp(scaled, 1, 14));
+					};
 					for(const auto &[fx, param] : sourceRow.effects)
 					{
 						if(fx < 0) continue;
@@ -1246,6 +1263,8 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 							continue;
 						}
 						auto [command, argument] = FurEffect(fx, value);
+						if(command == CMD_VOLUMESLIDE && argument)
+							argument = static_cast<uint8>((rescaleSlide(argument >> 4) << 4) | rescaleSlide(argument & 15));
 						if(fx == 0x20 && voice == FurVoice::Noise)
 						{
 							command = CMD_PSG_NOISE;
@@ -1381,10 +1400,7 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 						if(!ahead)
 							cell = moved;
 						else if(row + ahead < rows)
-						{
-							delayed.emplace_back(row + ahead, c, moved);
-							cell.Clear();
-						}
+							delayed.emplace_back(row, row + ahead, c, moved);
 					}
 				}
 				if(timing)
@@ -1396,11 +1412,16 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 			}
 			// Перенесённая нота встаёт только на пустое место: занятую строку
 			// она бы затёрла, а это уже не перенос, а потеря другой ноты.
-			for(const auto &[row, c, moved] : delayed)
+			// Исходную строку очищаем здесь же, и только если нота доехала:
+			// очистка сразу при переносе теряла ноту всякий раз, когда место
+			// оказывалось занято.
+			for(const auto &[from, to, c, moved] : delayed)
 			{
-				auto &target = *pattern.GetpModCommand(row, c);
-				if(target.IsEmpty())
-					target = moved;
+				auto &target = *pattern.GetpModCommand(to, c);
+				if(!target.IsEmpty())
+					continue;
+				target = moved;
+				pattern.GetpModCommand(from, c)->Clear();
 			}
 		}
 	}
