@@ -464,19 +464,32 @@ bool ReadFurPattern(FileReader file, bool packed, std::vector<FurRow> &data, uin
 	return true;
 }
 
+// Нулевой параметр у Furnace и у OpenMPT значит противоположное. В Furnace
+// эффект держится сам по себе, пока его не остановят, и `0A00`, `0400`, `0100`
+// именно останавливают: `playback.cpp` на нуле обнуляет `volSpeed`, глубину
+// вибрато и скорость порта. В OpenMPT эффект действует только на своей строке,
+// зато нулевой параметр означает «повторить прежний». Поэтому команда с нулём
+// переводится в «ничего»: в OpenMPT остановка и есть отсутствие команды.
+//
+// Без этого на `knux_alt-ft-am4n` каждая нота тут же гасла: в файле стоит `0A0F`
+// (скольжение вниз), а на строке с нотой `0A00`, и мы вместо остановки
+// продолжали гасить. Пятнадцать пропаж звука из сорока четырёх по корпусу были
+// отсюда.
 std::pair<EffectCommand, uint8> FurEffect(int code, uint8 value)
 {
 	switch(code)
 	{
 	case 0x00: return {value ? CMD_ARPEGGIO : CMD_NONE, value};
-	case 0x01: return {CMD_PORTAMENTOUP, value};
-	case 0x02: return {CMD_PORTAMENTODOWN, value};
-	case 0x03: return {CMD_TONEPORTAMENTO, value};
-	case 0x04: return {CMD_VIBRATO, value};
+	case 0x01: return {value ? CMD_PORTAMENTOUP : CMD_NONE, value};
+	case 0x02: return {value ? CMD_PORTAMENTODOWN : CMD_NONE, value};
+	case 0x03: return {value ? CMD_TONEPORTAMENTO : CMD_NONE, value};
+	case 0x04: return {value ? CMD_VIBRATO : CMD_NONE, value};
+	// `05` и `06` это продолжение вибрато и порта со скольжением громкости:
+	// там ноль в параметре означает «без скольжения», а не остановку.
 	case 0x05: return {CMD_VIBRATOVOL, value};
 	case 0x06: return {CMD_TONEPORTAVOL, value};
-	case 0x07: return {CMD_TREMOLO, value};
-	case 0x0a: return {CMD_VOLUMESLIDE, value};
+	case 0x07: return {value ? CMD_TREMOLO : CMD_NONE, value};
+	case 0x0a: return {value ? CMD_VOLUMESLIDE : CMD_NONE, value};
 	case 0x0b: return {CMD_POSITIONJUMP, value};
 	case 0x0c: return {value && value <= 15 ? CMD_RETRIG : CMD_NONE, value};
 	case 0x0d: return {CMD_PATTERNBREAK, value};
