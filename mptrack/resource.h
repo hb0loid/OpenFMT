@@ -103,6 +103,16 @@
 #define IDD_METRONOME_SETTINGS          519
 #define IDD_OPL_PARAMS                  520
 #define IDD_OPN2_PARAMS                 543
+#define IDD_PSG_PARAMS                  544
+#define IDC_PSG_LANE                    2560
+#define IDC_PSG_RESETNOISE              2561
+#define IDC_PSG_EASYPITCH               2562
+#define IDC_PSG_FURNACEPITCH            2563
+#define IDC_PSG_PITCHREL                2564
+#define IDC_PSG_SEQ1                    2565
+#define IDC_PSG_SPEED1                  2570
+#define IDC_PSG_DELAY1                  2575
+
 #define IDD_CLEANUP_SONG                521
 #define IDD_CHANNELSETTINGS             522
 #define IDD_KEYBOARD_SPLIT              523
@@ -855,6 +865,7 @@
 #define IDC_SPIN_ADDSILENCE             2382
 #define IDC_SAMPLE_INITOPL              2383
 #define IDC_SAMPLE_INITOPN2             2518
+#define IDC_SAMPLE_INITPSG              2519
 #define IDC_OPN2_FIRST                  2520
 #define IDC_RADIO_RESIZETO              2384
 #define IDC_METRONOME                   2385
@@ -1344,9 +1355,9 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_3D_CONTROLS                     1
-#define _APS_NEXT_RESOURCE_VALUE        544
+#define _APS_NEXT_RESOURCE_VALUE        545
 #define _APS_NEXT_COMMAND_VALUE         44657
-#define _APS_NEXT_CONTROL_VALUE         2560
+#define _APS_NEXT_CONTROL_VALUE         2580
 #define _APS_NEXT_SYMED_VALUE           901
 #endif
 #endif

@@ -23,6 +23,7 @@ OPENMPT_NAMESPACE_BEGIN
 
 #define SMP_LEFTBAR_BUTTONS		8
 class OPLInstrDlg;
+class PSGInstrDlg;
 
 class CViewSample: public CModScrollView
 {
@@ -66,6 +67,7 @@ protected:
 	};
 
 	std::unique_ptr<OPLInstrDlg> m_oplEditor;
+	std::unique_ptr<PSGInstrDlg> m_psgEditor;
 	CRect m_rcClient;
 	CDC m_offScreenDC, m_waveformDC;
 	CBitmap m_offScreenBitmap, m_waveformBitmap;

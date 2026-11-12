@@ -25,6 +25,7 @@
 #include "Mptrack.h"
 #include "MPTrackUtil.h"
 #include "OPLInstrDlg.h"
+#include "PSGInstrDlg.h"
 #include "Reporting.h"
 #include "resource.h"
 #include "SampleEditorDialogs.h"
@@ -222,6 +223,11 @@ void CViewSample::UpdateScrollSize(int newZoom, bool forceRefresh, SmpLength cen
 
 	GetClientRect(&m_rcClient);
 
+	if(m_psgEditor && m_psgEditor->IsWindowVisible())
+	{
+		const auto size = m_psgEditor->GetMinimumSize();
+		m_psgEditor->SetWindowPos(nullptr, -m_nScrollPosX, -m_nScrollPosY, std::max(size.cx, m_rcClient.right), std::max(size.cy, m_rcClient.bottom), SWP_NOZORDER | SWP_NOACTIVATE);
+	}
 	if(m_oplEditor && IsOPLInstrument())
 	{
 		const auto size = m_oplEditor->GetMinimumSize();
@@ -421,16 +427,42 @@ void CViewSample::UpdateOPLEditor()
 			m_oplEditor->SetEnabled(false);
 			SetFocus();
 		}
+		if(m_psgEditor && m_psgEditor->IsWindowVisible())
+		{
+			m_psgEditor->SetEnabled(false);
+			SetFocus();
+		}
 		return;
 	}
 	CSoundFile &sndFile = GetDocument()->GetSoundFile();
 	ModSample &sample = sndFile.GetSample(m_nSample);
 	if(sample.psg)
 	{
+		// У PSG свой редактор: чип ведут макросы, а не огибающая, поэтому
+		// слайдеры операторов тут не годятся.
 		if(m_oplEditor)
 			m_oplEditor->SetEnabled(false);
+		if(!m_psgEditor)
+		{
+			try
+			{
+				m_psgEditor = std::make_unique<PSGInstrDlg>(*this, sndFile);
+			} catch(mpt::out_of_memory e)
+			{
+				mpt::delete_out_of_memory(e);
+				return;
+			}
+		}
+		m_psgEditor->SetPatch(sample.psg);
+		const auto psgSize = m_psgEditor->GetMinimumSize();
+		m_psgEditor->SetWindowPos(nullptr, -m_nScrollPosX, -m_nScrollPosY,
+			std::max(psgSize.cx, m_rcClient.right), std::max(psgSize.cy, m_rcClient.bottom),
+			SWP_NOZORDER | SWP_NOACTIVATE);
+		m_psgEditor->SetEnabled(true);
 		return;
 	}
+	if(m_psgEditor)
+		m_psgEditor->SetEnabled(false);
 	if(m_oplEditor && m_oplEditor->IsOPN2() != sample.isOPN2)
 		m_oplEditor.reset();
 	if(!m_oplEditor)

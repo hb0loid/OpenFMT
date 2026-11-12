@@ -92,6 +92,7 @@ BEGIN_MESSAGE_MAP(CCtrlSamples, CModControlDlg)
 	ON_COMMAND(IDC_BUTTON2,				&CCtrlSamples::OnEstimateSampleSize)
 	ON_COMMAND(IDC_CHECK3,				&CCtrlSamples::OnToggleTimestretchQuality)
 	ON_COMMAND(IDC_SAMPLE_INITOPL,		&CCtrlSamples::OnInitOPLInstrument)
+	ON_COMMAND(IDC_SAMPLE_INITPSG,		&CCtrlSamples::OnInitPSGInstrument)
 	ON_COMMAND(IDC_SAMPLE_INITOPN2,		&CCtrlSamples::OnInitOPN2Instrument)
 	
 	ON_EN_CHANGE(IDC_SAMPLE_NAME,		&CCtrlSamples::OnNameChanged)
@@ -1320,6 +1321,7 @@ void CCtrlSamples::OnTbnDropDownToolBar(NMHDR *pNMHDR, LRESULT *pResult)
 		menu.AppendMenu(MF_STRING, IDC_SAMPLE_DUPLICATE, ih->GetKeyTextFromCommand(kcSampleDuplicate, m_sndFile.GetSample(m_nSample).uFlags[CHN_ADLIB] ? _T("&Duplicate Instrument") : _T("&Duplicate Sample")));
 		menu.AppendMenu(MF_STRING | (m_sndFile.SupportsOPL() ? 0 : MF_DISABLED), IDC_SAMPLE_INITOPL, ih->GetKeyTextFromCommand(kcSampleInitializeOPL, _T("Initialize &OPL Instrument")));
 		menu.AppendMenu(MF_STRING | (m_sndFile.GetType() == MOD_TYPE_MPT ? 0 : MF_DISABLED), IDC_SAMPLE_INITOPN2, _T("Initialize &YM2612 Instrument"));
+		menu.AppendMenu(MF_STRING | (m_sndFile.GetType() == MOD_TYPE_MPT ? 0 : MF_DISABLED), IDC_SAMPLE_INITPSG, _T("Initialize &PSG Instrument"));
 		menu.TrackPopupMenu(TPM_LEFTALIGN | TPM_RIGHTBUTTON, x, y, this);
 		menu.DestroyMenu();
 		break;
@@ -3144,6 +3146,28 @@ void CCtrlSamples::OnInitOPLInstrument()
 void CCtrlSamples::OnInitOPN2Instrument()
 {
 	InitFMInstrument(true);
+}
+
+
+void CCtrlSamples::OnInitPSGInstrument()
+{
+	if(m_sndFile.GetType() != MOD_TYPE_MPT)
+		return;
+	CriticalSection cs;
+	PrepareUndo("Initialize PSG Instrument", sundo_replace);
+	m_sndFile.DestroySample(m_nSample);
+	m_sndFile.InitOPL();
+	ModSample &sample = m_sndFile.GetSample(m_nSample);
+	sample.nC5Speed = 8363;
+	sample.SetAdlib(true);
+	// Чип ведут макросы, поэтому новый инструмент получает только макрос
+	// громкости из одного значения: нота звучит ровно и в полную силу, а
+	// остальное пользователь дописывает в редакторе.
+	PSGPatch patch;
+	patch.macros[PSGPatch::Volume].values.push_back(15);
+	sample.psg = std::make_shared<const PSGPatch>(std::move(patch));
+	SetModified(SampleHint().Info().Data().Names(), true, true);
+	SwitchToViewIfMouse();
 }
 
 

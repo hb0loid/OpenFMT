@@ -161,6 +161,7 @@ protected:
 
 	afx_msg void OnInitOPLInstrument();
 	afx_msg void OnInitOPN2Instrument();
+	afx_msg void OnInitPSGInstrument();
 	void InitFMInstrument(bool opn2);
 
 	MPT_ATTR_NOINLINE MPT_DECL_NOINLINE void SetModified(SAMPLEINDEX smp, SampleHint hint, bool updateAll, bool waveformModified);
