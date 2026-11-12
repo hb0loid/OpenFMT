@@ -86,6 +86,9 @@ void ScopeCtrl::Start()
 		}
 		if(refresh < 24 || refresh > 1000)
 			refresh = 60;
+		// Выше ста двадцати разницы уже не видно, а процессор занят: на экране
+		// с большей частотой лишние кадры просто не нужны.
+		refresh = std::min(refresh, 120);
 		m_clock = std::make_unique<Util::MultimediaClock>(1);
 		SetTimer(ScopeTimer, std::max(1, 1000 / refresh), nullptr);
 		m_running = true;
