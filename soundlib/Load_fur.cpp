@@ -947,6 +947,12 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 				break;
 		}
 	}
+	// Поведение задержки ноты Furnace выбирает по файлу: 0 отбрасывает задержку
+	// от скорости и больше, 1 только больше скорости, 2 не отбрасывает ничего.
+	// У версий ниже 110 он принудительно ставит 1, у остальных читает байт из
+	// блока совместимости. Отброшенная задержка не роняет ноту: она играет на
+	// своей строке сразу, потому что Furnace просто не откладывает строку.
+	const uint8 delayBehavior = (version >= 110) ? extraCompat[22] : 1;
 	const bool timing = !grooves.empty() || speedEffects
 		|| std::adjacent_find(speeds.begin(), speeds.end(), std::not_equal_to<uint8>()) != speeds.end();
 	InitializeGlobals(MOD_TYPE_MPT, static_cast<CHANNELINDEX>(voices.size() + (timing ? 1 : 0)));
@@ -1388,8 +1394,19 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 					// нас длиннее во столько же раз, во сколько умножена скорость.
 					if(cell.command == CMD_S3MCMDEX && (cell.param & 0xf0) == 0xd0)
 					{
-						const unsigned ticksPerRow = std::max(1u, speeds[phase % speeds.size()] * timeBase);
-						const unsigned delayTicks = (cell.param & 0x0f) * timeBase;
+						const unsigned speed = std::max(1u, static_cast<unsigned>(speeds[phase % speeds.size()]));
+						const unsigned value = cell.param & 0x0f;
+						// Сравнение идёт в тиках Furnace, не в наших: наша строка
+						// длиннее ровно во столько раз, во сколько умножена скорость.
+						const bool honoured = (delayBehavior == 2) || (delayBehavior == 1 ? value <= speed : value < speed);
+						if(!honoured)
+						{
+							cell.command = CMD_NONE;
+							cell.param = 0;
+							continue;
+						}
+						const unsigned ticksPerRow = std::max(1u, speed * timeBase);
+						const unsigned delayTicks = value * timeBase;
 						const ROWINDEX ahead = static_cast<ROWINDEX>(delayTicks / ticksPerRow);
 						const unsigned rest = delayTicks % ticksPerRow;
 						ModCommand moved = cell;
