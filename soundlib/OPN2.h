@@ -50,6 +50,14 @@ private:
 	struct Slot
 	{
 		OPN2Patch patch = DefaultOPN2Patch;
+		// Patch таким, каким его дал инструмент, до правок эффектами 12xx–15xx,
+		// и сами эти правки. У Furnace уровень оператора живёт в канале и
+		// переживает новые ноты: commitState перечитывает инструмент только
+		// при insChanged, а TL на ноте берёт из состояния канала. У нас же
+		// каждая нота заново грузила patch, и инструмент на миг возвращался к
+		// своему исходному, более резкому уровню.
+		OPN2Patch source = DefaultOPN2Patch;
+		std::array<int16, 4> levels = {-1, -1, -1, -1};
 		CHANNELINDEX channel = CHANNELINDEX_INVALID;
 		uint8 volume = 63, modVolume = 63;
 		int8 panning = 0;
@@ -381,6 +389,19 @@ public:
 			slot.channel = channel;
 		}
 		slot.patch = patch;
+		if(slot.source != patch)
+		{
+			// Инструмент сменился: правки уровней к нему не относятся.
+			slot.source = patch;
+			slot.levels.fill(-1);
+		} else
+		{
+			for(uint8 op = 0; op < 4; op++)
+			{
+				if(slot.levels[op] >= 0)
+					slot.patch[1 + op * 7 + LevelRegister] = static_cast<uint8>(slot.levels[op]);
+			}
+		}
 		WritePatch(chip, found);
 	}
 
@@ -392,6 +413,7 @@ public:
 		if(Slot *slot = Find(channel, &chip, &index); slot != nullptr && op < 4)
 		{
 			slot->patch[1 + op * 7 + LevelRegister] = level & MaxLevel;
+			slot->levels[op] = static_cast<int16>(level & MaxLevel);
 			WriteLevels(*chip, index);
 		}
 	}
