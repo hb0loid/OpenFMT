@@ -84,6 +84,18 @@ private:
 
 	static void Write(Chip &chip, uint16 reg, uint8 value)
 	{
+		// Лог записей в чип: сравнивать его с VGM-экспортом Furnace оказалось
+		// самым быстрым способом ловить расхождения, поэтому он остаётся здесь.
+		// Путь берётся один раз, а в тихом случае это одна проверка указателя.
+		static const char *const logPath = std::getenv("OPN2_LOG");
+		if(logPath != nullptr)
+		{
+			if(FILE *f = std::fopen(logPath, "a"))
+			{
+				std::fprintf(f, "%03X %02X\n", reg, value);
+				std::fclose(f);
+			}
+		}
 		if(chip.opm)
 		{
 			chip.opm->write_address(static_cast<uint8>(reg));

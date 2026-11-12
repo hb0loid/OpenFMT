@@ -1032,6 +1032,14 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		auto *ins = createInstrument(i + 1, mappedSample, fur.name);
 		if(!ins)
 			return false;
+		// После note off хвост ноты у синтезных чипов отпускает сам чип своим
+		// release. OpenMPT же вдобавок гасит канал fade out, и это слышно: в
+		// логе регистров видно, как TL несущих продолжает расти уже после
+		// снятия ключа, тогда как Furnace регистры не трогает. Поэтому
+		// инструментам без сэмпла fade out снимается. У сэмплерных он остаётся:
+		// там note off обрывает голос, и без затухания сэмпл звучал бы дальше.
+		if(fur.type == 0 || fur.type == 1 || fur.type == 33)
+			ins->nFadeOut = 0;
 		SetFurEnvelope(*ins, fur, fur.type == 0 ? 15 : (fur.type == 1 || fur.type == 33) ? 127 : 255);
 		if(fur.mapped)
 		{
