@@ -122,7 +122,11 @@ struct FurInstrument
 {
 	std::string name;
 	uint16 type = 0;
-	int sample = -1;
+	// `DivInstrumentAmiga::initSample` в Furnace равен нулю, а `getSample` без
+	// карты нот возвращает именно его. Поэтому сэмплерный инструмент, у которого
+	// в файле нет фичи `SM`, играет не тишину, а сэмпл 0: так в `major boss alt`
+	// звучит «crash», у которого своего сэмпла нет вовсе.
+	int sample = 0;
 	OPN2Patch patch = FurnaceDefaultPatch;
 	bool hasFMPatch = false;
 	std::array<std::pair<int16, int16>, 120> noteMap{};
@@ -974,9 +978,6 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 
 	std::vector<FurInstrument> furInstruments(instrumentCount);
 	std::map<std::pair<CHANNELINDEX, int>, INSTRUMENTINDEX> psgInstruments;
-	const bool songHasOPM = std::find(voices.begin(), voices.end(), FurVoice::OPM) != voices.end();
-	const bool songHasFM = songHasOPM
-		|| std::find(voices.begin(), voices.end(), FurVoice::OPN2) != voices.end();
 	std::vector<bool> usedPSGInstrument(instrumentCount);
 	std::vector<INSTRUMENTINDEX> rawSamples(sampleCount);
 	m_nInstruments = instrumentCount;
@@ -1010,25 +1011,7 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		} else if(fur.type == 4 || fur.type == 41)
 		{
 			if(fur.sample >= 0 && fur.sample < sampleCount)
-			{
 				mappedSample = static_cast<SAMPLEINDEX>(fur.sample + 1);
-			} else if(songHasFM && !fur.mapped && m_nSamples < MAX_SAMPLES - 1)
-			{
-				// Сэмплерный инструмент, у которого сэмпла нет: играть нечем, и
-				// нота пропадала. Furnace в этом случае отдаёт инструмент чипу
-				// как есть, а тот читает поля `DivInstrumentFM`, оставшиеся
-				// значениями по умолчанию, то есть играет `FurnaceDefaultPatch`.
-				// Подменять здесь, а не на канале: канал DAC у YM2612 сэмплы
-				// играет, и подмена по каналу выносила из трека все барабаны.
-				mappedSample = ++m_nSamples;
-				auto &sample = Samples[mappedSample];
-				sample.Initialize(MOD_TYPE_MPT);
-				sample.SetAdlib(true);
-				sample.isOPN2 = true;
-				sample.isOPM = songHasOPM;
-				sample.opn2 = fur.patch;
-				m_szNames[mappedSample] = fur.name;
-			}
 		} else if(fur.type != 0)
 		{
 			unsupported++;
