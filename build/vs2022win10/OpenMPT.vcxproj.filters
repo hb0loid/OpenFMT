@@ -777,6 +777,9 @@
     <ClInclude Include="..\..\mptrack\PSGInstrDlg.h">
       <Filter>mptrack</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\mptrack\PSGMacroCtrl.h">
+      <Filter>mptrack</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\mptrack\PSRatioCalc.h">
       <Filter>mptrack</Filter>
     </ClInclude>
@@ -2178,6 +2181,9 @@
       <Filter>mptrack</Filter>
     </ClCompile>
     <ClCompile Include="..\..\mptrack\PSGInstrDlg.cpp">
+      <Filter>mptrack</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\mptrack\PSGMacroCtrl.cpp">
       <Filter>mptrack</Filter>
     </ClCompile>
     <ClCompile Include="..\..\mptrack\PSRatioCalc.cpp">

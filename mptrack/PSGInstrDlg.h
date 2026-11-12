@@ -12,6 +12,7 @@
 
 #include "openmpt/all/BuildSettings.hpp"
 #include "DialogBase.h"
+#include "PSGMacroCtrl.h"
 #include "../soundlib/Snd_defs.h"
 
 OPENMPT_NAMESPACE_BEGIN
@@ -21,6 +22,11 @@ class CSoundFile;
 class PSGInstrDlg : public DialogBase
 {
 	CComboBox m_lane;
+	// Каждый макрос рисуется своим графиком: строка чисел в поле не читается
+	// уже на десятке шагов, а макросы бывают и длиннее.
+	std::array<PSGMacroCtrl, PSGPatch::Count> m_graphs;
+	// Правки графиков идут в эту копию, из неё собирается патч.
+	PSGPatch m_working;
 	CSize m_windowSize;
 	CWnd &m_parent;
 	HWND m_lastFocusItem = nullptr;
