@@ -475,14 +475,19 @@ bool ReadFurPattern(FileReader file, bool packed, std::vector<FurRow> &data, uin
 // (скольжение вниз), а на строке с нотой `0A00`, и мы вместо остановки
 // продолжали гасить. Пятнадцать пропаж звука из сорока четырёх по корпусу были
 // отсюда.
+//
+// Скольжения высоты (`01`, `02`, `03`) сюда не попадают: их мы проигрываем
+// по-фёрнейсовски сами, и ProcessFurnaceSlide ждёт команду с нулём как сигнал
+// остановки. Отдать ей «ничего» значит не остановить ничего: слайд поехал бы
+// дальше и уводил за собой все следующие ноты.
 std::pair<EffectCommand, uint8> FurEffect(int code, uint8 value)
 {
 	switch(code)
 	{
 	case 0x00: return {value ? CMD_ARPEGGIO : CMD_NONE, value};
-	case 0x01: return {value ? CMD_PORTAMENTOUP : CMD_NONE, value};
-	case 0x02: return {value ? CMD_PORTAMENTODOWN : CMD_NONE, value};
-	case 0x03: return {value ? CMD_TONEPORTAMENTO : CMD_NONE, value};
+	case 0x01: return {CMD_PORTAMENTOUP, value};
+	case 0x02: return {CMD_PORTAMENTODOWN, value};
+	case 0x03: return {CMD_TONEPORTAMENTO, value};
 	case 0x04: return {value ? CMD_VIBRATO : CMD_NONE, value};
 	// `05` и `06` это продолжение вибрато и порта со скольжением громкости:
 	// там ноль в параметре означает «без скольжения», а не остановку.
