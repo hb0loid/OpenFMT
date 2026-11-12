@@ -476,10 +476,12 @@ bool ReadFurPattern(FileReader file, bool packed, std::vector<FurRow> &data, uin
 // продолжали гасить. Пятнадцать пропаж звука из сорока четырёх по корпусу были
 // отсюда.
 //
-// Скольжения высоты (`01`, `02`, `03`) сюда не попадают: их мы проигрываем
-// по-фёрнейсовски сами, и ProcessFurnaceSlide ждёт команду с нулём как сигнал
-// остановки. Отдать ей «ничего» значит не остановить ничего: слайд поехал бы
-// дальше и уводил за собой все следующие ноты.
+// Так переводится только арпеджио. Всё остальное из непрерывных эффектов —
+// скольжения высоты (`01`, `02`, `03`), вибрато (`04`), тремоло (`07`) и
+// скольжение громкости (`0A`) — мы проигрываем по-фёрнейсовски сами, и движок
+// ждёт команду с нулём как сигнал остановки. Отдать ему «ничего» значит не
+// остановить ничего: вибрато качало бы дальше, а слайд уводил бы за собой все
+// следующие ноты.
 std::pair<EffectCommand, uint8> FurEffect(int code, uint8 value)
 {
 	switch(code)
@@ -488,13 +490,13 @@ std::pair<EffectCommand, uint8> FurEffect(int code, uint8 value)
 	case 0x01: return {CMD_PORTAMENTOUP, value};
 	case 0x02: return {CMD_PORTAMENTODOWN, value};
 	case 0x03: return {CMD_TONEPORTAMENTO, value};
-	case 0x04: return {value ? CMD_VIBRATO : CMD_NONE, value};
+	case 0x04: return {CMD_VIBRATO, value};
 	// `05` и `06` это продолжение вибрато и порта со скольжением громкости:
 	// там ноль в параметре означает «без скольжения», а не остановку.
 	case 0x05: return {CMD_VIBRATOVOL, value};
 	case 0x06: return {CMD_TONEPORTAVOL, value};
-	case 0x07: return {value ? CMD_TREMOLO : CMD_NONE, value};
-	case 0x0a: return {value ? CMD_VOLUMESLIDE : CMD_NONE, value};
+	case 0x07: return {CMD_TREMOLO, value};
+	case 0x0a: return {CMD_VOLUMESLIDE, value};
 	case 0x0b: return {CMD_POSITIONJUMP, value};
 	case 0x0c: return {value && value <= 15 ? CMD_RETRIG : CMD_NONE, value};
 	case 0x0d: return {CMD_PATTERNBREAK, value};
@@ -1149,6 +1151,10 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 				return false;
 			Order()[order] = pat;
 			auto &pattern = Patterns[pat];
+			// Ноты, чья задержка длиннее строки, переезжают на ту строку, где
+			// они и прозвучат. Раскладываем их не сразу, а после прохода:
+			// целевую строку цикл ещё не видел и затёр бы перенесённую ноту.
+			std::vector<std::tuple<ROWINDEX, CHANNELINDEX, ModCommand>> delayed;
 			for(ROWINDEX row = 0; row < rows; row++, phase++)
 			{
 				for(CHANNELINDEX c = 0; c < voices.size(); c++)
@@ -1354,6 +1360,32 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 						cell.instr = static_cast<ModCommand::INSTR>(ins);
 						lastInstrument[c] = ins;
 					}
+					// Задержка ноты у Furnace отсчитывается тиками и спокойно
+					// переваливает за строку: по умолчанию там не отбрасывается
+					// ни одна задержка. У OpenMPT задержка длиной со строку и
+					// больше просто съедает ноту, поэтому такую ноту переносим
+					// на ту строку, где она прозвучит, а в задержке оставляем
+					// остаток. Заодно переводим тики Furnace в наши: строка у
+					// нас длиннее во столько же раз, во сколько умножена скорость.
+					if(cell.command == CMD_S3MCMDEX && (cell.param & 0xf0) == 0xd0)
+					{
+						const unsigned ticksPerRow = std::max(1u, speeds[phase % speeds.size()] * timeBase);
+						const unsigned delayTicks = (cell.param & 0x0f) * timeBase;
+						const ROWINDEX ahead = static_cast<ROWINDEX>(delayTicks / ticksPerRow);
+						const unsigned rest = delayTicks % ticksPerRow;
+						ModCommand moved = cell;
+						if(rest)
+							moved.param = static_cast<ModCommand::PARAM>(0xd0 | std::min(rest, 15u));
+						else
+							moved.command = CMD_NONE, moved.param = 0;
+						if(!ahead)
+							cell = moved;
+						else if(row + ahead < rows)
+						{
+							delayed.emplace_back(row + ahead, c, moved);
+							cell.Clear();
+						}
+					}
 				}
 				if(timing)
 				{
@@ -1361,6 +1393,14 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 					clock.command = CMD_SPEED;
 					clock.param = static_cast<uint8>(std::clamp<unsigned>(speeds[phase % speeds.size()] * timeBase, 1, 255));
 				}
+			}
+			// Перенесённая нота встаёт только на пустое место: занятую строку
+			// она бы затёрла, а это уже не перенос, а потеря другой ноты.
+			for(const auto &[row, c, moved] : delayed)
+			{
+				auto &target = *pattern.GetpModCommand(row, c);
+				if(target.IsEmpty())
+					target = moved;
 			}
 		}
 	}

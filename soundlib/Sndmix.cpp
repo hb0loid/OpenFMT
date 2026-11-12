@@ -713,7 +713,11 @@ bool CSoundFile::ProcessRow()
 
 			chn.rightVol = chn.newRightVol;
 			chn.leftVol = chn.newLeftVol;
-			chn.dwFlags.reset(CHN_VIBRATO | CHN_TREMOLO);
+			// У Furnace вибрато и тремоло живут в канале и качают ноту, пока
+			// их не остановят нулём. У OpenMPT эффект действует только на своей
+			// строке, поэтому в фёрнейсовском режиме флаги здесь не сбрасываем.
+			if(!m_furnaceSlides)
+				chn.dwFlags.reset(CHN_VIBRATO | CHN_TREMOLO);
 			if(!m_playBehaviour[kITVibratoTremoloPanbrello])
 				chn.nPanbrelloOffset = 0;
 			chn.nCommand = CMD_NONE;

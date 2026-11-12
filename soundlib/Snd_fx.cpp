@@ -3465,6 +3465,8 @@ bool CSoundFile::ProcessEffects()
 
 		// Volume Slide
 		case CMD_VOLUMESLIDE:
+			if(m_furnaceSlides)
+				chn.furnaceSlide.volSlide = static_cast<uint8>(param);
 			if (param || (GetType() != MOD_TYPE_MOD)) VolumeSlide(chn, static_cast<ModCommand::PARAM>(param));
 			break;
 
@@ -3490,7 +3492,10 @@ bool CSoundFile::ProcessEffects()
 
 		// Vibrato
 		case CMD_VIBRATO:
-			Vibrato(chn, param);
+			if(m_furnaceSlides && !param)
+				chn.dwFlags.reset(CHN_VIBRATO);
+			else
+				Vibrato(chn, param);
 			break;
 
 		// Vibrato + Volume Slide
@@ -3672,7 +3677,10 @@ bool CSoundFile::ProcessEffects()
 
 		// Tremolo
 		case CMD_TREMOLO:
-			Tremolo(chn, param);
+			if(m_furnaceSlides && !param)
+				chn.dwFlags.reset(CHN_TREMOLO);
+			else
+				Tremolo(chn, param);
 			break;
 
 		// Fine Vibrato
@@ -4016,6 +4024,11 @@ bool CSoundFile::IsFurnaceTonePorta(const ModChannel &chn, const ModCommand &m) 
 void CSoundFile::ProcessFurnaceSlide(ModChannel &chn, ModCommand::COMMAND cmd, uint8 param, bool newRow) const
 {
 	auto &slide = chn.furnaceSlide;
+	// Скольжение громкости у Furnace едет само, пока его не остановят нулём.
+	// На строках без команды его продолжаем здесь; строку с командой уже
+	// обслужил разбор эффектов, второй раз двигать не надо.
+	if(slide.volSlide && cmd != CMD_VOLUMESLIDE && cmd != CMD_TONEPORTAVOL && cmd != CMD_VIBRATOVOL)
+		VolumeSlide(chn, static_cast<ModCommand::PARAM>(slide.volSlide));
 	if(newRow)
 	{
 		switch(cmd)

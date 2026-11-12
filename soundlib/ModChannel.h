@@ -100,6 +100,9 @@ struct ModChannel
 	{
 		ModCommand::COMMAND mode = CMD_NONE;
 		uint8 speed = 0, lastToneSpeed = 0;
+		// У Furnace скольжение громкости тоже состояние канала: оно едет,
+		// пока его не остановят нулём, а не только на своей строке.
+		uint8 volSlide = 0;
 		int32 target = 0;
 		double precisePeriod = 0;
 	} furnaceSlide;
