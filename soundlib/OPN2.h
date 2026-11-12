@@ -120,28 +120,28 @@ private:
 
 	// Tracker volume is a linear amplitude, while total level attenuates in steps of
 	// 0.75 dB, so the two are related by a logarithm. Volume 63 leaves the patch untouched.
-	// The OPL's own curve is not reused here: it spans six bits, and stretching it over
-	// these seven-bit levels would double the attenuation in dB at every volume.
+	// Затухание линейно по децибелам: к Total Level добавляется столько шагов по
+	// 0,75 дБ, сколько громкости недостаёт до максимума. Шкала взята как в
+	// Furnace, то есть на все 127 шагов TL: `VOL_SCALE_LOG` там считает
+	// `TL = baseTL + (127 - vol)` при громкости 0..127. Громкость OpenMPT имеет
+	// 64 шага, поэтому один её шаг это примерно два шага TL, около 95 дБ на весь
+	// ход ползунка и 47 дБ на половине.
+	//
+	// Раньше здесь была шкала штатного OPL, 63 шага и 23 дБ на половине. Она
+	// совпадала с OPL, с которым регулировку сравнивают, но вдвое не дотягивала
+	// по динамике до Furnace: в логе регистров YM2151 видно, что TL несущих мы
+	// писали на 4 шага меньше, чем сам Furnace. Разница в разрядности TL (6 бит
+	// у OPL против 7 у OPN2 и OPM) — это свойство самих микросхем, а не ошибка.
+	//
+	// Перевод амплитуды в децибелы логарифмом здесь неверен: он даёт на половине
+	// громкости 6 дБ, и регулировка почти не работает.
 	static uint8 CalcLevel(uint8 baseLevel, uint8 vol)
 	{
 		baseLevel &= MaxLevel;
 		if(vol >= 63)
 			return baseLevel;
-		if(vol == 0)
-			return MaxLevel;
-		// Затухание линейно по децибелам: к Total Level добавляется столько
-		// шагов по 0,75 дБ, сколько громкости недостаёт до максимума. Шкала
-		// взята та же, что у штатного OPL, то есть 63 шага, около 47 дБ на весь
-		// ход ползунка и 23 дБ на половине. Так регулировка ведёт себя как у
-		// встроенного OPL, с которым её и сравнивают.
-		//
-		// Furnace отображает громкость на все 127 шагов, то есть вдвое круче по
-		// децибелам. Если понадобится точное совпадение с ним по динамике
-		// громкости, менять нужно здесь.
-		//
-		// Перевод амплитуды в децибелы логарифмом здесь неверен: он даёт на
-		// половине громкости 6 дБ, и регулировка почти не работает.
-		return static_cast<uint8>(std::min<int>(MaxLevel, baseLevel + (63 - vol)));
+		const int missing = (static_cast<int>(63 - vol) * MaxLevel + 31) / 63;
+		return static_cast<uint8>(std::min<int>(MaxLevel, baseLevel + missing));
 	}
 
 	void InitChip(Chip &chip, bool useOPM)

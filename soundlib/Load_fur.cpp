@@ -1104,6 +1104,16 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		std::vector<unsigned> bank(voices.size(), 0);
 		std::vector<bool> legacyDAC(voices.size(), false);
 		std::vector<int> lastInstrument(voices.size(), 0);
+		// Громкость канала в Furnace живёт сама по себе: note on её не трогает,
+		// нота звучит тем уровнем, что стоит на канале сейчас, а меняют его
+		// отдельные строки с одной только громкостью. OpenMPT же на каждой новой
+		// ноте ставит громкость сэмпла, то есть полную, и после тихого места
+		// нота прорывается громкой. Поэтому текущая громкость канала ведётся
+		// здесь и выписывается в колонку громкости на каждой ноте, у которой
+		// своей громкости нет. Нот без громкости в треках кратно больше, чем с
+		// ней: на `mushroom hill alt 2` первый канал даёт 23 ноты с громкостью
+		// против 342 без.
+		std::vector<int> currentVolume(voices.size(), 64);
 		Order().resize(orders);
 		size_t phase = 0;
 		for(ORDERINDEX order = 0; order < orders; order++)
@@ -1149,6 +1159,11 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 						const int maxVolume = voice == FurVoice::PSG || voice == FurVoice::Noise ? 15 : voice == FurVoice::PCM ? 255 : 127;
 						cell.volcmd = VOLCMD_VOLUME;
 						cell.vol = static_cast<uint8>((std::min(sourceRow.volume, maxVolume) * 64 + maxVolume / 2) / maxVolume);
+						currentVolume[c] = cell.vol;
+					} else if(cell.IsNote() && currentVolume[c] < 64)
+					{
+						cell.volcmd = VOLCMD_VOLUME;
+						cell.vol = static_cast<ModCommand::VOL>(currentVolume[c]);
 					}
 					for(const auto &[fx, param] : sourceRow.effects)
 					{
