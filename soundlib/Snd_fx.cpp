@@ -685,18 +685,6 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 
 			if((adjustMode & eAdjust) && !chn.rowCommand.IsEmpty())
 			{
-				// Громкость канала прокрутка до сих пор вела только при
-				// синхронизации сэмплов, в обычном режиме не вела вовсе. Пока
-				// каждая нота сбрасывала громкость к умолчанию сэмпла, это не
-				// мешало; теперь громкость живёт в канале, и после перемотки
-				// она бралась с потолка — на `the toilet lock` девять децибел
-				// тишины, которые не выправлялись.
-				if(command == CMD_VOLUME)
-					chn.nVolume = param * 4u;
-				else if(command == CMD_VOLUME8)
-					chn.nVolume = param;
-				else if(chn.rowCommand.volcmd == VOLCMD_VOLUME)
-					chn.nVolume = chn.rowCommand.vol * 4u;
 				if(chn.rowCommand.instr)
 				{
 					chn.swapSampleIndex = chn.nNewIns = chn.rowCommand.instr;
@@ -1081,28 +1069,6 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 			if(m_playBehaviour[kST3EffectMemory] && command != CMD_NONE && param != 0)
 			{
 				UpdateS3MEffectMemory(chn, param);
-			}
-		}
-
-		// Фёрнейсовское скольжение громкости едет каждый тик и на строках, где
-		// в канале ничего не стоит. Прокрутка, по которой считается старт с
-		// произвольной строки, его не вела вовсе: канал с пустой строкой она
-		// пропускает, а сам обсчёт скольжения звала только при синхронизации
-		// сэмплов. После перемотки громкость выходила не та, что при игре
-		// подряд: на `the toilet lock` до девяти децибел, и это не выправлялось.
-		// Поэтому здесь скольжение проходит по всем каналам и всем тикам строки,
-		// ровно как при проигрывании.
-		if(m_furnaceSlides)
-		{
-			for(CHANNELINDEX nChn = 0; nChn < GetNumChannels(); nChn++)
-			{
-				ModChannel &chn = playState.Chn[nChn];
-				for(uint32 tick = 0; tick < numTicks; tick++)
-				{
-					chn.isFirstTick = (tick == 0);
-					ProcessFurnaceSlide(chn, CMD_NONE, 0, false);
-				}
-				chn.isFirstTick = true;
 			}
 		}
 
@@ -3512,19 +3478,9 @@ bool CSoundFile::ProcessEffects()
 
 		// Volume Slide
 		case CMD_VOLUMESLIDE:
-			// В фёрнейсовском режиме скольжение громкости считается само, в
-			// своих единицах: здесь только запоминаем скорость и останавливаем
-			// нулём. Наше обычное скольжение сюда пускать нельзя, иначе шаг
-			// применится дважды и разными величинами.
 			if(m_furnaceSlides)
-			{
-				if(chn.furnaceSlide.volSlide != param)
-					chn.furnaceSlide.volAccum = 0;
 				chn.furnaceSlide.volSlide = static_cast<uint8>(param);
-			} else if(param || (GetType() != MOD_TYPE_MOD))
-			{
-				VolumeSlide(chn, static_cast<ModCommand::PARAM>(param));
-			}
+			if (param || (GetType() != MOD_TYPE_MOD)) VolumeSlide(chn, static_cast<ModCommand::PARAM>(param));
 			break;
 
 		// Tone-Portamento
@@ -4082,45 +4038,10 @@ void CSoundFile::ProcessFurnaceSlide(ModChannel &chn, ModCommand::COMMAND cmd, u
 {
 	auto &slide = chn.furnaceSlide;
 	// Скольжение громкости у Furnace едет само, пока его не остановят нулём.
-	//
-	// Скорость там задана в долях его собственной шкалы: шаг `(x & 15) * 64`
-	// при громкости в формате 8.8, то есть четверть единицы шкалы за тик. Шкала
-	// у FM 0–127, у PSG 0–15, у сэмплов 0–255, а наша громкость это 0–256. На
-	// FM один шаг выходит в половину нашей единицы, и округлить его к целому
-	// нельзя ни вверх, ни вниз: вверх гасит ноту вдвое быстрее нужного, вниз не
-	// гасит вовсе. Поэтому шаг копится дробным, в двести пятьдесят шестых долях
-	// нашей единицы, и к громкости прибавляется только накопившееся целое.
-	//
-	// Шкалу чипа берём у сэмпла канала: она же определяет, во сколько раз наши
-	// единицы крупнее фёрнейсовских.
-	if(slide.volSlide && !(m_furnaceSlides & FurnaceSkipFirstTick && chn.isFirstTick))
-	{
-		const int up = slide.volSlide >> 4, down = slide.volSlide & 0x0f;
-		// При обоих ниблах у Furnace побеждает нижний: `(x & 15) != 0` проверяется
-		// первым и даёт скольжение вниз (playback.cpp, эффект 0A).
-		const int step = down ? -down : up;
-		int chipScale = 255;
-		if(const ModSample *sample = chn.pModSample; sample != nullptr)
-		{
-			if(sample->psg)
-				chipScale = 15;
-			else if(sample->uFlags[CHN_ADLIB])
-				chipScale = 127;
-		}
-		slide.volAccum += step * 16384 / chipScale;
-		const int whole = slide.volAccum / 256;
-		if(whole)
-		{
-			slide.volAccum -= whole * 256;
-			// Furnace, упёршись в ноль или в максимум, скольжение останавливает
-			// (playback.cpp, «stop sliding if we reach maximum/minimum volume»).
-			// Повторить это здесь пробовали, и стало хуже: hidden palace 31 → 64
-			// отрезка и 1 → 6 мест без звука. Значит, наша громкость доходит до
-			// предела не тогда, когда фёрнейсовская; причина не найдена, поэтому
-			// скольжение просто упирается в предел и едет дальше.
-			chn.nVolume = std::clamp(chn.nVolume + whole, 0, 256);
-		}
-	}
+	// На строках без команды его продолжаем здесь; строку с командой уже
+	// обслужил разбор эффектов, второй раз двигать не надо.
+	if(slide.volSlide && cmd != CMD_VOLUMESLIDE && cmd != CMD_TONEPORTAVOL && cmd != CMD_VIBRATOVOL)
+		VolumeSlide(chn, static_cast<ModCommand::PARAM>(slide.volSlide));
 	if(newRow)
 	{
 		switch(cmd)

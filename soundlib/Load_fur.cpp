@@ -507,12 +507,7 @@ std::pair<EffectCommand, uint8> FurEffect(int code, uint8 value)
 	}
 }
 
-// `dacScale` включает логарифмический закон ЦАПа: там макрос громкости идёт по
-// шкале 0-64, а сам ЦАП работает в 0-127, и Furnace переводит одну в другую
-// прибавлением 63 (`genesis.cpp`: `if (chan[i].dacMode && inVol>0) inVol+=63;`).
-// То есть значение 64 это полная громкость, а не половина, и дальше работает та
-// же логарифмическая таблица с шагом 0,75 дБ, что и у громкости ноты.
-void SetFurEnvelope(ModInstrument &ins, const FurInstrument &fur, int maxVolume, bool dacScale = false)
+void SetFurEnvelope(ModInstrument &ins, const FurInstrument &fur, int maxVolume)
 {
 	if(fur.volume.empty())
 		return;
@@ -524,16 +519,7 @@ void SetFurEnvelope(ModInstrument &ins, const FurInstrument &fur, int maxVolume,
 	const uint8 offset = fur.volumeDelay ? 1 : 0;
 	for(size_t i = 0; i < count; i++)
 	{
-		uint8 value;
-		if(dacScale)
-		{
-			const int level = std::clamp<int32>(fur.volume[i], 0, 64);
-			const double amplitude = level > 0 ? std::pow(10.0, (level - 64) * 0.75 / 20.0) : 0.0;
-			value = static_cast<uint8>(std::clamp<int>(mpt::saturate_round<int>(64.0 * amplitude), 0, 64));
-		} else
-		{
-			value = static_cast<uint8>(std::clamp<int32>(fur.volume[i], 0, maxVolume) * 64 / maxVolume);
-		}
+		const auto value = static_cast<uint8>(std::clamp<int32>(fur.volume[i], 0, maxVolume) * 64 / maxVolume);
 		env.push_back(static_cast<uint16>(fur.volumeDelay + i * fur.volumeStep), value);
 	}
 	if(fur.volumeRelease < count)
@@ -587,12 +573,6 @@ bool LoadFurSample(ModSample &sample, FileReader data, bool modern, std::string 
 	if(length > MaxFurBytes / width || !data.CanRead(length * width))
 		return false;
 	sample.Initialize(MOD_TYPE_MPT);
-	// Громкость канала у Furnace одинаково живёт у всех чипов, сэмплерных тоже:
-	// нота без громкости наследует текущую. Без этого флага на сэмплах каждая
-	// нота возвращала бы громкость к умолчанию сэмпла. На athletic rrt, где два
-	// YMZ280B, из-за этого вылезло 88 лишних расхождений: флаг стоял только у
-	// FM и PSG, а подстановку громкости я убрал у всех разом.
-	sample.uFlags.set(SMP_NODEFAULTVOLUME);
 	sample.nC5Speed = rate ? rate : 8363;
 	sample.nLength = length;
 	if(begin >= 0 && end > begin && static_cast<uint32>(end) <= length && loopMode != 1)
@@ -934,15 +914,7 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 	// него импорт ставит на строку одну скорость, и темп уезжает на всю песню.
 	// Поэтому паттерны просматриваются заранее, до выбора числа каналов.
 	bool speedEffects = false;
-	// Шкала громкости у Furnace задаётся каналом, а не инструментом: у YM2612
-	// она 0-127, у YMZ280B 0-255, у PSG 0-15. Макрос громкости живёт в
-	// инструменте, поэтому его шкалу можно узнать только по тому, на каком
-	// канале инструмент играет. Запоминаем это здесь же, заодно с просмотром
-	// на эффекты скорости: второй проход по паттернам не нужен.
-	std::vector<uint8> instrumentVoice(instrumentCount, 0xff);
-	// Канал ЦАПа живёт по своим правилам громкости, поэтому отмечается отдельно.
-	std::vector<bool> instrumentOnDac(instrumentCount, false);
-	if(flags & loadPatternData)
+	if((flags & loadPatternData) && speeds.size() > 1)
 	{
 		std::vector<FurRow> scan;
 		for(auto offset : patternOffsets)
@@ -965,13 +937,6 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 				continue;
 			for(const auto &row : scan)
 			{
-				if(row.instrument >= 0 && static_cast<size_t>(row.instrument) < instrumentVoice.size())
-				{
-					if(instrumentVoice[row.instrument] == 0xff)
-						instrumentVoice[row.instrument] = static_cast<uint8>(voices[channel]);
-					if(voices[channel] == FurVoice::OPN2 && channel % 6 == 5)
-						instrumentOnDac[row.instrument] = true;
-				}
 				for(const auto &[code, value] : row.effects)
 				{
 					if(code == 0x09 || code == 0x0f)
@@ -982,12 +947,6 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 				break;
 		}
 	}
-	// Поведение задержки ноты Furnace выбирает по файлу: 0 отбрасывает задержку
-	// от скорости и больше, 1 только больше скорости, 2 не отбрасывает ничего.
-	// У версий ниже 110 он принудительно ставит 1, у остальных читает байт из
-	// блока совместимости. Отброшенная задержка не роняет ноту: она играет на
-	// своей строке сразу, потому что Furnace просто не откладывает строку.
-	const uint8 delayBehavior = (version >= 110) ? extraCompat[22] : 1;
 	const bool timing = !grooves.empty() || speedEffects
 		|| std::adjacent_find(speeds.begin(), speeds.end(), std::not_equal_to<uint8>()) != speeds.end();
 	InitializeGlobals(MOD_TYPE_MPT, static_cast<CHANNELINDEX>(voices.size() + (timing ? 1 : 0)));
@@ -1066,11 +1025,6 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 			sample.Initialize(MOD_TYPE_MPT);
 			sample.SetAdlib(true);
 			sample.isOPN2 = true;
-			// Нота не задаёт громкость канала заново: у Furnace она живёт в
-			// канале и переживает ноты, а скольжение её двигает. Без этого
-			// флага каждая нота возвращала бы громкость к умолчанию сэмпла и
-			// затирала всё, что набрало скольжение.
-			sample.uFlags.set(SMP_NODEFAULTVOLUME);
 			sample.isOPM = fur.type == 33;
 			sample.opn2 = fur.patch;
 			m_szNames[mappedSample] = fur.name;
@@ -1093,20 +1047,7 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		// там note off обрывает голос, и без затухания сэмпл звучал бы дальше.
 		if(fur.type == 0 || fur.type == 1 || fur.type == 33)
 			ins->nFadeOut = 0;
-		// Шкала берётся у канала, на котором инструмент играет; если он нигде не
-		// встретился, остаётся догадка по типу инструмента.
-		int envelopeMax = fur.type == 0 ? 15 : (fur.type == 1 || fur.type == 33) ? 127 : 255;
-		if(i < instrumentVoice.size() && instrumentVoice[i] != 0xff)
-		{
-			switch(static_cast<FurVoice>(instrumentVoice[i]))
-			{
-			case FurVoice::PSG:
-			case FurVoice::Noise: envelopeMax = 15; break;
-			case FurVoice::PCM: envelopeMax = 255; break;
-			default: envelopeMax = 127; break;
-			}
-		}
-		SetFurEnvelope(*ins, fur, envelopeMax, i < instrumentOnDac.size() && instrumentOnDac[i]);
+		SetFurEnvelope(*ins, fur, fur.type == 0 ? 15 : (fur.type == 1 || fur.type == 33) ? 127 : 255);
 		if(fur.mapped)
 		{
 			for(size_t n = 0; n < fur.noteMap.size() && n + 12 < ins->Keyboard.size(); n++)
@@ -1147,7 +1088,6 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		auto &sample = Samples[smp];
 		sample.Initialize(MOD_TYPE_MPT);
 		sample.SetAdlib(true);
-		sample.uFlags.set(SMP_NODEFAULTVOLUME);
 		sample.psg = std::move(patch);
 		const std::string name = realInstrument ? furInstruments[furIns].name : "SN76489";
 		m_szNames[smp] = name + (lane == 3 ? " (noise)" : " (tone " + std::to_string(lane + 1) + ")");
@@ -1201,19 +1141,7 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		// своей громкости нет. Нот без громкости в треках кратно больше, чем с
 		// ней: на `mushroom hill alt 2` первый канал даёт 23 ноты с громкостью
 		// против 342 без.
-		// Громкость канала считается здесь же и проставляется каждой ноте явно.
-		// У Furnace нота без громкости играет на текущей громкости канала, и
-		// пустая колонка значит «как было». Так точнее по оригиналу, но модуль
-		// перестаёт описывать сам себя: глядя на строку, нельзя сказать, как
-		// громко она прозвучит, надо знать всю историю канала. Это дважды
-		// подводило — при перемотке и при подстановке, — и мешает править
-		// вручную. Поэтому импорт ведёт громкость сам, теми же единицами и той
-		// же арифметикой, что и движок (0-256 с дробным остатком), и пишет её в
-		// колонку. Повторно используемых паттернов у нас нет: на каждую позицию
-		// в порядке создаётся свой, поэтому записанное число верно всегда.
-		std::vector<int> currentVolume(voices.size(), 256);
-		std::vector<int> volumeFraction(voices.size(), 0);
-		std::vector<uint8> volumeSlide(voices.size(), 0);
+		std::vector<int> currentVolume(voices.size(), 64);
 		Order().resize(orders);
 		size_t phase = 0;
 		for(ORDERINDEX order = 0; order < orders; order++)
@@ -1226,7 +1154,7 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 			// Ноты, чья задержка длиннее строки, переезжают на ту строку, где
 			// они и прозвучат. Раскладываем их не сразу, а после прохода:
 			// целевую строку цикл ещё не видел и затёр бы перенесённую ноту.
-			std::vector<std::tuple<ROWINDEX, ROWINDEX, CHANNELINDEX, ModCommand>> delayed;
+			std::vector<std::tuple<ROWINDEX, CHANNELINDEX, ModCommand>> delayed;
 			for(ROWINDEX row = 0; row < rows; row++, phase++)
 			{
 				for(CHANNELINDEX c = 0; c < voices.size(); c++)
@@ -1262,9 +1190,9 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 						[](const auto &effect) { return effect.first == 0x20; });
 					if(psg && (sourceRow.instrument >= 0 || cell.IsNote() || noiseMode))
 						ins = assignPSG(c, furIns);
-					const int maxVolume = voice == FurVoice::PSG || voice == FurVoice::Noise ? 15 : voice == FurVoice::PCM ? 255 : 127;
 					if(sourceRow.volume >= 0)
 					{
+						const int maxVolume = voice == FurVoice::PSG || voice == FurVoice::Noise ? 15 : voice == FurVoice::PCM ? 255 : 127;
 						const int value = std::min(sourceRow.volume, maxVolume);
 						cell.volcmd = VOLCMD_VOLUME;
 						// У нот, которые играет DAC, громкость в Furnace логарифмическая:
@@ -1282,15 +1210,11 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 						{
 							cell.vol = static_cast<uint8>((value * 64 + maxVolume / 2) / maxVolume);
 						}
-						currentVolume[c] = cell.vol * 4;
-						volumeFraction[c] = 0;
-					} else if(cell.IsNote())
+						currentVolume[c] = cell.vol;
+					} else if(cell.IsNote() && currentVolume[c] < 64)
 					{
-						// Нота без громкости: проставляем ту, что набралась.
 						cell.volcmd = VOLCMD_VOLUME;
-						cell.vol = static_cast<ModCommand::VOL>(std::clamp((currentVolume[c] + 2) / 4, 0, 64));
-						currentVolume[c] = cell.vol * 4;
-						volumeFraction[c] = 0;
+						cell.vol = static_cast<ModCommand::VOL>(currentVolume[c]);
 					}
 					for(const auto &[fx, param] : sourceRow.effects)
 					{
@@ -1431,44 +1355,10 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 							cell.note = NOTE_MIDDLEC;
 						}
 					}
-					// Номер инструмента ставится только там, где есть нота. У Furnace
-					// смена инструмента без ноты лишь запоминает его до следующей
-					// ноты и громкость не трогает, а у OpenMPT такая строка
-					// сбрасывает громкость канала к умолчанию сэмпла. На
-					// `flying battery alt act 2` из-за этого затирался рост
-					// громкости PSG: ноты идут через строку, а между ними стоят
-					// строки с одним номером инструмента, и каждая отменяла
-					// набранное. До следующей ноты инструмент всё равно доедет,
-					// его помнит currentInstrument.
-					if(ins && (cell.IsNote() || noiseMode) && (sourceRow.instrument >= 0 || lastInstrument[c] != ins))
+					if(ins && (sourceRow.instrument >= 0 || ((cell.IsNote() || noiseMode) && lastInstrument[c] != ins)))
 					{
 						cell.instr = static_cast<ModCommand::INSTR>(ins);
 						lastInstrument[c] = ins;
-					}
-					// Скольжение громкости едет каждый тик строки, и считать его
-					// надо той же арифметикой, что в движке: шаг там мельче нашей
-					// единицы громкости, поэтому копится дробный остаток, а шкала
-					// берётся у чипа — 15 у PSG, 255 у сэмплерного, 127 у
-					// остальных.
-					if(cell.command == CMD_VOLUMESLIDE)
-						volumeSlide[c] = cell.param;
-					if(volumeSlide[c])
-					{
-						const int up = volumeSlide[c] >> 4, down = volumeSlide[c] & 0x0f;
-						const int step = up ? up : -down;
-						const int chipScale = (voice == FurVoice::PSG || voice == FurVoice::Noise) ? 15
-							: (voice == FurVoice::PCM) ? 255 : 127;
-						const unsigned ticks = std::max(1u, static_cast<unsigned>(speeds[phase % speeds.size()]) * timeBase);
-						for(unsigned tick = 0; tick < ticks; tick++)
-						{
-							volumeFraction[c] += step * 16384 / chipScale;
-							const int whole = volumeFraction[c] / 256;
-							if(whole)
-							{
-								volumeFraction[c] -= whole * 256;
-								currentVolume[c] = std::clamp(currentVolume[c] + whole, 0, 256);
-							}
-						}
 					}
 					// Задержка ноты у Furnace отсчитывается тиками и спокойно
 					// переваливает за строку: по умолчанию там не отбрасывается
@@ -1479,19 +1369,8 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 					// нас длиннее во столько же раз, во сколько умножена скорость.
 					if(cell.command == CMD_S3MCMDEX && (cell.param & 0xf0) == 0xd0)
 					{
-						const unsigned speed = std::max(1u, static_cast<unsigned>(speeds[phase % speeds.size()]));
-						const unsigned value = cell.param & 0x0f;
-						// Сравнение идёт в тиках Furnace, не в наших: наша строка
-						// длиннее ровно во столько раз, во сколько умножена скорость.
-						const bool honoured = (delayBehavior == 2) || (delayBehavior == 1 ? value <= speed : value < speed);
-						if(!honoured)
-						{
-							cell.command = CMD_NONE;
-							cell.param = 0;
-							continue;
-						}
-						const unsigned ticksPerRow = std::max(1u, speed * timeBase);
-						const unsigned delayTicks = value * timeBase;
+						const unsigned ticksPerRow = std::max(1u, speeds[phase % speeds.size()] * timeBase);
+						const unsigned delayTicks = (cell.param & 0x0f) * timeBase;
 						const ROWINDEX ahead = static_cast<ROWINDEX>(delayTicks / ticksPerRow);
 						const unsigned rest = delayTicks % ticksPerRow;
 						ModCommand moved = cell;
@@ -1502,7 +1381,10 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 						if(!ahead)
 							cell = moved;
 						else if(row + ahead < rows)
-							delayed.emplace_back(row, row + ahead, c, moved);
+						{
+							delayed.emplace_back(row + ahead, c, moved);
+							cell.Clear();
+						}
 					}
 				}
 				if(timing)
@@ -1514,16 +1396,11 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 			}
 			// Перенесённая нота встаёт только на пустое место: занятую строку
 			// она бы затёрла, а это уже не перенос, а потеря другой ноты.
-			// Исходную строку очищаем здесь же, и только если нота доехала:
-			// очистка сразу при переносе теряла ноту всякий раз, когда место
-			// оказывалось занято.
-			for(const auto &[from, to, c, moved] : delayed)
+			for(const auto &[row, c, moved] : delayed)
 			{
-				auto &target = *pattern.GetpModCommand(to, c);
-				if(!target.IsEmpty())
-					continue;
-				target = moved;
-				pattern.GetpModCommand(from, c)->Clear();
+				auto &target = *pattern.GetpModCommand(row, c);
+				if(target.IsEmpty())
+					target = moved;
 			}
 		}
 	}
