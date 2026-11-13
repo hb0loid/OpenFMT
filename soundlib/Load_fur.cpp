@@ -573,6 +573,12 @@ bool LoadFurSample(ModSample &sample, FileReader data, bool modern, std::string 
 	if(length > MaxFurBytes / width || !data.CanRead(length * width))
 		return false;
 	sample.Initialize(MOD_TYPE_MPT);
+	// Громкость канала у Furnace одинаково живёт у всех чипов, сэмплерных тоже:
+	// нота без громкости наследует текущую. Без этого флага на сэмплах каждая
+	// нота возвращала бы громкость к умолчанию сэмпла. На athletic rrt, где два
+	// YMZ280B, из-за этого вылезло 88 лишних расхождений: флаг стоял только у
+	// FM и PSG, а подстановку громкости я убрал у всех разом.
+	sample.uFlags.set(SMP_NODEFAULTVOLUME);
 	sample.nC5Speed = rate ? rate : 8363;
 	sample.nLength = length;
 	if(begin >= 0 && end > begin && static_cast<uint32>(end) <= length && loopMode != 1)
