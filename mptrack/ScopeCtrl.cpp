@@ -24,8 +24,50 @@ BEGIN_MESSAGE_MAP(ScopeCtrl, CWnd)
 	ON_WM_PAINT()
 	ON_WM_DESTROY()
 	ON_WM_ERASEBKGND()
+	ON_WM_RBUTTONUP()
 	ON_MESSAGE(WM_SCOPE_FRAME, &ScopeCtrl::OnFrame)
 END_MESSAGE_MAP()
+
+
+// Пункты меню по правой кнопке. Меню своё и никуда не уходит, поэтому номера
+// нужны только внутри этого файла: TrackPopupMenu с TPM_RETURNCMD возвращает
+// выбранный номер прямо на месте, без похода через карту сообщений.
+namespace ScopeMenu
+{
+	enum : UINT
+	{
+		WindowAuto = 100, Window5, Window10, Window20, Window50, Window100,
+		StyleLine = 200, StyleFilled, StyleDots,
+		RateAuto = 300, Rate30, Rate60, Rate120, Rate240,
+		Trigger = 400, AutoGain, Level,
+	};
+
+	// Миллисекунды окна по номеру пункта и обратно.
+	static int WindowOf(UINT id)
+	{
+		switch(id)
+		{
+		case Window5: return 5;
+		case Window10: return 10;
+		case Window20: return 20;
+		case Window50: return 50;
+		case Window100: return 100;
+		default: return 0;
+		}
+	}
+
+	static int RateOf(UINT id)
+	{
+		switch(id)
+		{
+		case Rate30: return 30;
+		case Rate60: return 60;
+		case Rate120: return 120;
+		case Rate240: return 240;
+		default: return 0;
+		}
+	}
+}
 
 
 ScopeCtrl::~ScopeCtrl()
@@ -79,15 +121,19 @@ void ScopeCtrl::Start()
 		return;
 	// Кадров столько, сколько показывает экран, но не больше ста двадцати:
 	// выше разницы не видно, а процессор занят.
-	int refresh = 0;
-	if(CDC *dc = GetDC(); dc != nullptr)
+	int refresh = TrackerSettings::Instance().oscilloscopeFrameRate;
+	if(refresh <= 0)
 	{
-		refresh = dc->GetDeviceCaps(VREFRESH);
-		ReleaseDC(dc);
+		if(CDC *dc = GetDC(); dc != nullptr)
+		{
+			refresh = dc->GetDeviceCaps(VREFRESH);
+			ReleaseDC(dc);
+		}
+		if(refresh < 24 || refresh > 1000)
+			refresh = 60;
+		refresh = std::min(refresh, 120);
 	}
-	if(refresh < 24 || refresh > 1000)
-		refresh = 60;
-	m_interval = std::max(1, 1000 / std::min(refresh, 120));
+	m_interval = std::max(1, 1000 / refresh);
 	// Без мелкого шага системного таймера сон потока округляется до
 	// пятнадцати миллисекунд, и весь смысл отдельного потока теряется.
 	m_clock = std::make_unique<Util::MultimediaClock>(1);
@@ -117,6 +163,106 @@ void ScopeCtrl::Stop()
 	if(m_ticker.joinable())
 		m_ticker.join();
 	m_clock.reset();
+}
+
+
+void ScopeCtrl::Restart()
+{
+	const bool wasTicking = m_ticking;
+	Stop();
+	if(wasTicking)
+		Start();
+	Invalidate(FALSE);
+}
+
+
+uint32 ScopeCtrl::Span(int width) const
+{
+	const int window = TrackerSettings::Instance().oscilloscopeWindow;
+	if(window <= 0)
+	{
+		// По ширине окна: на столбец пикселей не меньше двух отсчётов, иначе
+		// соседние столбцы берут один и тот же и линия рассыпается в точки.
+		return std::clamp<uint32>(static_cast<uint32>(width) * 2, MinSpan, MaxSpan);
+	}
+	// Заданное окно считается от частоты микшера, чтобы на экране была именно
+	// та доля секунды, которую выбрали, независимо от настроек звука.
+	uint32 rate = TrackerSettings::Instance().GetMixerSettings().gdwMixingFreq;
+	if(rate < 8000 || rate > 192000)
+		rate = 48000;
+	const uint64 samples = static_cast<uint64>(rate) * static_cast<uint32>(window) / 1000u;
+	return static_cast<uint32>(std::clamp<uint64>(samples, 64, 10000));
+}
+
+
+void ScopeCtrl::OnRButtonUp(UINT, CPoint point)
+{
+	auto &settings = TrackerSettings::Instance();
+	const auto check = [](bool on) -> UINT { return MF_STRING | (on ? MF_CHECKED : 0); };
+	const int window = settings.oscilloscopeWindow;
+	const int style = settings.oscilloscopeStyle;
+	const int rate = settings.oscilloscopeFrameRate;
+
+	CMenu menu, windowMenu, styleMenu, rateMenu;
+	menu.CreatePopupMenu();
+	windowMenu.CreatePopupMenu();
+	windowMenu.AppendMenu(check(window <= 0), ScopeMenu::WindowAuto, _T("&By width"));
+	windowMenu.AppendMenu(check(window == 5), ScopeMenu::Window5, _T("&5 ms"));
+	windowMenu.AppendMenu(check(window == 10), ScopeMenu::Window10, _T("1&0 ms"));
+	windowMenu.AppendMenu(check(window == 20), ScopeMenu::Window20, _T("&20 ms"));
+	windowMenu.AppendMenu(check(window == 50), ScopeMenu::Window50, _T("5&0 ms"));
+	windowMenu.AppendMenu(check(window == 100), ScopeMenu::Window100, _T("&100 ms"));
+	styleMenu.CreatePopupMenu();
+	styleMenu.AppendMenu(check(style == 0), ScopeMenu::StyleLine, _T("&Line"));
+	styleMenu.AppendMenu(check(style == 1), ScopeMenu::StyleFilled, _T("&Filled"));
+	styleMenu.AppendMenu(check(style == 2), ScopeMenu::StyleDots, _T("&Dots"));
+	rateMenu.CreatePopupMenu();
+	rateMenu.AppendMenu(check(rate <= 0), ScopeMenu::RateAuto, _T("&As the screen shows"));
+	rateMenu.AppendMenu(check(rate == 30), ScopeMenu::Rate30, _T("&30 fps"));
+	rateMenu.AppendMenu(check(rate == 60), ScopeMenu::Rate60, _T("&60 fps"));
+	rateMenu.AppendMenu(check(rate == 120), ScopeMenu::Rate120, _T("1&20 fps"));
+	rateMenu.AppendMenu(check(rate == 240), ScopeMenu::Rate240, _T("2&40 fps"));
+	menu.AppendMenu(MF_POPUP, reinterpret_cast<UINT_PTR>(windowMenu.m_hMenu), _T("&Time window"));
+	menu.AppendMenu(MF_POPUP, reinterpret_cast<UINT_PTR>(styleMenu.m_hMenu), _T("&Shape"));
+	menu.AppendMenu(MF_POPUP, reinterpret_cast<UINT_PTR>(rateMenu.m_hMenu), _T("&Frame rate"));
+	menu.AppendMenu(MF_SEPARATOR);
+	menu.AppendMenu(check(settings.oscilloscopeTrigger), ScopeMenu::Trigger, _T("S&tanding wave"));
+	menu.AppendMenu(check(settings.oscilloscopeAutoGain), ScopeMenu::AutoGain, _T("Auto &gain"));
+	menu.AppendMenu(check(settings.oscilloscopeLevel), ScopeMenu::Level, _T("Show le&vel"));
+
+	ClientToScreen(&point);
+	const UINT chosen = menu.TrackPopupMenu(TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD, point.x, point.y, this);
+	switch(chosen)
+	{
+	case 0:
+		return;
+	case ScopeMenu::StyleLine:
+	case ScopeMenu::StyleFilled:
+	case ScopeMenu::StyleDots:
+		settings.oscilloscopeStyle = static_cast<int32>(chosen - ScopeMenu::StyleLine);
+		break;
+	case ScopeMenu::Trigger:
+		settings.oscilloscopeTrigger = !settings.oscilloscopeTrigger;
+		break;
+	case ScopeMenu::AutoGain:
+		settings.oscilloscopeAutoGain = !settings.oscilloscopeAutoGain;
+		m_gain = 1.0f;
+		break;
+	case ScopeMenu::Level:
+		settings.oscilloscopeLevel = !settings.oscilloscopeLevel;
+		break;
+	default:
+		if(chosen >= ScopeMenu::WindowAuto && chosen <= ScopeMenu::Window100)
+			settings.oscilloscopeWindow = ScopeMenu::WindowOf(chosen);
+		else if(chosen >= ScopeMenu::RateAuto && chosen <= ScopeMenu::Rate240)
+			settings.oscilloscopeFrameRate = ScopeMenu::RateOf(chosen);
+		else
+			return;
+		break;
+	}
+	// Частота кадров задаётся потоку при пуске, поэтому его надо перезавести;
+	// остальным настройкам хватило бы перерисовки, но лишний раз не повредит.
+	Restart();
 }
 
 
@@ -198,10 +344,11 @@ void ScopeCtrl::OnPaint()
 	}
 	m_offScreenDC.FillSolidRect(&rect, back);
 
-	// На столбец пикселей должно приходиться не меньше двух отсчётов: иначе
-	// соседние столбцы берут один и тот же, и линия рассыпается в точки.
-	const uint32 span = std::clamp<uint32>(static_cast<uint32>(width) * 2, MinSpan, MaxSpan);
-	const uint32 search = span / 2;
+	const uint32 span = Span(width);
+	// Поиск начала картинки идёт по куску перед ней, и ему нужно не меньше
+	// периода низкой ноты: на мелком окне половины span на это не хватит.
+	const uint32 search = TrackerSettings::Instance().oscilloscopeTrigger
+		? std::clamp<uint32>(span, 1024, ScopeBuffer::Size - span - 1024) : 0;
 	m_samples.resize(span + search);
 	const bool got = m_buffer->ReadLatest(m_samples.data(), static_cast<uint32>(m_samples.size()));
 
@@ -217,7 +364,7 @@ void ScopeCtrl::OnPaint()
 		float whole = 0.0f;
 		for(const float value : m_samples)
 			whole = std::max(whole, std::abs(value));
-		const uint32 start = Trigger(m_samples.data(), search, whole);
+		const uint32 start = search ? Trigger(m_samples.data(), search, whole) : 0;
 		const float *shown = m_samples.data() + start;
 
 		float peak = 0.0f;
@@ -227,8 +374,14 @@ void ScopeCtrl::OnPaint()
 
 		// Громкое ужимаем сразу, тихое растягиваем не спеша: иначе картинка
 		// дёргается по высоте на каждой ноте и читать её невозможно.
-		const float target = std::clamp(peak > 0.0001f ? 0.85f / peak : 1.0f, 1.0f, 64.0f);
-		m_gain = (target < m_gain) ? target : m_gain + (target - m_gain) * 0.1f;
+		if(TrackerSettings::Instance().oscilloscopeAutoGain)
+		{
+			const float target = std::clamp(peak > 0.0001f ? 0.85f / peak : 1.0f, 1.0f, 64.0f);
+			m_gain = (target < m_gain) ? target : m_gain + (target - m_gain) * 0.1f;
+		} else
+		{
+			m_gain = 1.0f;
+		}
 
 		const auto place = [&](float value)
 		{
@@ -241,6 +394,7 @@ void ScopeCtrl::OnPaint()
 		// считанные вызовы против тысяч.
 		CPen wavePen(PS_SOLID, 1, wave);
 		m_offScreenDC.SelectObject(&wavePen);
+		const int style = TrackerSettings::Instance().oscilloscopeStyle;
 		// Ломаная идёт зигзагом через верх и низ каждого столбца, поэтому она
 		// же соединяет столбцы между собой: на широком окне, где отсчётов
 		// меньше, чем столбцов, линия иначе распадается на точки. Там, где
@@ -258,30 +412,51 @@ void ScopeCtrl::OnPaint()
 				high = std::max(high, shown[i]);
 			}
 			const int top = place(high), bottom = place(low);
-			const bool downwards = (x & 1) != 0;
-			m_points.emplace_back(x, downwards ? top : bottom);
-			if(top != bottom)
-				m_points.emplace_back(x, downwards ? bottom : top);
+			if(style == 1)
+			{
+				// Заполненная область: столбец от нулевой линии до волны, так
+				// что тихое остаётся тонкой полоской, а громкое заливает окно.
+				const int up = std::min(top, middle), down = std::max(bottom, middle);
+				m_offScreenDC.FillSolidRect(x, up, 1, std::max(1, down - up + 1), wave);
+			} else if(style == 2)
+			{
+				// Точки: размер берётся той же толщины, что и линия, иначе на
+				// экране с высокой плотностью их просто не видно.
+				m_offScreenDC.FillSolidRect(x, top, thickness, thickness, wave);
+				if(top != bottom)
+					m_offScreenDC.FillSolidRect(x, bottom, thickness, thickness, wave);
+			} else
+			{
+				const bool downwards = (x & 1) != 0;
+				m_points.emplace_back(x, downwards ? top : bottom);
+				if(top != bottom)
+					m_points.emplace_back(x, downwards ? bottom : top);
+			}
 		}
-		const int count = static_cast<int>(m_points.size());
-		m_offScreenDC.Polyline(m_points.data(), count);
-		for(int pass = 1; pass < thickness; pass++)
+		if(const int count = static_cast<int>(m_points.size()); count > 1)
 		{
-			for(CPoint &point : m_points)
-				point.y++;
 			m_offScreenDC.Polyline(m_points.data(), count);
+			for(int pass = 1; pass < thickness; pass++)
+			{
+				for(CPoint &point : m_points)
+					point.y++;
+				m_offScreenDC.Polyline(m_points.data(), count);
+			}
 		}
 
 		// Уровень подписывается настоящий, до усиления: иначе цифра врала бы.
-		const CString text = (peak > 0.0f)
-			? mpt::cfmt::fix(20.0 * std::log10(static_cast<double>(peak)), 1) + _T(" dB")
-			: CString(_T("-inf dB"));
-		m_offScreenDC.SetBkMode(TRANSPARENT);
-		m_offScreenDC.SetTextColor(wave);
-		m_offScreenDC.SelectObject(CMainFrame::GetGUIFont());
-		CRect textRect = rect;
-		textRect.DeflateRect(4, 2);
-		m_offScreenDC.DrawText(text, &textRect, DT_RIGHT | DT_BOTTOM | DT_SINGLELINE);
+		if(TrackerSettings::Instance().oscilloscopeLevel)
+		{
+			const CString text = (peak > 0.0f)
+				? mpt::cfmt::fix(20.0 * std::log10(static_cast<double>(peak)), 1) + _T(" dB")
+				: CString(_T("-inf dB"));
+			m_offScreenDC.SetBkMode(TRANSPARENT);
+			m_offScreenDC.SetTextColor(wave);
+			m_offScreenDC.SelectObject(CMainFrame::GetGUIFont());
+			CRect textRect = rect;
+			textRect.DeflateRect(4, 2);
+			m_offScreenDC.DrawText(text, &textRect, DT_RIGHT | DT_BOTTOM | DT_SINGLELINE);
+		}
 	}
 
 	m_offScreenDC.SelectObject(oldPen);

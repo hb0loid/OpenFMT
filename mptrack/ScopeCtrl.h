@@ -73,11 +73,18 @@ protected:
 
 	// Ищет начало картинки так, чтобы волна стояла на месте, а не ездила.
 	static uint32 Trigger(const float *samples, uint32 count, float peak);
+	// Сколько отсчётов показывать: либо по заданному окну в миллисекундах,
+	// либо по ширине окна, как было до появления настроек.
+	uint32 Span(int width) const;
+	// Настройки меняются на ходу, а частота кадров задаётся при пуске потока,
+	// поэтому после смены настроек поток перезапускается.
+	void Restart();
 
 	afx_msg LRESULT OnFrame(WPARAM, LPARAM);
 	afx_msg void OnDestroy();
 	afx_msg void OnPaint();
 	afx_msg void OnTimer(UINT_PTR id);
+	afx_msg void OnRButtonUp(UINT flags, CPoint point);
 	afx_msg BOOL OnEraseBkgnd(CDC *) { return TRUE; }
 	DECLARE_MESSAGE_MAP()
 };

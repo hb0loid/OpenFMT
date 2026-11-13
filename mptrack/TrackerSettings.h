@@ -767,6 +767,15 @@ public:
 	CachedSetting<MainToolBarItem> mainToolBarVisibleItems;
 	Setting<bool> treeViewOnLeft;
 	Setting<bool> showOscilloscope;
+	// Настройки осциллографа, они же в меню по правой кнопке на нём самом.
+	// Окно в миллисекундах; ноль значит «по ширине», как было раньше.
+	Setting<int32> oscilloscopeWindow;
+	// 0 — линия, 1 — заполненная область, 2 — точки.
+	Setting<int32> oscilloscopeStyle;
+	Setting<int32> oscilloscopeFrameRate;
+	Setting<bool> oscilloscopeTrigger;
+	Setting<bool> oscilloscopeAutoGain;
+	Setting<bool> oscilloscopeLevel;
 	Setting<uint8> quickStartGroupsCollapsed;
 
 	// Misc
