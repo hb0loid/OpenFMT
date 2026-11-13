@@ -17,7 +17,6 @@
 OPENMPT_NAMESPACE_BEGIN
 
 BEGIN_MESSAGE_MAP(CCtrlChips, CModControlDlg)
-	ON_COMMAND(IDC_BUTTON_CHIPRESET, &CCtrlChips::OnResetVolumes)
 END_MESSAGE_MAP()
 
 
@@ -61,26 +60,6 @@ void CCtrlChips::OnActivatePage(LPARAM)
 void CCtrlChips::OnDeactivatePage()
 {
 	m_modDoc.SetFollowWnd(nullptr);
-}
-
-
-void CCtrlChips::OnResetVolumes()
-{
-	CSoundFile &sndFile = m_modDoc.GetSoundFile();
-	bool changed = false;
-	for(auto &volume : sndFile.m_chipVolume)
-	{
-		if(volume != ChipVolumeUnity)
-		{
-			volume = ChipVolumeUnity;
-			changed = true;
-		}
-	}
-	if(changed)
-	{
-		m_modDoc.SetModified();
-		m_modDoc.UpdateAllViews(nullptr, GeneralHint().General());
-	}
 }
 
 OPENMPT_NAMESPACE_END

@@ -1187,12 +1187,10 @@ BEGIN
     LTEXT           "Song Message:",IDC_STATIC,4,2,76,8
 END
 
-IDD_CONTROL_CHIPS DIALOGEX 0, 0, 435, 32
+IDD_CONTROL_CHIPS DIALOGEX 0, 0, 435, 4
 STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD
 FONT 8, "MS Shell Dlg", 0, 0, 0x1
 BEGIN
-    LTEXT           "Volume of each chip, saved with the song. Sample and PCM parts go through Sample Volume on the General tab.",IDC_STATIC,4,4,420,8
-    PUSHBUTTON      "Reset all to 100%",IDC_BUTTON_CHIPRESET,4,16,78,12
 END
 
 IDD_CONTROL_PATTERNS DIALOGEX 0, 0, 566, 86

@@ -31,7 +31,6 @@ public:
 	void OnDeactivatePage() override;
 
 protected:
-	afx_msg void OnResetVolumes();
 	DECLARE_MESSAGE_MAP()
 };
 

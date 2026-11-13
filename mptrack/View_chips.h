@@ -19,33 +19,56 @@
 
 OPENMPT_NAMESPACE_BEGIN
 
+class CViewChips;
+
+// Ползунок, который по правой кнопке возвращается к исходному: щелчок мимо
+// него всё равно попадает в него же, поэтому сбрасывать удобнее всего так.
+class ChipSlider final : public CSliderCtrl
+{
+public:
+	CViewChips *owner = nullptr;
+	uint8 index = 0;
+
+protected:
+	afx_msg void OnRButtonUp(UINT flags, CPoint point);
+	DECLARE_MESSAGE_MAP()
+};
+
+
 class CViewChips : public CModScrollView
 {
 public:
 	CViewChips() = default;
 	DECLARE_SERIAL(CViewChips)
 
-protected:
-	// Ползунок берёт целые единицы 8.8, то есть ход от тишины до вдвое громче
-	// исходного. Единица стоит ровно посередине хода.
-	static constexpr int MaxVolume = ChipVolumeUnity * 2;
+	// Полоски: по одной на микросхему и одна на обычные сэмплы, чтобы весь
+	// баланс трека стоял рядом, а не половина здесь, половина в General.
+	static constexpr uint8 SampleStrip = ChipKinds;
+	static constexpr uint8 NumStrips = ChipKinds + 1;
 
+	void Reset(uint8 strip);
+
+protected:
 	struct Strip
 	{
 		CStatic name;
-		CSliderCtrl slider;
+		ChipSlider slider;
 		CStatic value;
+		int max = 0;
+		int def = 0;
 	};
-	std::array<Strip, ChipKinds> m_strips;
+	std::array<Strip, NumStrips> m_strips;
 	bool m_created = false;
-	// Пока ползунок двигают, подпись обновляется от него, а не от песни:
-	// иначе округление единиц дёргало бы цифру под пальцем.
+	// Пока ползунок под пальцем, подпись ведётся от него, а не от песни: иначе
+	// подхват собственной правки дёргал бы цифру.
 	bool m_updating = false;
 
-	static const TCHAR *ChipName(ChipKind chip);
+	static const TCHAR *StripName(uint8 strip);
+	int Value(uint8 strip) const;
+	void SetValue(uint8 strip, int value);
 	void CreateStrips();
 	void LayoutStrips();
-	void ShowValue(ChipKind chip, int volume);
+	void ShowValue(uint8 strip, int value);
 	void ReadSong();
 
 public:

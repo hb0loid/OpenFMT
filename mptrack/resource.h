@@ -20,7 +20,6 @@
 #define IDD_CONTROL_SAMPLES             117
 #define IDD_CONTROL_INSTRUMENTS         118
 #define IDD_CONTROL_CHIPS               545
-#define IDC_BUTTON_CHIPRESET            2654
 #define IDD_MODDOC_MODTYPE              119
 #define IDD_REMOVECHANNELS              120
 #define IDD_EDIT_FIND                   121
@@ -1371,7 +1370,7 @@
 #define _APS_3D_CONTROLS                     1
 #define _APS_NEXT_RESOURCE_VALUE        546
 #define _APS_NEXT_COMMAND_VALUE         44657
-#define _APS_NEXT_CONTROL_VALUE         2655
+#define _APS_NEXT_CONTROL_VALUE         2654
 #define _APS_NEXT_SYMED_VALUE           901
 #endif
 #endif

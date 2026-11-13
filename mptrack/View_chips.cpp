@@ -20,6 +20,21 @@ OPENMPT_NAMESPACE_BEGIN
 // Номера нужны только внутри этого окна: какой ползунок двигают, видно по его
 // собственному окну, а не по номеру, и командами они не управляют.
 static constexpr UINT FirstSliderID = 0x4000;
+// Ход ползунка микросхемы: от тишины до вдвое громче, единица посередине.
+static constexpr int MaxChipVolume = ChipVolumeUnity * 2;
+
+
+BEGIN_MESSAGE_MAP(ChipSlider, CSliderCtrl)
+	ON_WM_RBUTTONUP()
+END_MESSAGE_MAP()
+
+
+void ChipSlider::OnRButtonUp(UINT, CPoint)
+{
+	if(owner)
+		owner->Reset(index);
+}
+
 
 IMPLEMENT_SERIAL(CViewChips, CModScrollView, 0)
 
@@ -30,16 +45,65 @@ BEGIN_MESSAGE_MAP(CViewChips, CModScrollView)
 END_MESSAGE_MAP()
 
 
-const TCHAR *CViewChips::ChipName(ChipKind chip)
+const TCHAR *CViewChips::StripName(uint8 strip)
 {
-	switch(chip)
+	switch(strip)
 	{
 	case ChipOPL: return _T("OPL");
 	case ChipOPN2: return _T("YM2612");
 	case ChipOPM: return _T("YM2151");
 	case ChipPSG: return _T("SN76489");
+	case SampleStrip: return _T("Samples");
 	default: return _T("?");
 	}
+}
+
+
+int CViewChips::Value(uint8 strip) const
+{
+	const CModDoc *modDoc = GetDocument();
+	if(!modDoc)
+		return 0;
+	const CSoundFile &sndFile = modDoc->GetSoundFile();
+	if(strip == SampleStrip)
+		return static_cast<int>(sndFile.m_nSamplePreAmp);
+	return static_cast<int>(sndFile.m_chipVolume[strip]);
+}
+
+
+void CViewChips::SetValue(uint8 strip, int value)
+{
+	CModDoc *modDoc = GetDocument();
+	if(!modDoc)
+		return;
+	CSoundFile &sndFile = modDoc->GetSoundFile();
+	if(strip == SampleStrip)
+	{
+		if(sndFile.m_nSamplePreAmp == static_cast<uint32>(value))
+			return;
+		sndFile.m_nSamplePreAmp = static_cast<uint32>(value);
+	} else
+	{
+		if(sndFile.m_chipVolume[strip] == static_cast<uint16>(value))
+			return;
+		sndFile.m_chipVolume[strip] = static_cast<uint16>(value);
+	}
+	// Громкость сэмплов показана и в General, поэтому о правке сообщается всем:
+	// две копии одного числа не должны расходиться.
+	m_updating = true;
+	modDoc->SetModified();
+	modDoc->UpdateAllViews(nullptr, GeneralHint().General());
+	m_updating = false;
+}
+
+
+void CViewChips::Reset(uint8 strip)
+{
+	if(strip >= NumStrips)
+		return;
+	SetValue(strip, m_strips[strip].def);
+	m_strips[strip].slider.SetPos(m_strips[strip].max - m_strips[strip].def);
+	ShowValue(strip, m_strips[strip].def);
 }
 
 
@@ -57,17 +121,25 @@ void CViewChips::CreateStrips()
 	if(m_created)
 		return;
 	m_created = true;
+	const CModDoc *modDoc = GetDocument();
+	// Громкость сэмплов считается от своей середины, а она у каждого режима
+	// микшера своя, поэтому берётся у песни, а не пишется числом.
+	const int sampleDefault = modDoc ? static_cast<int>(modDoc->GetSoundFile().GetPlayConfig().getNormalSamplePreAmp()) : 128;
 	HFONT font = CMainFrame::GetGUIFont();
-	for(uint8 i = 0; i < ChipKinds; i++)
+	for(uint8 i = 0; i < NumStrips; i++)
 	{
 		Strip &strip = m_strips[i];
+		strip.max = (i == SampleStrip) ? 255 : MaxChipVolume;
+		strip.def = (i == SampleStrip) ? std::clamp(sampleDefault, 0, strip.max) : ChipVolumeUnity;
 		const CRect empty(0, 0, 0, 0);
-		strip.name.Create(ChipName(static_cast<ChipKind>(i)), WS_CHILD | WS_VISIBLE | SS_CENTER, empty, this);
+		strip.name.Create(StripName(i), WS_CHILD | WS_VISIBLE | SS_CENTER, empty, this);
 		strip.name.SendMessage(WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
-		strip.slider.Create(WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_VERT | TBS_BOTH | TBS_NOTICKS | TBS_TOOLTIPS,
+		strip.slider.owner = this;
+		strip.slider.index = i;
+		strip.slider.Create(WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_VERT | TBS_BOTH | TBS_NOTICKS,
 			empty, this, FirstSliderID + i);
-		strip.slider.SetRange(0, MaxVolume);
-		strip.slider.SetPageSize(ChipVolumeUnity / 8);
+		strip.slider.SetRange(0, strip.max);
+		strip.slider.SetPageSize(std::max(1, strip.max / 16));
 		strip.slider.SetLineSize(1);
 		strip.value.Create(_T(""), WS_CHILD | WS_VISIBLE | SS_CENTER, empty, this);
 		strip.value.SendMessage(WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
@@ -79,65 +151,60 @@ void CViewChips::LayoutStrips()
 {
 	if(!m_created || !m_hWnd)
 		return;
-	CRect client;
-	GetClientRect(&client);
-	const int margin = HighDPISupport::ScalePixels(8, m_hWnd);
-	const int lineHeight = HighDPISupport::ScalePixels(14, m_hWnd);
-	const int stripWidth = HighDPISupport::ScalePixels(72, m_hWnd);
-	const int sliderWidth = HighDPISupport::ScalePixels(28, m_hWnd);
-	// Под цифрой две строки: проценты и децибелы. Ползунок занимает всё, что
-	// осталось: на низкой панели он становится коротким, но не исчезает и не
-	// вылезает за край.
+	// Размеры взяты с группы громкостей на вкладке General: там ползунок
+	// высотой в пятьдесят единиц диалога, и этого хватает. Растягивать их на
+	// всю панель незачем — место нужно под то, что появится рядом.
+	const int margin = HighDPISupport::ScalePixels(6, m_hWnd);
+	const int lineHeight = HighDPISupport::ScalePixels(13, m_hWnd);
+	const int stripWidth = HighDPISupport::ScalePixels(58, m_hWnd);
+	const int sliderWidth = HighDPISupport::ScalePixels(24, m_hWnd);
+	const int sliderHeight = HighDPISupport::ScalePixels(84, m_hWnd);
 	const int valueHeight = lineHeight * 2;
-	const int sliderHeight = std::max(lineHeight, client.Height() - margin * 2 - lineHeight - valueHeight);
-	for(uint8 i = 0; i < ChipKinds; i++)
+	for(uint8 i = 0; i < NumStrips; i++)
 	{
 		Strip &strip = m_strips[i];
 		const int left = margin + i * stripWidth;
 		int top = margin;
-		strip.name.SetWindowPos(nullptr, left, top, stripWidth - margin, lineHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+		strip.name.SetWindowPos(nullptr, left, top, stripWidth, lineHeight, SWP_NOZORDER | SWP_NOACTIVATE);
 		top += lineHeight;
-		strip.slider.SetWindowPos(nullptr, left + (stripWidth - margin - sliderWidth) / 2, top, sliderWidth, sliderHeight,
+		strip.slider.SetWindowPos(nullptr, left + (stripWidth - sliderWidth) / 2, top, sliderWidth, sliderHeight,
 			SWP_NOZORDER | SWP_NOACTIVATE);
 		top += sliderHeight;
-		strip.value.SetWindowPos(nullptr, left, top, stripWidth - margin, valueHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+		strip.value.SetWindowPos(nullptr, left, top, stripWidth, valueHeight, SWP_NOZORDER | SWP_NOACTIVATE);
 	}
 }
 
 
-void CViewChips::ShowValue(ChipKind chip, int volume)
+void CViewChips::ShowValue(uint8 strip, int value)
 {
 	// Проценты, а рядом децибелы: процентами удобно ставить ровную единицу,
 	// а на слух разница измеряется всё-таки в децибелах.
-	CString text = mpt::cfmt::val(volume * 100 / ChipVolumeUnity) + _T("%");
-	if(volume <= 0)
-		text += _T("\n-inf dB");
+	const int def = std::max(1, m_strips[strip].def);
+	CString text = mpt::cfmt::val(value * 100 / def) + _T("%\n");
+	if(value <= 0)
+		text += _T("-inf dB");
 	else
-		text += _T("\n") + mpt::cfmt::fix(20.0 * std::log10(static_cast<double>(volume) / ChipVolumeUnity), 1) + _T(" dB");
-	m_strips[chip].value.SetWindowText(text);
+		text += mpt::cfmt::fix(20.0 * std::log10(static_cast<double>(value) / def), 1) + _T(" dB");
+	m_strips[strip].value.SetWindowText(text);
 }
 
 
 void CViewChips::ReadSong()
 {
-	const CModDoc *modDoc = GetDocument();
-	if(!modDoc || !m_created)
+	if(!m_created || !GetDocument())
 		return;
-	const CSoundFile &sndFile = modDoc->GetSoundFile();
-	for(uint8 i = 0; i < ChipKinds; i++)
+	for(uint8 i = 0; i < NumStrips; i++)
 	{
-		const int volume = std::clamp<int>(sndFile.m_chipVolume[i], 0, MaxVolume);
-		m_strips[i].slider.SetPos(MaxVolume - volume);
-		ShowValue(static_cast<ChipKind>(i), volume);
+		const int value = std::clamp(Value(i), 0, m_strips[i].max);
+		m_strips[i].slider.SetPos(m_strips[i].max - value);
+		ShowValue(i, value);
 	}
 }
 
 
 void CViewChips::UpdateView(UpdateHint hint, CObject *)
 {
-	// Пока ползунок под пальцем, переставлять его по песне нельзя: он сам её и
-	// меняет, и подхват собственной правки сбивал бы ход.
-	if(!m_updating && (hint.GetType()[HINT_MODGENERAL | HINT_MODTYPE]))
+	if(!m_updating && hint.GetType()[HINT_MODGENERAL | HINT_MODTYPE])
 		ReadSong();
 }
 
@@ -151,33 +218,18 @@ void CViewChips::OnSize(UINT type, int cx, int cy)
 
 void CViewChips::OnVScroll(UINT code, UINT pos, CScrollBar *bar)
 {
-	CModDoc *modDoc = GetDocument();
-	if(!modDoc || !bar)
+	if(bar && GetDocument())
 	{
-		CModScrollView::OnVScroll(code, pos, bar);
-		return;
-	}
-	CSoundFile &sndFile = modDoc->GetSoundFile();
-	bool changed = false;
-	for(uint8 i = 0; i < ChipKinds; i++)
-	{
-		if(bar->m_hWnd != m_strips[i].slider.m_hWnd)
-			continue;
-		// Ход ползунка идёт сверху вниз, а громкость наоборот, поэтому
-		// значение берётся от конца хода.
-		const int volume = std::clamp(MaxVolume - m_strips[i].slider.GetPos(), 0, MaxVolume);
-		if(sndFile.m_chipVolume[i] != static_cast<uint16>(volume))
+		for(uint8 i = 0; i < NumStrips; i++)
 		{
-			sndFile.m_chipVolume[i] = static_cast<uint16>(volume);
-			changed = true;
+			if(bar->m_hWnd != m_strips[i].slider.m_hWnd)
+				continue;
+			// Ход ползунка идёт сверху вниз, а громкость наоборот, поэтому
+			// значение берётся от конца хода.
+			const int value = std::clamp(m_strips[i].max - m_strips[i].slider.GetPos(), 0, m_strips[i].max);
+			SetValue(i, value);
+			ShowValue(i, value);
 		}
-		ShowValue(static_cast<ChipKind>(i), volume);
-	}
-	if(changed)
-	{
-		m_updating = true;
-		modDoc->SetModified();
-		m_updating = false;
 	}
 	CModScrollView::OnVScroll(code, pos, bar);
 }
