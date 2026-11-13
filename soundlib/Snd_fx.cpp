@@ -685,6 +685,18 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 
 			if((adjustMode & eAdjust) && !chn.rowCommand.IsEmpty())
 			{
+				// Громкость канала прокрутка до сих пор вела только при
+				// синхронизации сэмплов, в обычном режиме не вела вовсе. Пока
+				// каждая нота сбрасывала громкость к умолчанию сэмпла, это не
+				// мешало; теперь громкость живёт в канале, и после перемотки
+				// она бралась с потолка — на `the toilet lock` девять децибел
+				// тишины, которые не выправлялись.
+				if(command == CMD_VOLUME)
+					chn.nVolume = param * 4u;
+				else if(command == CMD_VOLUME8)
+					chn.nVolume = param;
+				else if(chn.rowCommand.volcmd == VOLCMD_VOLUME)
+					chn.nVolume = chn.rowCommand.vol * 4u;
 				if(chn.rowCommand.instr)
 				{
 					chn.swapSampleIndex = chn.nNewIns = chn.rowCommand.instr;
@@ -1069,6 +1081,28 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 			if(m_playBehaviour[kST3EffectMemory] && command != CMD_NONE && param != 0)
 			{
 				UpdateS3MEffectMemory(chn, param);
+			}
+		}
+
+		// Фёрнейсовское скольжение громкости едет каждый тик и на строках, где
+		// в канале ничего не стоит. Прокрутка, по которой считается старт с
+		// произвольной строки, его не вела вовсе: канал с пустой строкой она
+		// пропускает, а сам обсчёт скольжения звала только при синхронизации
+		// сэмплов. После перемотки громкость выходила не та, что при игре
+		// подряд: на `the toilet lock` до девяти децибел, и это не выправлялось.
+		// Поэтому здесь скольжение проходит по всем каналам и всем тикам строки,
+		// ровно как при проигрывании.
+		if(m_furnaceSlides)
+		{
+			for(CHANNELINDEX nChn = 0; nChn < GetNumChannels(); nChn++)
+			{
+				ModChannel &chn = playState.Chn[nChn];
+				for(uint32 tick = 0; tick < numTicks; tick++)
+				{
+					chn.isFirstTick = (tick == 0);
+					ProcessFurnaceSlide(chn, CMD_NONE, 0, false);
+				}
+				chn.isFirstTick = true;
 			}
 		}
 
