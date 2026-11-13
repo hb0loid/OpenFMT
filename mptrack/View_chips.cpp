@@ -22,6 +22,12 @@ OPENMPT_NAMESPACE_BEGIN
 static constexpr UINT FirstSliderID = 0x4000;
 // Ход ползунка микросхемы: от тишины до вдвое громче, единица посередине.
 static constexpr int MaxChipVolume = ChipVolumeUnity * 2;
+// У сэмплов шкала своя, 0..255, и середина у неё 128 — столько же, сколько
+// разрешает поле громкости в IT. Так полоска ведёт себя как остальные: внизу
+// тишина, посередине единица, наверху вдвое громче. Децибелы на вкладке
+// General считаются от «обычного» уровня своего режима микшера, он бывает и
+// 192, и 256, поэтому цифры там и здесь могут не совпасть.
+static constexpr int MaxSampleVolume = 255;
 
 
 BEGIN_MESSAGE_MAP(ChipSlider, CSliderCtrl)
@@ -121,16 +127,12 @@ void CViewChips::CreateStrips()
 	if(m_created)
 		return;
 	m_created = true;
-	const CModDoc *modDoc = GetDocument();
-	// Громкость сэмплов считается от своей середины, а она у каждого режима
-	// микшера своя, поэтому берётся у песни, а не пишется числом.
-	const int sampleDefault = modDoc ? static_cast<int>(modDoc->GetSoundFile().GetPlayConfig().getNormalSamplePreAmp()) : 128;
 	HFONT font = CMainFrame::GetGUIFont();
 	for(uint8 i = 0; i < NumStrips; i++)
 	{
 		Strip &strip = m_strips[i];
-		strip.max = (i == SampleStrip) ? 255 : MaxChipVolume;
-		strip.def = (i == SampleStrip) ? std::clamp(sampleDefault, 0, strip.max) : ChipVolumeUnity;
+		strip.max = (i == SampleStrip) ? MaxSampleVolume : MaxChipVolume;
+		strip.def = strip.max / 2;
 		const CRect empty(0, 0, 0, 0);
 		strip.name.Create(StripName(i), WS_CHILD | WS_VISIBLE | SS_CENTER, empty, this);
 		strip.name.SendMessage(WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
@@ -155,7 +157,18 @@ void CViewChips::LayoutStrips()
 	// высотой в пятьдесят единиц диалога, и этого хватает. Растягивать их на
 	// всю панель незачем — место нужно под то, что появится рядом.
 	const int margin = HighDPISupport::ScalePixels(6, m_hWnd);
-	const int lineHeight = HighDPISupport::ScalePixels(13, m_hWnd);
+	// Высота строки берётся у самого шрифта: на глаз она не угадывается, и
+	// вторая строка подписи обрезалась снизу.
+	int lineHeight = HighDPISupport::ScalePixels(14, m_hWnd);
+	if(CDC *dc = GetDC(); dc != nullptr)
+	{
+		HGDIOBJ oldFont = ::SelectObject(dc->m_hDC, CMainFrame::GetGUIFont());
+		TEXTMETRIC metrics{};
+		if(dc->GetTextMetrics(&metrics))
+			lineHeight = metrics.tmHeight + metrics.tmExternalLeading + HighDPISupport::ScalePixels(1, m_hWnd);
+		::SelectObject(dc->m_hDC, oldFont);
+		ReleaseDC(dc);
+	}
 	const int stripWidth = HighDPISupport::ScalePixels(58, m_hWnd);
 	const int sliderWidth = HighDPISupport::ScalePixels(24, m_hWnd);
 	const int sliderHeight = HighDPISupport::ScalePixels(84, m_hWnd);
