@@ -507,7 +507,12 @@ std::pair<EffectCommand, uint8> FurEffect(int code, uint8 value)
 	}
 }
 
-void SetFurEnvelope(ModInstrument &ins, const FurInstrument &fur, int maxVolume)
+// `dacScale` включает логарифмический закон ЦАПа: там макрос громкости идёт по
+// шкале 0-64, а сам ЦАП работает в 0-127, и Furnace переводит одну в другую
+// прибавлением 63 (`genesis.cpp`: `if (chan[i].dacMode && inVol>0) inVol+=63;`).
+// То есть значение 64 это полная громкость, а не половина, и дальше работает та
+// же логарифмическая таблица с шагом 0,75 дБ, что и у громкости ноты.
+void SetFurEnvelope(ModInstrument &ins, const FurInstrument &fur, int maxVolume, bool dacScale = false)
 {
 	if(fur.volume.empty())
 		return;
@@ -519,7 +524,16 @@ void SetFurEnvelope(ModInstrument &ins, const FurInstrument &fur, int maxVolume)
 	const uint8 offset = fur.volumeDelay ? 1 : 0;
 	for(size_t i = 0; i < count; i++)
 	{
-		const auto value = static_cast<uint8>(std::clamp<int32>(fur.volume[i], 0, maxVolume) * 64 / maxVolume);
+		uint8 value;
+		if(dacScale)
+		{
+			const int level = std::clamp<int32>(fur.volume[i], 0, 64);
+			const double amplitude = level > 0 ? std::pow(10.0, (level - 64) * 0.75 / 20.0) : 0.0;
+			value = static_cast<uint8>(std::clamp<int>(mpt::saturate_round<int>(64.0 * amplitude), 0, 64));
+		} else
+		{
+			value = static_cast<uint8>(std::clamp<int32>(fur.volume[i], 0, maxVolume) * 64 / maxVolume);
+		}
 		env.push_back(static_cast<uint16>(fur.volumeDelay + i * fur.volumeStep), value);
 	}
 	if(fur.volumeRelease < count)
@@ -920,7 +934,15 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 	// него импорт ставит на строку одну скорость, и темп уезжает на всю песню.
 	// Поэтому паттерны просматриваются заранее, до выбора числа каналов.
 	bool speedEffects = false;
-	if((flags & loadPatternData) && speeds.size() > 1)
+	// Шкала громкости у Furnace задаётся каналом, а не инструментом: у YM2612
+	// она 0-127, у YMZ280B 0-255, у PSG 0-15. Макрос громкости живёт в
+	// инструменте, поэтому его шкалу можно узнать только по тому, на каком
+	// канале инструмент играет. Запоминаем это здесь же, заодно с просмотром
+	// на эффекты скорости: второй проход по паттернам не нужен.
+	std::vector<uint8> instrumentVoice(instrumentCount, 0xff);
+	// Канал ЦАПа живёт по своим правилам громкости, поэтому отмечается отдельно.
+	std::vector<bool> instrumentOnDac(instrumentCount, false);
+	if(flags & loadPatternData)
 	{
 		std::vector<FurRow> scan;
 		for(auto offset : patternOffsets)
@@ -943,6 +965,13 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 				continue;
 			for(const auto &row : scan)
 			{
+				if(row.instrument >= 0 && static_cast<size_t>(row.instrument) < instrumentVoice.size())
+				{
+					if(instrumentVoice[row.instrument] == 0xff)
+						instrumentVoice[row.instrument] = static_cast<uint8>(voices[channel]);
+					if(voices[channel] == FurVoice::OPN2 && channel % 6 == 5)
+						instrumentOnDac[row.instrument] = true;
+				}
 				for(const auto &[code, value] : row.effects)
 				{
 					if(code == 0x09 || code == 0x0f)
@@ -1064,7 +1093,20 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		// там note off обрывает голос, и без затухания сэмпл звучал бы дальше.
 		if(fur.type == 0 || fur.type == 1 || fur.type == 33)
 			ins->nFadeOut = 0;
-		SetFurEnvelope(*ins, fur, fur.type == 0 ? 15 : (fur.type == 1 || fur.type == 33) ? 127 : 255);
+		// Шкала берётся у канала, на котором инструмент играет; если он нигде не
+		// встретился, остаётся догадка по типу инструмента.
+		int envelopeMax = fur.type == 0 ? 15 : (fur.type == 1 || fur.type == 33) ? 127 : 255;
+		if(i < instrumentVoice.size() && instrumentVoice[i] != 0xff)
+		{
+			switch(static_cast<FurVoice>(instrumentVoice[i]))
+			{
+			case FurVoice::PSG:
+			case FurVoice::Noise: envelopeMax = 15; break;
+			case FurVoice::PCM: envelopeMax = 255; break;
+			default: envelopeMax = 127; break;
+			}
+		}
+		SetFurEnvelope(*ins, fur, envelopeMax, i < instrumentOnDac.size() && instrumentOnDac[i]);
 		if(fur.mapped)
 		{
 			for(size_t n = 0; n < fur.noteMap.size() && n + 12 < ins->Keyboard.size(); n++)
