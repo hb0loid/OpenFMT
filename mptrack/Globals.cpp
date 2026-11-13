@@ -13,6 +13,7 @@
 #include "Globals.h"
 #include "Childfrm.h"
 #include "Ctrl_com.h"
+#include "Ctrl_chips.h"
 #include "Ctrl_gen.h"
 #include "Ctrl_ins.h"
 #include "Ctrl_pat.h"
@@ -341,6 +342,9 @@ bool CModControlView::SetActivePage(Page page, LPARAM lParam)
 		case IDD_CONTROL_INSTRUMENTS:
 			page = Page::Instruments;
 			break;
+		case IDD_CONTROL_CHIPS:
+			page = Page::Chips;
+			break;
 		default:
 			return false;
 	}
@@ -388,6 +392,9 @@ bool CModControlView::SetActivePage(Page page, LPARAM lParam)
 			break;
 		case IDD_CONTROL_INSTRUMENTS:
 			pDlg = new CCtrlInstruments(*this, *GetDocument());
+			break;
+		case IDD_CONTROL_CHIPS:
+			pDlg = new CCtrlChips(*this, *GetDocument());
 			break;
 		default:
 			return false;
@@ -448,6 +455,13 @@ void CModControlView::UpdateView(UpdateHint lHint, CObject *pObject)
 			//mask |= 32; //rewbs.graph
 			nCount++;
 		}
+		// Вкладка микросхем нужна там, где они бывают: громкость чипов живёт в
+		// нашем формате, у .mod или .it её попросту некуда записать.
+		if(pDoc->GetSoundFile().GetType() == MOD_TYPE_MPT)
+		{
+			mask |= 64;
+			nCount++;
+		}
 		if (nCount != (UINT)m_TabCtrl.GetItemCount())
 		{
 			UINT count = 0;
@@ -461,6 +475,7 @@ void CModControlView::UpdateView(UpdateHint lHint, CObject *pObject)
 			if (mask & 8) m_TabCtrl.InsertItem(count++, _T("Instruments"), IDD_CONTROL_INSTRUMENTS, IMAGE_INSTRUMENTS);
 			//if (mask & 32) m_TabCtrl.InsertItem(count++, _T("Graph"), IDD_CONTROL_GRAPH, IMAGE_GRAPH); //rewbs.graph
 			if (mask & 16) m_TabCtrl.InsertItem(count++, _T("Comments"), IDD_CONTROL_COMMENTS, IMAGE_COMMENTS);
+			if (mask & 64) m_TabCtrl.InsertItem(count++, _T("Chips"), IDD_CONTROL_CHIPS, IMAGE_CHIP);
 		}
 	}
 	// Update child dialogs

@@ -742,6 +742,7 @@ public:
 	Setting<LONG> glSampleWindowHeight;
 	Setting<LONG> glInstrumentWindowHeight;
 	Setting<LONG> glCommentsWindowHeight;
+	Setting<LONG> glChipsWindowHeight;
 	Setting<LONG> glGraphWindowHeight;
 
 	Setting<int32> gnPlugWindowX;
