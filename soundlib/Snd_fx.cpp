@@ -4078,17 +4078,13 @@ void CSoundFile::ProcessFurnaceSlide(ModChannel &chn, ModCommand::COMMAND cmd, u
 		if(whole)
 		{
 			slide.volAccum -= whole * 256;
-			const int volume = chn.nVolume + whole;
-			chn.nVolume = std::clamp(volume, 0, 256);
-			// Упёршись в ноль или в максимум, Furnace скольжение останавливает
-			// (флаг совместимости noVolSlideReset мы не читаем, он по умолчанию
-			// выключен). Без остановки скольжение ехало бы дальше и гасило
-			// следующую ноту, которой громкость задали заново.
-			if(volume < 0 || volume > 256)
-			{
-				slide.volSlide = 0;
-				slide.volAccum = 0;
-			}
+			// Furnace, упёршись в ноль или в максимум, скольжение останавливает
+			// (playback.cpp, «stop sliding if we reach maximum/minimum volume»).
+			// Повторить это здесь пробовали, и стало хуже: hidden palace 31 → 64
+			// отрезка и 1 → 6 мест без звука. Значит, наша громкость доходит до
+			// предела не тогда, когда фёрнейсовская; причина не найдена, поэтому
+			// скольжение просто упирается в предел и едет дальше.
+			chn.nVolume = std::clamp(chn.nVolume + whole, 0, 256);
 		}
 	}
 	if(newRow)
