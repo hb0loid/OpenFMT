@@ -1361,7 +1361,16 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 							cell.note = NOTE_MIDDLEC;
 						}
 					}
-					if(ins && (sourceRow.instrument >= 0 || ((cell.IsNote() || noiseMode) && lastInstrument[c] != ins)))
+					// Номер инструмента ставится только там, где есть нота. У Furnace
+					// смена инструмента без ноты лишь запоминает его до следующей
+					// ноты и громкость не трогает, а у OpenMPT такая строка
+					// сбрасывает громкость канала к умолчанию сэмпла. На
+					// `flying battery alt act 2` из-за этого затирался рост
+					// громкости PSG: ноты идут через строку, а между ними стоят
+					// строки с одним номером инструмента, и каждая отменяла
+					// набранное. До следующей ноты инструмент всё равно доедет,
+					// его помнит currentInstrument.
+					if(ins && (cell.IsNote() || noiseMode) && (sourceRow.instrument >= 0 || lastInstrument[c] != ins))
 					{
 						cell.instr = static_cast<ModCommand::INSTR>(ins);
 						lastInstrument[c] = ins;
