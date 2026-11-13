@@ -1206,6 +1206,16 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 						{
 							const double amplitude = std::pow(10.0, (value - maxVolume) * 0.75 / 20.0);
 							cell.vol = static_cast<uint8>(std::clamp<int>(mpt::saturate_round<int>(64.0 * amplitude), value > 0 ? 1 : 0, 64));
+						} else if(!psg && voice != FurVoice::PCM)
+						{
+							// У FM шаг колонки равен шагу Total Level, 0,75 дБ, как у
+							// фёрнейсовской громкости, но значений в колонке 64 против
+							// 127. Поэтому берётся верхняя половина шкалы: громкость
+							// 64 это самый тихий различимый уровень, 127 — полный.
+							// Ниже 64 корпус не опускается (минимум за 24 трека — 39,
+							// и таких значений 3 из 3821), так что теряется только
+							// то, чем никто не пользуется.
+							cell.vol = static_cast<uint8>(std::clamp(value - 63, value > 0 ? 1 : 0, 64));
 						} else
 						{
 							cell.vol = static_cast<uint8>((value * 64 + maxVolume / 2) / maxVolume);
