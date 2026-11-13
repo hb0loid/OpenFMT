@@ -36,25 +36,17 @@ namespace ScopeMenu
 {
 	enum : UINT
 	{
-		WindowAuto = 100, Window5, Window10, Window20, Window50, Window100,
+		WindowAuto = 100, WindowFirst,
 		StyleLine = 200, StyleFilled, StyleDots,
 		RateAuto = 300, Rate30, Rate60, Rate120, Rate240,
 		Trigger = 400, AutoGain, Level,
+		ThicknessFirst = 500,
 	};
 
-	// Миллисекунды окна по номеру пункта и обратно.
-	static int WindowOf(UINT id)
-	{
-		switch(id)
-		{
-		case Window5: return 5;
-		case Window10: return 10;
-		case Window20: return 20;
-		case Window50: return 50;
-		case Window100: return 100;
-		default: return 0;
-		}
-	}
+	// Окна, которые предлагаются в меню: от одного периода высокой ноты до
+	// целой фразы.
+	static constexpr int Windows[] = {1, 2, 5, 10, 20, 50, 100, 200, 500};
+	static constexpr int Thicknesses[] = {1, 2, 3, 4, 5};
 
 	static int RateOf(UINT id)
 	{
@@ -191,7 +183,7 @@ uint32 ScopeCtrl::Span(int width) const
 	if(rate < 8000 || rate > 192000)
 		rate = 48000;
 	const uint64 samples = static_cast<uint64>(rate) * static_cast<uint32>(window) / 1000u;
-	return static_cast<uint32>(std::clamp<uint64>(samples, 64, 10000));
+	return static_cast<uint32>(std::clamp<uint64>(samples, 16, ScopeBuffer::Size / 2));
 }
 
 
@@ -203,15 +195,24 @@ void ScopeCtrl::OnRButtonUp(UINT, CPoint point)
 	const int style = settings.oscilloscopeStyle;
 	const int rate = settings.oscilloscopeFrameRate;
 
-	CMenu menu, windowMenu, styleMenu, rateMenu;
+	const int thickness = settings.oscilloscopeThickness;
+	CMenu menu, windowMenu, styleMenu, rateMenu, thicknessMenu;
 	menu.CreatePopupMenu();
+	thicknessMenu.CreatePopupMenu();
+	for(size_t i = 0; i < std::size(ScopeMenu::Thicknesses); i++)
+	{
+		const int pixels = ScopeMenu::Thicknesses[i];
+		thicknessMenu.AppendMenu(check(thickness == pixels), ScopeMenu::ThicknessFirst + static_cast<UINT>(i),
+			mpt::cfmt::val(pixels) + _T(" px"));
+	}
 	windowMenu.CreatePopupMenu();
 	windowMenu.AppendMenu(check(window <= 0), ScopeMenu::WindowAuto, _T("&By width"));
-	windowMenu.AppendMenu(check(window == 5), ScopeMenu::Window5, _T("&5 ms"));
-	windowMenu.AppendMenu(check(window == 10), ScopeMenu::Window10, _T("1&0 ms"));
-	windowMenu.AppendMenu(check(window == 20), ScopeMenu::Window20, _T("&20 ms"));
-	windowMenu.AppendMenu(check(window == 50), ScopeMenu::Window50, _T("5&0 ms"));
-	windowMenu.AppendMenu(check(window == 100), ScopeMenu::Window100, _T("&100 ms"));
+	for(size_t i = 0; i < std::size(ScopeMenu::Windows); i++)
+	{
+		const int ms = ScopeMenu::Windows[i];
+		windowMenu.AppendMenu(check(window == ms), ScopeMenu::WindowFirst + static_cast<UINT>(i),
+			mpt::cfmt::val(ms) + _T(" ms"));
+	}
 	styleMenu.CreatePopupMenu();
 	styleMenu.AppendMenu(check(style == 0), ScopeMenu::StyleLine, _T("&Line"));
 	styleMenu.AppendMenu(check(style == 1), ScopeMenu::StyleFilled, _T("&Filled"));
@@ -224,6 +225,7 @@ void ScopeCtrl::OnRButtonUp(UINT, CPoint point)
 	rateMenu.AppendMenu(check(rate == 240), ScopeMenu::Rate240, _T("2&40 fps"));
 	menu.AppendMenu(MF_POPUP, reinterpret_cast<UINT_PTR>(windowMenu.m_hMenu), _T("&Time window"));
 	menu.AppendMenu(MF_POPUP, reinterpret_cast<UINT_PTR>(styleMenu.m_hMenu), _T("&Shape"));
+	menu.AppendMenu(MF_POPUP, reinterpret_cast<UINT_PTR>(thicknessMenu.m_hMenu), _T("Line &thickness"));
 	menu.AppendMenu(MF_POPUP, reinterpret_cast<UINT_PTR>(rateMenu.m_hMenu), _T("&Frame rate"));
 	menu.AppendMenu(MF_SEPARATOR);
 	menu.AppendMenu(check(settings.oscilloscopeTrigger), ScopeMenu::Trigger, _T("S&tanding wave"));
@@ -252,8 +254,12 @@ void ScopeCtrl::OnRButtonUp(UINT, CPoint point)
 		settings.oscilloscopeLevel = !settings.oscilloscopeLevel;
 		break;
 	default:
-		if(chosen >= ScopeMenu::WindowAuto && chosen <= ScopeMenu::Window100)
-			settings.oscilloscopeWindow = ScopeMenu::WindowOf(chosen);
+		if(chosen == ScopeMenu::WindowAuto)
+			settings.oscilloscopeWindow = 0;
+		else if(chosen >= ScopeMenu::WindowFirst && chosen < ScopeMenu::WindowFirst + std::size(ScopeMenu::Windows))
+			settings.oscilloscopeWindow = ScopeMenu::Windows[chosen - ScopeMenu::WindowFirst];
+		else if(chosen >= ScopeMenu::ThicknessFirst && chosen < ScopeMenu::ThicknessFirst + std::size(ScopeMenu::Thicknesses))
+			settings.oscilloscopeThickness = ScopeMenu::Thicknesses[chosen - ScopeMenu::ThicknessFirst];
 		else if(chosen >= ScopeMenu::RateAuto && chosen <= ScopeMenu::Rate240)
 			settings.oscilloscopeFrameRate = ScopeMenu::RateOf(chosen);
 		else
@@ -347,13 +353,17 @@ void ScopeCtrl::OnPaint()
 	const uint32 span = Span(width);
 	// Поиск начала картинки идёт по куску перед ней, и ему нужно не меньше
 	// периода низкой ноты: на мелком окне половины span на это не хватит.
+	// Больше восьми тысяч отсчётов поиску не нужно: переход через ноль
+	// случается куда чаще, а лишнее только удлиняет чтение из буфера, который
+	// в это время пишет звук.
 	const uint32 search = TrackerSettings::Instance().oscilloscopeTrigger
-		? std::clamp<uint32>(span, 1024, ScopeBuffer::Size - span - 1024) : 0;
+		? std::clamp<uint32>(span, 1024, 8192) : 0;
 	m_samples.resize(span + search);
 	const bool got = m_buffer->ReadLatest(m_samples.data(), static_cast<uint32>(m_samples.size()));
 
 	const int middle = height / 2;
-	const int thickness = std::max(1, HighDPISupport::ScalePixels(2, m_hWnd));
+	const int thickness = std::max(1, HighDPISupport::ScalePixels(
+		std::clamp<int>(TrackerSettings::Instance().oscilloscopeThickness, 1, 8), m_hWnd));
 	CPen zeroPen(PS_SOLID, 1, RGB(GetRValue(wave) / 3, GetGValue(wave) / 3, GetBValue(wave) / 3));
 	auto oldPen = m_offScreenDC.SelectObject(&zeroPen);
 	m_offScreenDC.MoveTo(0, middle);

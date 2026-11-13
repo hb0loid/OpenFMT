@@ -773,6 +773,7 @@ public:
 	Setting<int32> oscilloscopeWindow;
 	// 0 — линия, 1 — заполненная область, 2 — точки.
 	Setting<int32> oscilloscopeStyle;
+	Setting<int32> oscilloscopeThickness;
 	Setting<int32> oscilloscopeFrameRate;
 	Setting<bool> oscilloscopeTrigger;
 	Setting<bool> oscilloscopeAutoGain;
