@@ -1031,6 +1031,11 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 			sample.Initialize(MOD_TYPE_MPT);
 			sample.SetAdlib(true);
 			sample.isOPN2 = true;
+			// Нота не задаёт громкость канала заново: у Furnace она живёт в
+			// канале и переживает ноты, а скольжение её двигает. Без этого
+			// флага каждая нота возвращала бы громкость к умолчанию сэмпла и
+			// затирала всё, что набрало скольжение.
+			sample.uFlags.set(SMP_NODEFAULTVOLUME);
 			sample.isOPM = fur.type == 33;
 			sample.opn2 = fur.patch;
 			m_szNames[mappedSample] = fur.name;
@@ -1094,6 +1099,7 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		auto &sample = Samples[smp];
 		sample.Initialize(MOD_TYPE_MPT);
 		sample.SetAdlib(true);
+		sample.uFlags.set(SMP_NODEFAULTVOLUME);
 		sample.psg = std::move(patch);
 		const std::string name = realInstrument ? furInstruments[furIns].name : "SN76489";
 		m_szNames[smp] = name + (lane == 3 ? " (noise)" : " (tone " + std::to_string(lane + 1) + ")");
@@ -1147,7 +1153,7 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		// своей громкости нет. Нот без громкости в треках кратно больше, чем с
 		// ней: на `mushroom hill alt 2` первый канал даёт 23 ноты с громкостью
 		// против 342 без.
-		std::vector<int> currentVolume(voices.size(), 64);
+		std::vector<int> currentVolume(voices.size(), -1);
 		Order().resize(orders);
 		size_t phase = 0;
 		for(ORDERINDEX order = 0; order < orders; order++)
@@ -1217,10 +1223,15 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 							cell.vol = static_cast<uint8>((value * 64 + maxVolume / 2) / maxVolume);
 						}
 						currentVolume[c] = cell.vol;
-					} else if(cell.IsNote() && currentVolume[c] < 64)
+					} else if(cell.IsNote() && currentVolume[c] < 0)
 					{
+						// Первой ноте канала громкость нужна: до неё в канале
+						// ничего не задано. Дальше её не подставляем — иначе
+						// каждая нота отменяла бы набранное скольжением, а у
+						// Furnace нота без громкости наследует текущую.
 						cell.volcmd = VOLCMD_VOLUME;
-						cell.vol = static_cast<ModCommand::VOL>(currentVolume[c]);
+						cell.vol = 64;
+						currentVolume[c] = 64;
 					}
 					for(const auto &[fx, param] : sourceRow.effects)
 					{
