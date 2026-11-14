@@ -1021,6 +1021,38 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 	m_songMessage.Read(reinterpret_cast<const std::byte *>(comment.data()), comment.size(), SongMessage::leAutodetect);
 	if(std::isfinite(master) && master >= 0)
 		m_nDefaultGlobalVolume = static_cast<uint16>(std::clamp(master, 0.0f, 1.0f) * MAX_GLOBAL_VOLUME);
+#ifdef MODPLUG_TRACKER
+	// Цвет шапки канала по микросхеме. Радужная раскладка OpenMPT красит каналы
+	// по именам, а у нас все имена разные, поэтому получался бледный градиент,
+	// в котором соседние чипы не отличить. Здесь каждое семейство берёт свой
+	// цвет, а каналы внутри семейства — свой оттенок, чтобы соседей было видно.
+	{
+		const auto chipColor = [](FurVoice voice) -> std::array<int, 3>
+		{
+			switch(voice)
+			{
+			case FurVoice::OPN2:  return {0xE0, 0x6A, 0x5A};  // YM2612 — тёплый красный
+			case FurVoice::OPM:   return {0xC8, 0x82, 0xE8};  // YM2151 — сиреневый
+			case FurVoice::PSG:   return {0x6A, 0xC8, 0x7A};  // SN76489 — зелёный
+			case FurVoice::Noise: return {0x8E, 0xA6, 0xC8};  // шум — стальной
+			case FurVoice::PCM:   return {0x58, 0xC0, 0xDC};  // сэмплы — голубой
+			}
+			return {0xB0, 0xB0, 0xB0};
+		};
+		std::array<int, 5> seen{};
+		for(CHANNELINDEX c = 0; c < voices.size(); c++)
+		{
+			const auto voice = voices[c];
+			const auto base = chipColor(voice);
+			const size_t index = static_cast<size_t>(voice) < seen.size() ? static_cast<size_t>(voice) : 0;
+			const int step = seen[index]++ % 3;
+			const auto shade = [step](int v) { return static_cast<uint32>(std::clamp(v - step * 22, 0, 255)); };
+			ChnSettings[c].color = shade(base[0]) | (shade(base[1]) << 8) | (shade(base[2]) << 16);
+		}
+		if(timing)
+			ChnSettings[static_cast<CHANNELINDEX>(voices.size())].color = 0x909090;
+	}
+#endif  // MODPLUG_TRACKER
 	for(CHANNELINDEX c = 0; c < voices.size(); c++)
 		ChnSettings[c].szName = channelNames[c];
 	if(timing)

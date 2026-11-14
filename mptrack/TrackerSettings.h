@@ -87,6 +87,11 @@ enum ModColor : uint8
 	MODCOLOR_SAMPLE_SUSTAINMARKER,
 	MODCOLOR_SAMPLE_CUEPOINT,
 	MODCOLOR_BACKRECORDROW,
+	// Свои цвета для остальных типов эффектов: без них обычные команды берут
+	// цвет строки, а громкостные — цвет колонки громкости, и половина эффектов
+	// в строке выглядит одинаково.
+	MODCOLOR_FXNORMAL,
+	MODCOLOR_FXVOLUME,
 	MAX_MODCOLORS,
 	// Internal color codes (not saved to color preset files)
 	MODCOLOR_2NDHIGHLIGHT,

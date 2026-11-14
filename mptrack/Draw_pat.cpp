@@ -77,6 +77,20 @@ static constexpr int effectColors[] =
 
 static_assert(std::size(effectColors) == static_cast<size_t>(EffectType::NumTypes));
 
+// То же для колонки эффектов. Там обычным и громкостным командам даны свои
+// цвета: иначе арпеджио, ретригер и смещение сливаются с текстом строки, а
+// скольжение громкости — с колонкой громкости.
+static constexpr int commandColors[] =
+{
+	MODCOLOR_FXNORMAL,
+	MODCOLOR_GLOBALS,
+	MODCOLOR_FXVOLUME,
+	MODCOLOR_PANNING,
+	MODCOLOR_PITCH,
+};
+
+static_assert(std::size(commandColors) == static_cast<size_t>(EffectType::NumTypes));
+
 /////////////////////////////////////////////////////////////////////////////
 // CViewPattern Drawing Implementation
 
@@ -1180,7 +1194,7 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 				fx_col = row_col;
 				if (!isPCnote && m->command != CMD_NONE && m->command < MAX_EFFECTS && patternSetupFlags[PatternSetup::EffectHighlight])
 				{
-					if(auto fxColor = effectColors[static_cast<size_t>(m->GetEffectType())]; fxColor != 0)
+					if(auto fxColor = commandColors[static_cast<size_t>(m->GetEffectType())]; fxColor != 0)
 						fx_col = fxColor;
 					else if(m->command == CMD_DUMMY)
 						fx_col = MODCOLOR_DUMMYCOMMAND;
@@ -1268,7 +1282,7 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 					ModCommand probe;
 					probe.command = command2;
 					probe.param = parameter2;
-					if(auto fxColor = effectColors[static_cast<size_t>(probe.GetEffectType())]; fxColor != 0)
+					if(auto fxColor = commandColors[static_cast<size_t>(probe.GetEffectType())]; fxColor != 0)
 						fx_col = fxColor;
 					else if(command2 == CMD_DUMMY)
 						fx_col = MODCOLOR_DUMMYCOMMAND;

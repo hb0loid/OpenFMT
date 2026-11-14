@@ -59,6 +59,7 @@ static constexpr struct ColorDescriptions
 	{ _T("Play Cursor"),         0, { MODCOLOR_BACKPLAYCURSOR, MODCOLOR_TEXTPLAYCURSOR, {} }, { _T("Background:"), _T("Foreground:"), nullptr } },
 	{ _T("Note Highlight"),      0, { MODCOLOR_NOTE, MODCOLOR_INSTRUMENT, MODCOLOR_VOLUME }, { _T("Note:"), _T("Instrument:"), _T("Volume:") } },
 	{ _T("Effect Highlight"),    0, { MODCOLOR_PANNING, MODCOLOR_PITCH, MODCOLOR_GLOBALS }, { _T("Panning Effects:"), _T("Pitch Effects:"), _T("Global Effects:") } },
+	{ _T("Effect Highlight 2"),  0, { MODCOLOR_FXNORMAL, MODCOLOR_FXVOLUME, {} }, { _T("Other Effects:"), _T("Volume Effects:"), nullptr } },
 	{ _T("Invalid Commands"),    0, { MODCOLOR_DODGY_COMMANDS, {}, {} }, { _T("Invalid Note:"), nullptr, nullptr } },
 	{ _T("Channel Separator"),   0, { MODCOLOR_SEPHILITE, MODCOLOR_SEPFACE, MODCOLOR_SEPSHADOW }, { _T("Highlight:"), _T("Face:"), _T("Shadow:") } },
 	{ _T("Next/Prev Pattern"),   0, { MODCOLOR_BLENDCOLOR, {}, {} }, { _T("Blend Colour:"), nullptr, nullptr } },
