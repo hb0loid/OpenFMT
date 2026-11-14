@@ -72,6 +72,9 @@ BEGIN_MESSAGE_MAP(CCtrlPatterns, CModControlDlg)
 	ON_COMMAND(ID_PATTERNPASTE,               &CCtrlPatterns::OnPatternPaste)
 	ON_COMMAND(ID_EDIT_UNDO,                  &CCtrlPatterns::OnEditUndo)
 	ON_COMMAND(ID_PATTERNDETAIL_DROPDOWN,     &CCtrlPatterns::OnDetailSwitch)
+	ON_COMMAND(ID_PATTERN_CHANNELSCOPE,       &CCtrlPatterns::OnChannelScopeOn)
+	ON_COMMAND(ID_PATTERN_HEADER_VUMETERS,    &CCtrlPatterns::OnChannelScopeOff)
+	ON_COMMAND_RANGE(ID_PATTERN_SCOPEHEIGHT + 1, ID_PATTERN_SCOPEHEIGHT + 8, &CCtrlPatterns::OnChannelScopeHeight)
 	ON_COMMAND(ID_PATTERNDETAIL_INSTR,        &CCtrlPatterns::OnDetailInstr)
 	ON_COMMAND(ID_PATTERNDETAIL_VOLUME,       &CCtrlPatterns::OnDetailVolume)
 	ON_COMMAND(ID_PATTERNDETAIL_EFFECT,       &CCtrlPatterns::OnDetailEffect)
@@ -157,7 +160,7 @@ BOOL CCtrlPatterns::OnInitDialog()
 	m_ToolBar.AddButton(IDC_PATTERN_RECORD, TIMAGE_PATTERN_RECORD, TBSTYLE_CHECK, (m_bRecord ? TBSTATE_CHECKED : 0) | TBSTATE_ENABLED);
 	m_ToolBar.AddButton(IDC_METRONOME, TIMAGE_METRONOME, TBSTYLE_CHECK | TBSTYLE_DROPDOWN, (TrackerSettings::Instance().metronomeEnabled ? TBSTATE_CHECKED : 0) | TBSTATE_ENABLED);
 	m_ToolBar.AddButton(ID_SEPARATOR, 0, TBSTYLE_SEP);
-	m_ToolBar.AddButton(ID_PATTERN_VUMETERS, TIMAGE_PATTERN_VUMETERS, TBSTYLE_CHECK, (m_bVUMeters ? TBSTATE_CHECKED : 0) | TBSTATE_ENABLED);
+	m_ToolBar.AddButton(ID_PATTERN_VUMETERS, TIMAGE_PATTERN_VUMETERS, TBSTYLE_CHECK | TBSTYLE_DROPDOWN, (m_bVUMeters ? TBSTATE_CHECKED : 0) | TBSTATE_ENABLED);
 	m_ToolBar.AddButton(ID_VIEWPLUGNAMES, TIMAGE_PATTERN_PLUGINS, TBSTYLE_CHECK, (m_bPluginNames ? TBSTATE_CHECKED : 0) | TBSTATE_ENABLED);
 	m_ToolBar.AddButton(ID_PATTERN_CHANNELMANAGER, TIMAGE_CHANNELMANAGER);
 	m_ToolBar.AddButton(ID_SEPARATOR, 0, TBSTYLE_SEP);
@@ -1122,6 +1125,30 @@ void CCtrlPatterns::OnPatternVUMeters()
 }
 
 
+void CCtrlPatterns::OnChannelScopeOn()
+{
+	TrackerSettings::Instance().patternChannelScope = true;
+	SendViewMessage(VIEWMSG_SETCHANNELSCOPE, 1);
+	SwitchToViewIfMouse();
+}
+
+
+void CCtrlPatterns::OnChannelScopeOff()
+{
+	TrackerSettings::Instance().patternChannelScope = false;
+	SendViewMessage(VIEWMSG_SETCHANNELSCOPE, 0);
+	SwitchToViewIfMouse();
+}
+
+
+void CCtrlPatterns::OnChannelScopeHeight(UINT id)
+{
+	TrackerSettings::Instance().patternChannelScopeHeight = static_cast<int32>(id - ID_PATTERN_SCOPEHEIGHT);
+	SendViewMessage(VIEWMSG_SETCHANNELSCOPE, 1);
+	SwitchToViewIfMouse();
+}
+
+
 void CCtrlPatterns::OnPatternViewPlugNames()
 {
 	m_bPluginNames = !m_bPluginNames;
@@ -1305,6 +1332,30 @@ void CCtrlPatterns::OnTbnDropDownToolBar(NMHDR *pNMHDR, LRESULT *pResult)
 		menu.TrackPopupMenu(TPM_LEFTALIGN | TPM_RIGHTBUTTON, x, y, this);
 		menu.DestroyMenu();
 		break;
+
+	case ID_PATTERN_VUMETERS:
+	{
+		// Что показывать в шапке канала и какой она высоты — здесь же, на той
+		// кнопке, которой её и включают.
+		const bool scope = TrackerSettings::Instance().patternChannelScope;
+		menu.CreatePopupMenu();
+		menu.AppendMenu(MF_STRING | (scope ? 0 : MF_CHECKED), ID_PATTERN_HEADER_VUMETERS, _T("&Volume Bars"));
+		menu.AppendMenu(MF_STRING | (scope ? MF_CHECKED : 0), ID_PATTERN_CHANNELSCOPE, _T("&Oscilloscope"));
+		CMenu heights;
+		heights.CreatePopupMenu();
+		const int current = std::clamp(TrackerSettings::Instance().patternChannelScopeHeight.Get(), 1, 8);
+		for(int rows = 1; rows <= 8; rows++)
+		{
+			CString text;
+			text.Format(_T("%d"), rows);
+			heights.AppendMenu(MF_STRING | (rows == current ? MF_CHECKED : 0), ID_PATTERN_SCOPEHEIGHT + rows, text);
+		}
+		menu.AppendMenu(MF_SEPARATOR, 0, _T(""));
+		menu.AppendMenu(MF_POPUP | (scope ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(heights.Detach()), _T("Oscilloscope &Height"));
+		menu.TrackPopupMenu(TPM_LEFTALIGN | TPM_RIGHTBUTTON, x, y, this);
+		menu.DestroyMenu();
+		break;
+	}
 
 	case ID_PATTERNDETAIL_DROPDOWN:
 		menu.CreatePopupMenu();

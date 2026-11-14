@@ -3758,7 +3758,11 @@ LRESULT CViewPattern::OnPlayerNotify(Notification *pnotify)
 		}
 	}
 
-	if(pnotify->type[Notification::VUMeters | Notification::Stop] && m_Status[psShowVUMeters])
+	// Столбики рисуются отдельным быстрым проходом прямо в окно, мимо общей
+	// отрисовки шапки. В режиме осциллографа этот проход надо пресечь, иначе
+	// он изредка проскакивает поверх волны.
+	if(pnotify->type[Notification::VUMeters | Notification::Stop] && m_Status[psShowVUMeters]
+		&& !TrackerSettings::Instance().patternChannelScope)
 	{
 		UpdateAllVUMeters(pnotify);
 	}
@@ -4323,6 +4327,11 @@ LRESULT CViewPattern::OnModViewMsg(WPARAM wParam, LPARAM lParam)
 		UpdateSizes();
 		UpdateScrollSize();
 		InvalidatePattern(true, true);
+		break;
+
+	case VIEWMSG_SETCHANNELSCOPE:
+		// Переключатель живёт на кнопке столбиков: там же, где и высота шапки.
+		ApplyChannelScope();
 		break;
 
 	case VIEWMSG_SETPLUGINNAMES:
@@ -6945,8 +6954,16 @@ bool CViewPattern::BuildAmplifyCtxMenu(HMENU hMenu, CInputHandler *ih) const
 
 void CViewPattern::OnToggleChannelScope()
 {
-	const bool enabled = !TrackerSettings::Instance().patternChannelScope;
-	TrackerSettings::Instance().patternChannelScope = enabled;
+	TrackerSettings::Instance().patternChannelScope = !TrackerSettings::Instance().patternChannelScope;
+	ApplyChannelScope();
+}
+
+
+// Привести окно в соответствие с настройкой: отметиться у микшера, пересчитать
+// высоту шапки и перерисовать.
+void CViewPattern::ApplyChannelScope()
+{
+	const bool enabled = TrackerSettings::Instance().patternChannelScope;
 	// Микшер пишет звук по каналам только пока на него кто-то смотрит.
 	if(CMainFrame *main = CMainFrame::GetMainFrame(); main != nullptr)
 	{

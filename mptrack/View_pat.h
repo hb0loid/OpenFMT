@@ -475,6 +475,7 @@ protected:
 	afx_msg LRESULT OnCustomKeyMsg(WPARAM, LPARAM);
 	afx_msg void OnClearSelectionFromMenu();
 	afx_msg void OnToggleChannelScope();
+	void ApplyChannelScope();
 	afx_msg void OnSelectInstrument(UINT nid);
 	afx_msg void OnSelectPCNoteParam(UINT nid);
 	afx_msg void OnRunScript();

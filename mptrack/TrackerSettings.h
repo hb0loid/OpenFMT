@@ -876,6 +876,8 @@ public:
 	CachedSetting<bool> gbPatternVUMeters;
 	// Осциллограф вместо столбиков громкости в шапке канала.
 	CachedSetting<bool> patternChannelScope;
+	// Высота осциллографа в шапке, в строках столбиков громкости.
+	CachedSetting<int32> patternChannelScopeHeight;
 	CachedSetting<bool> gbPatternPluginNames;
 	CachedSetting<bool> gbPatternRecord;
 	CachedSetting<bool> patternNoEditPopup;

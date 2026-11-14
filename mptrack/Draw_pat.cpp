@@ -146,7 +146,12 @@ bool CViewPattern::UpdateSizes()
 	m_szHeader.cy = COLHDR_HEIGHT;
 	m_szPluginHeader.cx = 0;
 	m_szPluginHeader.cy = m_Status[psShowPluginNames] ? MulDiv(PLUGNAME_HEIGHT, m_dpi, 96) : 0;
-	if(m_Status[psShowVUMeters]) m_szHeader.cy += VUMETERS_HEIGHT;
+	// В режиме осциллографа высота шапки задаётся отдельно: волне нужно больше
+	// места, чем столбикам, и сколько именно — дело вкуса.
+	if(TrackerSettings::Instance().patternChannelScope)
+		m_szHeader.cy += VUMETERS_HEIGHT * std::clamp(TrackerSettings::Instance().patternChannelScopeHeight.Get(), 1, 8);
+	else if(m_Status[psShowVUMeters])
+		m_szHeader.cy += VUMETERS_HEIGHT;
 	m_szCell.cx = SEPARATOR_WIDTH;
 	for(size_t i = 0; i <= PatternCursor::lastColumn; i++)
 	{
@@ -812,15 +817,12 @@ void CViewPattern::OnDraw(CDC *pDC)
 				{
 					// Осциллограф занимает всю кнопку, а если столбики были
 					// включены — то и их строку: так у волны больше места.
+					const int scopeRows = std::clamp(TrackerSettings::Instance().patternChannelScopeHeight.Get(), 1, 8);
 					CRect scopeRect = rect;
-					if(m_Status[psShowVUMeters])
-						scopeRect.bottom += vuHeight;
+					scopeRect.bottom += vuHeight * scopeRows;
 					DrawChannelScope(m_offScreenDC, scopeRect, static_cast<CHANNELINDEX>(chn), s);
-					if(m_Status[psShowVUMeters])
-					{
-						rect.top += vuHeight;
-						rect.bottom += vuHeight;
-					}
+					rect.top += vuHeight * scopeRows;
+					rect.bottom += vuHeight * scopeRows;
 				} else if(m_Status[psShowVUMeters])
 				{
 					m_chnState[chn].vuMeterOld = 0;

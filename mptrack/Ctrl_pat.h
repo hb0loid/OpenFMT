@@ -251,6 +251,9 @@ protected:
 	afx_msg void OnPatternRecord();
 	afx_msg void OnPatternVUMeters();
 	afx_msg void OnPatternViewPlugNames();
+	afx_msg void OnChannelScopeOn();
+	afx_msg void OnChannelScopeOff();
+	afx_msg void OnChannelScopeHeight(UINT id);
 	afx_msg void OnPatternProperties();
 	afx_msg void OnPatternExpand();
 	afx_msg void OnPatternShrink();
