@@ -4004,6 +4004,39 @@ bool CSoundFile::ProcessEffects()
 				}
 			}
 			ProcessFurnaceSlide(chn, slideCommand, slideParam, triggerNote);
+
+			// Арпеджио Furnace держит в канале: `00xy` качает ноту до тех пор,
+			// пока его не остановят нулём (playback.cpp, эффект 0x00). У нас
+			// же `chn.nCommand` сбрасывается каждую строку, поэтому арпеджио
+			// звучало ровно одну строку и замолкало. Значение помним сами и
+			// каждую новую строку, где своего арпеджио нет, ставим обратно.
+			if(m_PlayState.m_flags[SONG_FIRSTTICK])
+			{
+				bool hasArpeggio = false;
+				uint8 arpeggioParam = 0;
+				for(uint8 slot = 0; slot < ModCommand::Effects(); slot++)
+				{
+					const auto [slotCommand, slotParam] = chn.rowCommand.GetEffect(slot);
+					if(slotCommand == CMD_ARPEGGIO)
+					{
+						hasArpeggio = true;
+						arpeggioParam = slotParam;
+						break;
+					}
+				}
+				if(hasArpeggio)
+				{
+					chn.furnaceSlide.arp = arpeggioParam;
+					// Ноль у Furnace именно останавливает, а наш обработчик при
+					// нулевом параметре повторил бы прошлое арпеджио по памяти.
+					if(!arpeggioParam && chn.nCommand == CMD_ARPEGGIO)
+						chn.nCommand = CMD_NONE;
+				} else if(chn.furnaceSlide.arp && chn.nCommand == CMD_NONE)
+				{
+					chn.nCommand = CMD_ARPEGGIO;
+					chn.nArpeggio = chn.furnaceSlide.arp;
+				}
+			}
 		}
 		ProcessAutoSlides(m_PlayState, nChn);
 	} // for(...) end
