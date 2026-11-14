@@ -59,6 +59,12 @@ private:
 		OPN2Patch source = DefaultOPN2Patch;
 		std::array<int16, 4> levels = {-1, -1, -1, -1};
 		CHANNELINDEX channel = CHANNELINDEX_INVALID;
+		// Какому каналу голос принадлежал в прошлый раз. NoteCut снимает голос
+		// с канала, и следующая нота берёт его заново как чужой — а вместе со
+		// всем состоянием стирались бы и уровни операторов. У Furnace они
+		// живут в канале и переживают это, поэтому при возврате к тому же
+		// каналу уровни сохраняются.
+		CHANNELINDEX lastChannel = CHANNELINDEX_INVALID;
 		uint8 volume = 63, modVolume = 63;
 		int8 panning = 0;
 		bool keyed = false, hasPlayed = false, muted = false;
@@ -386,9 +392,21 @@ public:
 		if(slot.channel != channel)
 		{
 			KeyOn(chip, found, false);
+			// Уровни операторов принадлежат каналу, а не голосу: если голос
+			// возвращается к тому же каналу, правки эффектами 12xx-15xx
+			// остаются в силе.
+			const bool sameChannel = slot.lastChannel == channel;
+			const auto keptSource = slot.source;
+			const auto keptLevels = slot.levels;
 			slot = Slot{};
-			slot.channel = channel;
+			slot.channel = slot.lastChannel = channel;
+			if(sameChannel)
+			{
+				slot.source = keptSource;
+				slot.levels = keptLevels;
+			}
 		}
+		slot.lastChannel = channel;
 		slot.patch = patch;
 		if(slot.source != patch)
 		{
