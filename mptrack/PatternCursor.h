@@ -30,7 +30,11 @@ public:
 		volumeColumn,
 		effectColumn,
 		paramColumn,
-		lastColumn = paramColumn,
+		// Второй эффект строки. У Furnace их до восьми, и эти две колонки —
+		// первый шаг к тому, чтобы они не терялись при импорте.
+		effectColumn2,
+		paramColumn2,
+		lastColumn = paramColumn2,
 		numColumns
 	};
 

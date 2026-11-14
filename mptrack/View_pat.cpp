@@ -7672,8 +7672,8 @@ HRESULT CViewPattern::get_accName(VARIANT varChild, BSTR *pszName)
 	const ModCommand &m = GetCursorCommand();
 	const size_t columnIndex = m_Cursor.GetColumnType();
 	const TCHAR *column = _T("");
-	static constexpr const TCHAR *regularColumns[] = {_T("Note"), _T("Instrument"), _T("Volume"), _T("Effect"), _T("Parameter")};
-	static constexpr const TCHAR *pcColumns[] = {_T("Note"), _T("Plugin"), _T("Plugin Parameter"), _T("Parameter Value"), _T("Parameter Value")};
+	static constexpr const TCHAR *regularColumns[] = {_T("Note"), _T("Instrument"), _T("Volume"), _T("Effect"), _T("Parameter"), _T("Effect 2"), _T("Parameter 2")};
+	static constexpr const TCHAR *pcColumns[] = {_T("Note"), _T("Plugin"), _T("Plugin Parameter"), _T("Parameter Value"), _T("Parameter Value"), _T("Effect 2"), _T("Parameter 2")};
 	static_assert(PatternCursor::lastColumn + 1 == std::size(regularColumns));
 	static_assert(PatternCursor::lastColumn + 1 == std::size(pcColumns));
 

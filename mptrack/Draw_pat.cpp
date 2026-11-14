@@ -51,9 +51,14 @@ enum
 	COLUMN_BITS_FXCMD         = 0x08,
 	COLUMN_BITS_FXPARAM       = 0x10,
 	COLUMN_BITS_FXCMDANDPARAM = 0x18,
-	COLUMN_BITS_ALLCOLUMNS    = 0x1F,
-	COLUMN_BITS_SKIP          = 0x40,
-	COLUMN_BITS_INVISIBLE     = 0x80,
+	// Второй эффект строки: свои два бита. Служебные SKIP и INVISIBLE
+	// подвинуты выше, чтобы не пересечься с колонками.
+	COLUMN_BITS_FXCMD2        = 0x20,
+	COLUMN_BITS_FXPARAM2      = 0x40,
+	COLUMN_BITS_FXCMDANDPARAM2 = 0x60,
+	COLUMN_BITS_ALLCOLUMNS    = 0x7F,
+	COLUMN_BITS_SKIP          = 0x100,
+	COLUMN_BITS_INVISIBLE     = 0x200,
 };
 
 
@@ -1040,6 +1045,8 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 						dwSpeedUpMask |= COLUMN_BITS_VOLUME;
 					if ((m->command == mold->command) || !m_visibleColumns[PatternCursor::effectColumn])
 						dwSpeedUpMask |= (m->command != CMD_NONE) ? COLUMN_BITS_FXCMD : COLUMN_BITS_FXCMDANDPARAM;
+					if ((m->GetEffect(1) == mold->GetEffect(1)) || !m_visibleColumns[PatternCursor::effectColumn2])
+						dwSpeedUpMask |= (m->GetEffect(1).first != CMD_NONE) ? COLUMN_BITS_FXCMD2 : COLUMN_BITS_FXCMDANDPARAM2;
 				}
 				if (dwSpeedUpMask == COLUMN_BITS_ALLCOLUMNS) goto DoBlit;
 			}
@@ -1228,6 +1235,71 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 						}
 					}
 					DrawPadding(m_Dib, pfnt, xbmp + x, 0, PatternCursor::paramColumn);
+				}
+				x += pfnt->nEltWidths[4];
+				xClear += pfnt->nEltWidths[4];
+			} else
+			{
+				xClear += pfnt->nEltWidths[3] + pfnt->nEltWidths[4];
+			}
+			// Второй эффект строки: рисуется тем же способом, что и первый,
+			// только берётся из дополнительного слота ячейки.
+			if (m_visibleColumns[PatternCursor::effectColumn2])
+			{
+				const auto [command2, parameter2] = m->GetEffect(1);
+				fx_col = row_col;
+				if (!m->IsPcNote() && command2 != CMD_NONE && command2 < MAX_EFFECTS && patternSetupFlags[PatternSetup::EffectHighlight])
+				{
+					ModCommand probe;
+					probe.command = command2;
+					probe.param = parameter2;
+					if(auto fxColor = effectColors[static_cast<size_t>(probe.GetEffectType())]; fxColor != 0)
+						fx_col = fxColor;
+					else if(command2 == CMD_DUMMY)
+						fx_col = MODCOLOR_DUMMYCOMMAND;
+				}
+				if (!(dwSpeedUpMask & COLUMN_BITS_FXCMD2))
+				{
+					tx_col = fx_col;
+					bk_col = row_bkcol;
+					if (col_sel & COLUMN_BITS_FXCMD2)
+					{
+						tx_col = MODCOLOR_TEXTSELECTED;
+						bk_col = MODCOLOR_BACKSELECTED;
+					}
+					m_Dib.SetTextColor(tx_col, bk_col);
+					if(command2 != CMD_NONE)
+					{
+						char n = sndFile.GetModSpecifications().GetEffectLetter(command2);
+						MPT_ASSERT(n >= ' ');
+						DrawLetter(xbmp + x, 0, n, pfnt->nEltWidths[5], pfnt->nCmdOfs);
+					} else
+					{
+						m_Dib.TextBlt(xbmp + x, 0, pfnt->nEltWidths[5], pfnt->spacingY, pfnt->nClrX + xClear, pfnt->nClrY, pfnt->dib);
+					}
+					DrawPadding(m_Dib, pfnt, xbmp + x, 0, PatternCursor::effectColumn2);
+				}
+				x += pfnt->nEltWidths[5];
+				xClear += pfnt->nEltWidths[5];
+				if (!(dwSpeedUpMask & COLUMN_BITS_FXPARAM2))
+				{
+					tx_col = fx_col;
+					bk_col = row_bkcol;
+					if (col_sel & COLUMN_BITS_FXPARAM2)
+					{
+						tx_col = MODCOLOR_TEXTSELECTED;
+						bk_col = MODCOLOR_BACKSELECTED;
+					}
+					m_Dib.SetTextColor(tx_col, bk_col);
+					if (command2 != CMD_NONE)
+					{
+						m_Dib.TextBlt(xbmp + x, 0, pfnt->nParamHiWidth, m_szCell.cy, pfnt->nNumX, pfnt->nNumY + (parameter2 >> 4) * pfnt->spacingY, pfnt->dib);
+						m_Dib.TextBlt(xbmp + x + pfnt->nParamHiWidth, 0, pfnt->nEltWidths[6] - pfnt->padding[6] - pfnt->nParamHiWidth, m_szCell.cy, pfnt->nNumX + pfnt->paramLoMargin, pfnt->nNumY + (parameter2 & 0x0F) * pfnt->spacingY, pfnt->dib);
+					} else
+					{
+						m_Dib.TextBlt(xbmp + x, 0, pfnt->nEltWidths[6], m_szCell.cy, pfnt->nClrX + xClear, pfnt->nClrY, pfnt->dib);
+					}
+					DrawPadding(m_Dib, pfnt, xbmp + x, 0, PatternCursor::paramColumn2);
 				}
 			}
 		DoBlit:

@@ -282,6 +282,10 @@ void PatternFont::UpdateFont(HWND hwnd)
 	pf.padding[3] = 0;
 	pf.nEltWidths[4] = charWidth * 2;	// Command param
 	pf.padding[4] = 0;
+	pf.nEltWidths[5] = pf.nEltWidths[3];	// Второй эффект: буква
+	pf.padding[5] = pf.padding[3];
+	pf.nEltWidths[6] = pf.nEltWidths[4];	// Второй эффект: параметр
+	pf.padding[6] = pf.padding[4];
 	pf.nNumX = charWidth * 3;			// Vertically-oriented numbers 0x00-0x0F
 	pf.nNumY = charHeight;
 	pf.nNum10X = charWidth * 4;			// Numbers 10-29
