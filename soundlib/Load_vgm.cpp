@@ -10,9 +10,13 @@
  * Тембр берётся снимком регистров канала в момент включения: это ровно те
  * двадцать девять байт, из которых состоит наш патч OPN2.
  *
- * Что теряется. Плавное изменение регистра между нотами в стенограмме
- * неотличимо от нарисованного вручную, поэтому эффекты не восстанавливаются:
- * выходит модуль с верными нотами и тембрами, но без огибающих и скольжений.
+ * Громкость идёт отдельно от тембра: драйверы ведут уровень несущих по ходу
+ * ноты, и эти записи ложатся в колонку громкости. Удары ЦАПа собираются из
+ * блока сэмплов по командам перемотки потока.
+ *
+ * Что теряется. Плавное изменение прочих регистров в стенограмме неотличимо от
+ * нарисованного вручную, поэтому скольжения и вибрато не восстанавливаются:
+ * выходит модуль с верными нотами, тембрами и громкостью, но без эффектов.
  * Обратно в VGM он не выгружается — исходной стенограммы мы не храним.
  */
 
@@ -116,6 +120,14 @@ ModCommand::NOTE NoteFromFrequency(double hertz)
 	if(note < NOTE_MIN || note > NOTE_MAX)
 		return NOTE_NONE;
 	return static_cast<ModCommand::NOTE>(note);
+}
+
+ModCommand::NOTE ClampedNote(double hertz)
+{
+	if(!(hertz > 0.0))
+		return NOTE_NONE;
+	const int note = static_cast<int>(std::lround(12.0 * std::log2(hertz / MiddleC))) + NOTE_MIDDLEC - 12;
+	return static_cast<ModCommand::NOTE>(std::clamp(note, static_cast<int>(NOTE_MIN), static_cast<int>(NOTE_MAX)));
 }
 
 }  // namespace
@@ -242,10 +254,34 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			hits.push_back(hit);
 		hitOpen = false;
 	};
+	// То же, что у PSG: что звучит на голосе FM и с какой громкостью. Нужно,
+	// чтобы ловить ведение уровня по ходу ноты, а не только в момент нажатия.
+	std::array<ModCommand::NOTE, FMChannels> fmSounding{};
+	std::array<uint8, FMChannels> fmLastVolume{};
 	std::vector<OPN2Patch> patches;
 	std::vector<VgmEvent> events;
 	uint32 sample = 0;
 	size_t pos = header.dataOffset;
+
+	// Громкость канала FM — это уровень его несущих операторов. Берём самый
+	// громкий из них: он и слышен, а разницу между несущими несёт тембр.
+	const auto carrierBase = [&](uint8 channel) -> uint8
+	{
+		const uint8 port = channel < 3 ? 0 : 1;
+		const uint8 slot = channel % 3;
+		const uint8 carriers = CarrierMask[registers[port][0xB0 + slot] & 7];
+		uint8 base = 127;
+		for(uint8 op = 0; op < 4; op++)
+		{
+			if(carriers & (1u << op))
+				base = std::min<uint8>(base, registers[port][0x40 + OperatorOffset[op] + slot] & 0x7F);
+		}
+		return std::min<uint8>(base, 63);  // Ниже этого колонка громкости не достаёт
+	};
+	const auto volumeFromBase = [](uint8 base) -> uint8
+	{
+		return static_cast<uint8>(std::clamp(64 - static_cast<int>(base), 1, 64));
+	};
 
 	// Тембр и громкость ноты: снимок регистров канала в момент включения.
 	//
@@ -269,20 +305,13 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			}
 		}
 		const uint8 carriers = CarrierMask[patch[0] & 7];
-		uint8 base = 127;
+		const uint8 base = carrierBase(channel);
 		for(uint8 op = 0; op < 4; op++)
 		{
 			if(carriers & (1u << op))
-				base = std::min(base, patch[1 + op * 7 + 1]);
+				patch[1 + op * 7 + 1] = static_cast<uint8>(patch[1 + op * 7 + 1] - std::min(patch[1 + op * 7 + 1], base));
 		}
-		if(base > 63)
-			base = 63;  // Ниже этого колонка громкости не достаёт
-		for(uint8 op = 0; op < 4; op++)
-		{
-			if(carriers & (1u << op))
-				patch[1 + op * 7 + 1] = static_cast<uint8>(patch[1 + op * 7 + 1] - base);
-		}
-		const uint8 volume = static_cast<uint8>(std::clamp(64 - static_cast<int>(base), 1, 64));
+		const uint8 volume = volumeFromBase(base);
 		for(size_t i = 0; i < patches.size(); i++)
 		{
 			if(patches[i] == patch)
@@ -325,10 +354,35 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 					{
 						const auto [patch, volume] = patchAndVolume(channel);
 						events.push_back({sample, channel, note, volume, patch});
+						fmSounding[channel] = note;
+						fmLastVolume[channel] = volume;
 					}
 				} else
 				{
 					events.push_back({sample, channel, NOTE_KEYOFF, 255, -1});
+					fmSounding[channel] = NOTE_NONE;
+				}
+			} else if(reg >= 0x40 && reg <= 0x4E)
+			{
+				// Ведение уровня по ходу ноты. Драйвер плавно двигает уровень
+				// несущих (в логе это идёт подряд: 92, 93, 94, 95…), и на слух
+				// это затухание или подъём внутри ноты. Снимка в момент нажатия
+				// для такого мало, поэтому каждая запись уровня при звучащей
+				// ноте выносится в колонку громкости. Записи до нажатия — это
+				// ещё настройка тембра, в поток они не идут.
+				const uint8 slot = reg & 3;
+				if(slot < 3)
+				{
+					const uint8 channel = static_cast<uint8>((port ? 3 : 0) + slot);
+					if(fmSounding[channel] != NOTE_NONE && !(channel == 5 && dacEnabled))
+					{
+						const uint8 volume = volumeFromBase(carrierBase(channel));
+						if(volume != fmLastVolume[channel])
+						{
+							events.push_back({sample, channel, NOTE_NONE, volume, -1});
+							fmLastVolume[channel] = volume;
+						}
+					}
 				}
 			} else if(reg >= 0xA4 && reg <= 0xA6)
 			{
@@ -385,16 +439,23 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			double hertz = 0.0;
 			if(lane == 3)
 			{
+				// Нулевой период микросхема считает единицей, и драйверы этим
+				// пользуются: период третьего голоса они вообще не ставят, а шум
+				// идёт на предельной скорости — то высокое шипение, которое и
+				// слышно вместо хета. Такую частоту мы прежде отбрасывали, и весь
+				// голос шума молчал всю песню.
 				const uint16 period = ((noiseMode & 3) == 3)
-					? psgPeriod[2]
+					? std::max<uint16>(psgPeriod[2], 1)
 					: static_cast<uint16>(0x10u << (noiseMode & 3));
-				if(period)
-					hertz = header.psgClock / (32.0 * period);
+				hertz = header.psgClock / (32.0 * period);
 			} else if(psgPeriod[lane])
 			{
 				hertz = header.psgClock / (32.0 * psgPeriod[lane]);
 			}
-			const auto note = NoteFromFrequency(hertz);
+			// У шума крайние частоты законны: на предельной скорости он уходит
+			// далеко за слышимый тон, и это шипение, а не промах. Поэтому
+			// нота поджимается к краю шкалы, а не отбрасывается.
+			const auto note = (lane == 3) ? ClampedNote(hertz) : NoteFromFrequency(hertz);
 			const uint8 volume = static_cast<uint8>(level * 64 / 15);
 			if(!level)
 			{
@@ -672,7 +733,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	m_modFormat.madeWithTracker = UL_("Mega Drive sound driver");
 	m_modFormat.charset = mpt::Charset::UTF8;
 #ifdef MODPLUG_TRACKER
-	AddToLog(LogWarning, MPT_UFORMAT("VGM import is approximate: {} voices and {} FM patches were reconstructed from register writes. Effects and the YM2612 sample channel are not imported yet.")(events.size(), patches.size()));
+	AddToLog(LogWarning, MPT_UFORMAT("VGM import is approximate: {} voices and {} FM patches were reconstructed from register writes. Slides and vibrato are not imported yet.")(events.size(), patches.size()));
 #endif
 	return true;
 }
