@@ -41,6 +41,9 @@ constexpr double MiddleC = 261.6255;
 constexpr uint8 OperatorOffset[] = {0, 8, 4, 12};
 constexpr uint8 OperatorRegister[] = {0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90};
 constexpr uint8 RegisterMask[] = {0x7F, 0x7F, 0xDF, 0x9F, 0x1F, 0xFF, 0x0F};
+// Какие операторы доходят до выхода при каждом из восьми алгоритмов: только
+// их уровень и слышен как громкость канала.
+constexpr uint8 CarrierMask[] = {0x08, 0x08, 0x08, 0x08, 0x0A, 0x0E, 0x0E, 0x0F};
 
 struct VgmHeader
 {
@@ -105,7 +108,11 @@ ModCommand::NOTE NoteFromFrequency(double hertz)
 {
 	if(!(hertz > 8.0) || hertz > 30000.0)
 		return NOTE_NONE;
-	const int note = static_cast<int>(std::lround(12.0 * std::log2(hertz / MiddleC))) + NOTE_MIDDLEC;
+	// Голоса микросхем в этой сборке живут по нотной шкале Furnace, где до
+	// первой октавы это C-4, а не C-5: импорт из Furnace переносит ноты один
+	// в один, и шкала досталась от него. Проверено сравнением регистров: без
+	// этой поправки чип получал частоту ровно вдвое больше нужной.
+	const int note = static_cast<int>(std::lround(12.0 * std::log2(hertz / MiddleC))) + NOTE_MIDDLEC - 12;
 	if(note < NOTE_MIN || note > NOTE_MAX)
 		return NOTE_NONE;
 	return static_cast<ModCommand::NOTE>(note);
@@ -218,7 +225,15 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	uint32 sample = 0;
 	size_t pos = header.dataOffset;
 
-	const auto patchIndex = [&](uint8 channel) -> int
+	// Тембр и громкость ноты: снимок регистров канала в момент включения.
+	//
+	// Громкость в YM2612 это уровень несущих операторов, и драйвер игры двигает
+	// именно его. Если оставить уровень в тембре, каждая нота другой громкости
+	// заводит новый инструмент, а колонка громкости остаётся пустой и ни на что
+	// не влияет. Поэтому общий уровень несущих уходит в колонку, а в тембре
+	// остаётся только их баланс между собой: движок потом складывает одно с
+	// другим обратно и выдаёт чипу исходный уровень.
+	const auto patchAndVolume = [&](uint8 channel) -> std::pair<int, uint8>
 	{
 		const uint8 port = channel < 3 ? 0 : 1;
 		const uint8 slot = channel % 3;
@@ -231,13 +246,28 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 				patch[1 + op * 7 + r] = registers[port][OperatorRegister[r] + OperatorOffset[op] + slot] & RegisterMask[r];
 			}
 		}
+		const uint8 carriers = CarrierMask[patch[0] & 7];
+		uint8 base = 127;
+		for(uint8 op = 0; op < 4; op++)
+		{
+			if(carriers & (1u << op))
+				base = std::min(base, patch[1 + op * 7 + 1]);
+		}
+		if(base > 63)
+			base = 63;  // Ниже этого колонка громкости не достаёт
+		for(uint8 op = 0; op < 4; op++)
+		{
+			if(carriers & (1u << op))
+				patch[1 + op * 7 + 1] = static_cast<uint8>(patch[1 + op * 7 + 1] - base);
+		}
+		const uint8 volume = static_cast<uint8>(std::clamp(64 - static_cast<int>(base), 1, 64));
 		for(size_t i = 0; i < patches.size(); i++)
 		{
 			if(patches[i] == patch)
-				return static_cast<int>(i);
+				return {static_cast<int>(i), volume};
 		}
 		patches.push_back(patch);
-		return static_cast<int>(patches.size() - 1);
+		return {static_cast<int>(patches.size() - 1), volume};
 	};
 
 	while(pos < data.size())
@@ -265,7 +295,10 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 						: 0.0;
 					const auto note = NoteFromFrequency(hertz);
 					if(note != NOTE_NONE)
-						events.push_back({sample, channel, note, 255, patchIndex(channel)});
+					{
+						const auto [patch, volume] = patchAndVolume(channel);
+						events.push_back({sample, channel, note, volume, patch});
+					}
 				} else
 				{
 					events.push_back({sample, channel, NOTE_KEYOFF, 255, -1});
@@ -386,7 +419,8 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		smpl.Initialize(MOD_TYPE_MPT);
 		smpl.SetAdlib(true);
 		smpl.isOPN2 = true;
-		smpl.uFlags.set(SMP_NODEFAULTVOLUME);
+		// Громкость ноты здесь живёт в строке, а не в канале, поэтому
+		// SMP_NODEFAULTVOLUME не нужен: пустая строка должна звучать полно.
 		smpl.opn2 = patches[i];
 		m_szNames[smp] = "FM " + std::to_string(i + 1);
 		const INSTRUMENTINDEX ins = ++m_nInstruments;
