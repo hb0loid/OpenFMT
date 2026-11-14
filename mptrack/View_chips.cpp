@@ -49,6 +49,7 @@ BEGIN_MESSAGE_MAP(CViewChips, CModScrollView)
 	ON_WM_SIZE()
 	ON_WM_VSCROLL()
 	ON_WM_ERASEBKGND()
+	ON_WM_RBUTTONUP()
 END_MESSAGE_MAP()
 
 
@@ -193,7 +194,8 @@ void CViewChips::LayoutStrips()
 	GetClientRect(&client);
 	const int stripsRight = margin + NumStrips * stripWidth + margin;
 	CRect scopes(stripsRight, margin, client.right - margin, client.bottom - margin);
-	m_scopes.Place(scopes, scopes.Width() > HighDPISupport::ScalePixels(120, m_hWnd));
+	m_scopes.Place(scopes, TrackerSettings::Instance().chipsShowScopes
+		&& scopes.Width() > HighDPISupport::ScalePixels(120, m_hWnd));
 }
 
 
@@ -228,6 +230,28 @@ void CViewChips::UpdateView(UpdateHint hint, CObject *)
 {
 	if(!m_updating && hint.GetType()[HINT_MODGENERAL | HINT_MODTYPE])
 		ReadSong();
+}
+
+
+// Когда сетку спрятали, вернуть её можно отсюда: на самой сетке щёлкать уже
+// негде, а панель под ней остаётся.
+void CViewChips::OnRButtonUp(UINT, CPoint point)
+{
+	CMenu menu;
+	menu.CreatePopupMenu();
+	const bool shown = TrackerSettings::Instance().chipsShowScopes;
+	menu.AppendMenu(MF_STRING | (shown ? MF_CHECKED : 0), 1, _T("&Oscilloscopes"));
+	CPoint screen = point;
+	ClientToScreen(&screen);
+	const UINT choice = menu.TrackPopupMenu(TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
+		screen.x, screen.y, this);
+	menu.DestroyMenu();
+	if(choice == 1)
+	{
+		TrackerSettings::Instance().chipsShowScopes = !shown;
+		LayoutStrips();
+		Invalidate(FALSE);
+	}
 }
 
 

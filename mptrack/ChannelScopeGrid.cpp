@@ -11,17 +11,24 @@
 #include "HighDPISupport.h"
 #include "Mainfrm.h"
 #include "Moddoc.h"
+#include "TrackerSettings.h"
 #include "../soundlib/Sndfile.h"
 #include <cmath>
 
 OPENMPT_NAMESPACE_BEGIN
 
-static constexpr UINT_PTR FrameTimer = 1;
+// Свой номер сообщения: такт кадра приходит из отдельного потока.
+static constexpr UINT WM_GRID_FRAME = WM_APP + 2;
+static constexpr UINT ID_GRID_FULLSCREEN = 1;
+static constexpr UINT ID_GRID_HIDE = 2;
 
 BEGIN_MESSAGE_MAP(ChannelScopeGrid, CWnd)
+	ON_MESSAGE(WM_GRID_FRAME, &ChannelScopeGrid::OnFrame)
 	ON_WM_PAINT()
-	ON_WM_TIMER()
 	ON_WM_DESTROY()
+	ON_WM_RBUTTONUP()
+	ON_WM_LBUTTONDBLCLK()
+	ON_WM_KEYDOWN()
 	ON_WM_ERASEBKGND()
 END_MESSAGE_MAP()
 
@@ -29,13 +36,73 @@ END_MESSAGE_MAP()
 bool ChannelScopeGrid::Create(CWnd *parent, UINT id)
 {
 	m_gain.fill(1.0f);
+	m_parent = parent;
 	const CRect empty(0, 0, 0, 0);
 	return CWnd::Create(nullptr, _T(""), WS_CHILD, empty, parent, id) != FALSE;
 }
 
 
+// Кадры шлёт отдельный поток: таймер окна упирается в шаг системного таймера,
+// и шестидесяти кадров от него не добиться, сколько ни проси.
+void ChannelScopeGrid::StartTicker()
+{
+	if(m_ticking || !m_hWnd)
+		return;
+	int refresh = TrackerSettings::Instance().oscilloscopeFrameRate;
+	if(refresh <= 0)
+	{
+		if(CDC *dc = GetDC(); dc != nullptr)
+		{
+			refresh = dc->GetDeviceCaps(VREFRESH);
+			ReleaseDC(dc);
+		}
+		if(refresh < 24 || refresh > 1000)
+			refresh = 60;
+		refresh = std::min(refresh, 120);
+	}
+	m_interval = std::max(1, 1000 / refresh);
+	// Без мелкого шага системного таймера сон округлится до пятнадцати
+	// миллисекунд, и смысл отдельного потока пропадёт.
+	m_clock = std::make_unique<Util::MultimediaClock>(1);
+	m_pending = false;
+	m_ticking = true;
+	m_ticker = std::thread([this]()
+	{
+		while(m_ticking)
+		{
+			Sleep(static_cast<DWORD>(m_interval));
+			// Пока прошлый кадр не нарисован, новый такт не нужен: иначе
+			// сообщения копятся в очереди и окно отстаёт всё сильнее.
+			if(m_ticking && !m_pending.exchange(true))
+				PostMessage(WM_GRID_FRAME);
+		}
+	});
+}
+
+
+void ChannelScopeGrid::StopTicker()
+{
+	if(!m_ticking)
+		return;
+	m_ticking = false;
+	if(m_ticker.joinable())
+		m_ticker.join();
+	m_clock.reset();
+}
+
+
+LRESULT ChannelScopeGrid::OnFrame(WPARAM, LPARAM)
+{
+	m_pending = false;
+	if(IsWindowVisible())
+		Invalidate(FALSE);
+	return 0;
+}
+
+
 ChannelScopeGrid::~ChannelScopeGrid()
 {
+	StopTicker();
 	if(m_running && CMainFrame::GetMainFrame() != nullptr)
 		CMainFrame::GetMainFrame()->GetChannelScopes().RemoveUser();
 }
@@ -46,8 +113,12 @@ void ChannelScopeGrid::Place(const CRect &rect, bool visible)
 	if(!m_hWnd)
 		return;
 	const bool show = visible && rect.Height() > HighDPISupport::ScalePixels(24, m_hWnd);
-	SetWindowPos(nullptr, rect.left, rect.top, rect.Width(), rect.Height(),
-		SWP_NOZORDER | SWP_NOACTIVATE | (show ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+	m_placed = rect;
+	if(!m_fullScreen)
+	{
+		SetWindowPos(nullptr, rect.left, rect.top, rect.Width(), rect.Height(),
+			SWP_NOZORDER | SWP_NOACTIVATE | (show ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+	}
 	if(show == m_running)
 		return;
 	m_running = show;
@@ -61,29 +132,93 @@ void ChannelScopeGrid::Place(const CRect &rect, bool visible)
 			main->GetChannelScopes().RemoveUser();
 	}
 	if(show)
-		SetTimer(FrameTimer, 33, nullptr);
+		StartTicker();
 	else
-		KillTimer(FrameTimer);
+		StopTicker();
+}
+
+
+// Во весь экран: окно уходит из панели на отдельный слой поверх всего. Назад —
+// тем же пунктом меню, двойным щелчком или клавишей Esc.
+void ChannelScopeGrid::ToggleFullScreen()
+{
+	if(!m_hWnd)
+		return;
+	if(!m_fullScreen)
+	{
+		MONITORINFO monitor{};
+		monitor.cbSize = sizeof(monitor);
+		if(!::GetMonitorInfo(::MonitorFromWindow(m_hWnd, MONITOR_DEFAULTTONEAREST), &monitor))
+			return;
+		m_fullScreen = true;
+		ModifyStyle(WS_CHILD, WS_POPUP);
+		::SetParent(m_hWnd, nullptr);
+		const CRect screen(monitor.rcMonitor);
+		SetWindowPos(&wndTopMost, screen.left, screen.top, screen.Width(), screen.Height(),
+			SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+		SetFocus();
+	} else
+	{
+		m_fullScreen = false;
+		ModifyStyle(WS_POPUP, WS_CHILD);
+		::SetParent(m_hWnd, m_parent ? m_parent->m_hWnd : nullptr);
+		SetWindowPos(&wndNoTopMost, m_placed.left, m_placed.top, m_placed.Width(), m_placed.Height(),
+			SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+	}
+	Invalidate(FALSE);
+}
+
+
+void ChannelScopeGrid::OnRButtonUp(UINT, CPoint point)
+{
+	CMenu menu;
+	menu.CreatePopupMenu();
+	menu.AppendMenu(MF_STRING | (m_fullScreen ? MF_CHECKED : 0), ID_GRID_FULLSCREEN, _T("&Full Screen	Esc"));
+	menu.AppendMenu(MF_STRING, ID_GRID_HIDE, _T("&Hide Oscilloscopes"));
+	CPoint screen = point;
+	ClientToScreen(&screen);
+	const UINT choice = menu.TrackPopupMenu(TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
+		screen.x, screen.y, this);
+	menu.DestroyMenu();
+	if(choice == ID_GRID_FULLSCREEN)
+	{
+		ToggleFullScreen();
+	} else if(choice == ID_GRID_HIDE)
+	{
+		if(m_fullScreen)
+			ToggleFullScreen();
+		TrackerSettings::Instance().chipsShowScopes = false;
+		if(m_parent != nullptr)
+			m_parent->SendMessage(WM_SIZE, SIZE_RESTORED, 0);
+	}
+}
+
+
+void ChannelScopeGrid::OnLButtonDblClk(UINT, CPoint)
+{
+	ToggleFullScreen();
+}
+
+
+void ChannelScopeGrid::OnKeyDown(UINT key, UINT repeat, UINT flags)
+{
+	if(key == VK_ESCAPE && m_fullScreen)
+		ToggleFullScreen();
+	else
+		CWnd::OnKeyDown(key, repeat, flags);
 }
 
 
 void ChannelScopeGrid::OnDestroy()
 {
+	StopTicker();
 	if(m_running)
 	{
-		KillTimer(FrameTimer);
 		if(CMainFrame *main = CMainFrame::GetMainFrame(); main != nullptr)
 			main->GetChannelScopes().RemoveUser();
 		m_running = false;
 	}
 	CWnd::OnDestroy();
-}
-
-
-void ChannelScopeGrid::OnTimer(UINT_PTR id)
-{
-	if(id == FrameTimer && m_running)
-		Invalidate(FALSE);
 }
 
 
@@ -141,10 +276,33 @@ void ChannelScopeGrid::Draw(CDC &dc, const CRect &client)
 	if(!numChannels)
 		return;
 
-	// Сетка: столько столбцов, чтобы окошко не стало уже своей подписи.
-	const int minCell = HighDPISupport::ScalePixels(96, m_hWnd);
-	int columns = std::max(1, client.Width() / minCell);
-	columns = std::min<int>(columns, numChannels);
+	// Раскладка. Делить окно только по ширине нельзя: на широком экране все
+	// каналы вставали в одну строку, и каждая клетка выходила высотой во всю
+	// панель. Поэтому перебираем число столбцов и берём то, при котором
+	// клетка ближе всего к привычным пропорциям осциллографа — вдвое шире,
+	// чем выше, — не забывая, что уже своей подписи она быть не должна.
+	const int minWidth = HighDPISupport::ScalePixels(90, m_hWnd);
+	const int minHeight = HighDPISupport::ScalePixels(28, m_hWnd);
+	constexpr double TargetRatio = 2.2;
+	int columns = 1;
+	double bestScore = -1.0;
+	for(int candidate = 1; candidate <= numChannels; candidate++)
+	{
+		const int rowCount = (numChannels + candidate - 1) / candidate;
+		const double w = static_cast<double>(client.Width()) / candidate;
+		const double h = static_cast<double>(client.Height()) / rowCount;
+		if(w < minWidth && candidate > 1)
+			continue;
+		// Чем ближе отношение сторон к желаемому, тем меньше оценка.
+		double score = std::fabs(std::log((w / std::max(h, 1.0)) / TargetRatio));
+		if(h < minHeight)
+			score += 4.0;  // Слишком плоско: читать нечего
+		if(bestScore < 0.0 || score < bestScore)
+		{
+			bestScore = score;
+			columns = candidate;
+		}
+	}
 	const int rows = (numChannels + columns - 1) / columns;
 	const int cellWidth = client.Width() / columns;
 	const int cellHeight = std::max(HighDPISupport::ScalePixels(20, m_hWnd), client.Height() / std::max(rows, 1));

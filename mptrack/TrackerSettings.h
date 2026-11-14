@@ -878,6 +878,8 @@ public:
 	CachedSetting<bool> patternChannelScope;
 	// Высота осциллографа в шапке, в строках столбиков громкости.
 	CachedSetting<int32> patternChannelScopeHeight;
+	// Видна ли сетка осциллографов на вкладке Chips.
+	CachedSetting<bool> chipsShowScopes;
 	CachedSetting<bool> gbPatternPluginNames;
 	CachedSetting<bool> gbPatternRecord;
 	CachedSetting<bool> patternNoEditPopup;

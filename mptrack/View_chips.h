@@ -82,6 +82,7 @@ public:
 protected:
 	afx_msg void OnSize(UINT type, int cx, int cy);
 	afx_msg void OnVScroll(UINT code, UINT pos, CScrollBar *bar);
+	afx_msg void OnRButtonUp(UINT flags, CPoint point);
 	afx_msg BOOL OnEraseBkgnd(CDC *dc);
 	DECLARE_MESSAGE_MAP()
 };

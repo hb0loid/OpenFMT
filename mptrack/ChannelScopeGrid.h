@@ -13,6 +13,10 @@
 
 #include "openmpt/all/BuildSettings.hpp"
 #include "../soundlib/ChannelScopes.h"
+#include "../misc/mptClock.h"
+#include <atomic>
+#include <memory>
+#include <thread>
 #include <vector>
 
 OPENMPT_NAMESPACE_BEGIN
@@ -24,6 +28,10 @@ public:
 	// Вкладка говорит, где сетке стоять; включение капчи в микшере она берёт
 	// на себя сама, по тому, видно её или нет.
 	void Place(const CRect &rect, bool visible);
+	// Во весь экран и обратно: окно уходит из панели на отдельный слой поверх
+	// всего, а потом возвращается на своё место.
+	void ToggleFullScreen();
+	bool IsFullScreen() const { return m_fullScreen; }
 	~ChannelScopeGrid();
 
 protected:
@@ -40,14 +48,31 @@ protected:
 	// нота после громкой прыгала бы на весь экран.
 	std::array<float, ChannelScopes::Channels> m_gain{};
 	bool m_running = false;
+	// Кадры шлёт отдельный поток: таймер окна не умеет чаще шестидесяти раз в
+	// секунду и округляет сон до пятнадцати миллисекунд.
+	std::unique_ptr<Util::MultimediaClock> m_clock;
+	std::thread m_ticker;
+	std::atomic<bool> m_ticking{false};
+	std::atomic<bool> m_pending{false};
+	int m_interval = 16;
+	// Положение в панели, чтобы вернуться из полного экрана.
+	bool m_fullScreen = false;
+	CWnd *m_parent = nullptr;
+	CRect m_placed{0, 0, 0, 0};
+
+	void StartTicker();
+	void StopTicker();
 
 	void Draw(CDC &dc, const CRect &client);
 	// Ищет точку, с которой волна стоит на месте, а не ездит по экрану.
 	static uint32 Trigger(const float *samples, uint32 count, float peak);
 
+	afx_msg LRESULT OnFrame(WPARAM, LPARAM);
 	afx_msg void OnPaint();
-	afx_msg void OnTimer(UINT_PTR id);
 	afx_msg void OnDestroy();
+	afx_msg void OnRButtonUp(UINT flags, CPoint point);
+	afx_msg void OnLButtonDblClk(UINT flags, CPoint point);
+	afx_msg void OnKeyDown(UINT key, UINT repeat, UINT flags);
 	afx_msg BOOL OnEraseBkgnd(CDC *) { return TRUE; }
 	DECLARE_MESSAGE_MAP()
 };
