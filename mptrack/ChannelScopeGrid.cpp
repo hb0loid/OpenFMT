@@ -37,7 +37,7 @@ bool ChannelScopeGrid::Create(CWnd *parent, UINT id)
 ChannelScopeGrid::~ChannelScopeGrid()
 {
 	if(m_running && CMainFrame::GetMainFrame() != nullptr)
-		CMainFrame::GetMainFrame()->GetChannelScopes().SetEnabled(false);
+		CMainFrame::GetMainFrame()->GetChannelScopes().RemoveUser();
 }
 
 
@@ -54,7 +54,12 @@ void ChannelScopeGrid::Place(const CRect &rect, bool visible)
 	// Писать звук по каналам микшер начинает только когда сетку видно: за
 	// невидимую картинку платить нечем.
 	if(CMainFrame *main = CMainFrame::GetMainFrame(); main != nullptr)
-		main->GetChannelScopes().SetEnabled(show);
+	{
+		if(show)
+			main->GetChannelScopes().AddUser();
+		else
+			main->GetChannelScopes().RemoveUser();
+	}
 	if(show)
 		SetTimer(FrameTimer, 33, nullptr);
 	else
@@ -68,7 +73,7 @@ void ChannelScopeGrid::OnDestroy()
 	{
 		KillTimer(FrameTimer);
 		if(CMainFrame *main = CMainFrame::GetMainFrame(); main != nullptr)
-			main->GetChannelScopes().SetEnabled(false);
+			main->GetChannelScopes().RemoveUser();
 		m_running = false;
 	}
 	CWnd::OnDestroy();

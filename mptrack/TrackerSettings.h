@@ -874,6 +874,8 @@ public:
 	CachedSetting<bool> gbLoopSong;
 	CachedSetting<UINT> gnPatternSpacing;
 	CachedSetting<bool> gbPatternVUMeters;
+	// Осциллограф вместо столбиков громкости в шапке канала.
+	CachedSetting<bool> patternChannelScope;
 	CachedSetting<bool> gbPatternPluginNames;
 	CachedSetting<bool> gbPatternRecord;
 	CachedSetting<bool> patternNoEditPopup;

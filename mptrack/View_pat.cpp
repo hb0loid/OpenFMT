@@ -82,6 +82,7 @@ BEGIN_MESSAGE_MAP(CViewPattern, CModScrollView)
 	ON_COMMAND(ID_EDIT_SPLITKEYBOARDSETTINGS,	&CViewPattern::SetSplitKeyboardSettings)
 	ON_COMMAND(ID_EDIT_UNDO,		&CViewPattern::OnEditUndo)
 	ON_COMMAND(ID_EDIT_REDO,		&CViewPattern::OnEditRedo)
+	ON_COMMAND(ID_PATTERN_CHANNELSCOPE,			&CViewPattern::OnToggleChannelScope)
 	ON_COMMAND(ID_CHANNEL_SETTINGS,	&CViewPattern::OnChannelSettings)
 	ON_COMMAND(ID_PATTERN_CHNRESET,	&CViewPattern::OnChannelReset)
 	ON_COMMAND(ID_PATTERN_MUTE,		&CViewPattern::OnMuteFromClick)
@@ -171,6 +172,16 @@ void CViewPattern::OnInitialUpdate()
 {
 	CModScrollView::OnInitialUpdate();
 	EnableToolTips();
+	// Осциллограф в шапке канала может быть включён с прошлого запуска, и тогда
+	// микшеру надо сказать об этом сразу, а не при первом переключении.
+	if(TrackerSettings::Instance().patternChannelScope && !m_scopeUser)
+	{
+		if(CMainFrame *main = CMainFrame::GetMainFrame(); main != nullptr)
+		{
+			main->GetChannelScopes().AddUser();
+			m_scopeUser = true;
+		}
+	}
 	m_chnState.assign(GetDocument()->GetNumChannels(), {});
 	m_splitActiveNoteChannel.fill(NOTE_CHANNEL_MAP_INVALID);
 	m_activeNoteChannel.fill(NOTE_CHANNEL_MAP_INVALID);
@@ -767,6 +778,12 @@ BOOL CViewPattern::PreTranslateMessage(MSG *pMsg)
 // cppcheck-suppress duplInheritedMember
 void CViewPattern::OnDestroy()
 {
+	if(m_scopeUser)
+	{
+		if(CMainFrame *main = CMainFrame::GetMainFrame(); main != nullptr)
+			main->GetChannelScopes().RemoveUser();
+		m_scopeUser = false;
+	}
 	// Fix: save pattern scrollbar position when switching to other tab
 	// When we switching to other tab the CViewPattern object is deleted
 	CModDoc *pModDoc = GetDocument();
@@ -3744,6 +3761,16 @@ LRESULT CViewPattern::OnPlayerNotify(Notification *pnotify)
 	if(pnotify->type[Notification::VUMeters | Notification::Stop] && m_Status[psShowVUMeters])
 	{
 		UpdateAllVUMeters(pnotify);
+	}
+
+	// Осциллограф в шапке канала живёт тем же тактом, что и столбики: своего
+	// таймера ему не нужно, звук приносит те же уведомления.
+	if(TrackerSettings::Instance().patternChannelScope && pnotify->type[Notification::VUMeters | Notification::Stop])
+	{
+		CRect headers;
+		GetClientRect(&headers);
+		headers.bottom = m_szHeader.cy;
+		InvalidateRect(&headers, FALSE);
 	}
 
 	if(pnotify->type[Notification::Stop])
@@ -6916,6 +6943,29 @@ bool CViewPattern::BuildAmplifyCtxMenu(HMENU hMenu, CInputHandler *ih) const
 }
 
 
+void CViewPattern::OnToggleChannelScope()
+{
+	const bool enabled = !TrackerSettings::Instance().patternChannelScope;
+	TrackerSettings::Instance().patternChannelScope = enabled;
+	// Микшер пишет звук по каналам только пока на него кто-то смотрит.
+	if(CMainFrame *main = CMainFrame::GetMainFrame(); main != nullptr)
+	{
+		if(enabled && !m_scopeUser)
+		{
+			main->GetChannelScopes().AddUser();
+			m_scopeUser = true;
+		} else if(!enabled && m_scopeUser)
+		{
+			main->GetChannelScopes().RemoveUser();
+			m_scopeUser = false;
+		}
+	}
+	UpdateSizes();
+	UpdateScrollSize();
+	InvalidatePattern(true, true);
+}
+
+
 bool CViewPattern::BuildChannelControlCtxMenu(HMENU hMenu, CInputHandler *ih) const
 {
 	const CModSpecifications &specs = GetDocument()->GetSoundFile().GetModSpecifications();
@@ -6923,6 +6973,10 @@ bool CViewPattern::BuildChannelControlCtxMenu(HMENU hMenu, CInputHandler *ih) co
 	DWORD canAddChannels = (numChannels < specs.channelsMax) ? 0 : MF_GRAYED;
 	DWORD canRemoveChannels = (numChannels > specs.channelsMin) ? 0 : MF_GRAYED;
 
+	AppendMenu(hMenu, MF_SEPARATOR, 0, _T(""));
+	// Шапка канала умеет показывать либо столбики громкости, либо осциллограф.
+	AppendMenu(hMenu, MF_STRING | (TrackerSettings::Instance().patternChannelScope ? MF_CHECKED : 0),
+		ID_PATTERN_CHANNELSCOPE, _T("&Oscilloscope in Channel Header"));
 	AppendMenu(hMenu, MF_SEPARATOR, 0, _T(""));
 	AppendMenu(hMenu, MF_STRING, ID_CHANNEL_SETTINGS, ih->GetKeyTextFromCommand(kcChannelSettings, _T("C&hannel Settings")));
 	AppendMenu(hMenu, MF_SEPARATOR, 0, _T(""));

@@ -734,6 +734,7 @@ void CViewPattern::OnDraw(CDC *pDC)
 		}
 
 		// Drawing Channel Headers
+		const bool channelScope = TrackerSettings::Instance().patternChannelScope;
 		const int dropWidth = HighDPISupport::ScalePixels(2, m_hWnd);
 		UINT chn = xofs;
 		ypaint = rcClient.top;
@@ -756,7 +757,8 @@ void CViewPattern::OnDraw(CDC *pDC)
 				else if(numVisibleColums < 5)
 					pszfmt = sndFile.m_bChannelMuteTogglePending[chn] ? "[Chn %u]" : "Chn %u";
 				sprintf(s, pszfmt, chn + 1, channel.szName.buf);
-				DrawButtonRect(m_offScreenDC, lineWidth, rect, s,
+				// В режиме осциллографа имя пишется поверх волны, а не кнопкой.
+				DrawButtonRect(m_offScreenDC, lineWidth, rect, channelScope ? "" : s,
 					channel.dwFlags[CHN_MUTE],
 					m_bInItemRect && m_nDragItem.Type() == DragItem::ChannelHeader && m_nDragItem.Value() == chn,
 					recordGroup != RecordGroup::NoGroup ? DT_RIGHT : DT_CENTER, chanColorHeight);
@@ -806,7 +808,20 @@ void CViewPattern::OnDraw(CDC *pDC)
 					FrameRect(m_offScreenDC, &insRect, blackBrush);
 				}
 
-				if(m_Status[psShowVUMeters])
+				if(channelScope)
+				{
+					// Осциллограф занимает всю кнопку, а если столбики были
+					// включены — то и их строку: так у волны больше места.
+					CRect scopeRect = rect;
+					if(m_Status[psShowVUMeters])
+						scopeRect.bottom += vuHeight;
+					DrawChannelScope(m_offScreenDC, scopeRect, static_cast<CHANNELINDEX>(chn), s);
+					if(m_Status[psShowVUMeters])
+					{
+						rect.top += vuHeight;
+						rect.bottom += vuHeight;
+					}
+				} else if(m_Status[psShowVUMeters])
 				{
 					m_chnState[chn].vuMeterOld = 0;
 					DrawChannelVUMeter(m_offScreenDC, rect.left, rect.bottom, chn);
@@ -1351,6 +1366,93 @@ std::optional<int> CViewPattern::DrawDefaultVolume(const ModCommand &m) const
 	if(m.instr == 0 || m.volcmd != VOLCMD_NONE || m.command == CMD_VOLUME || m.command == CMD_VOLUME8)
 		return std::nullopt;
 	return GetDefaultVolume(m, 0);
+}
+
+
+// Осциллограф в шапке канала: волна во всю кнопку, имя поверх неё.
+void CViewPattern::DrawChannelScope(HDC hdc, const CRect &rect, CHANNELINDEX chn, const char *label)
+{
+	if(rect.Width() < 4 || rect.Height() < 4)
+		return;
+	CMainFrame *main = CMainFrame::GetMainFrame();
+	if(main == nullptr)
+		return;
+	const ChannelScopes &scopes = main->GetChannelScopes();
+
+	CRect inner = rect;
+	inner.DeflateRect(1, 1);
+	::SetDCBrushColor(hdc, RGB(0x12, 0x14, 0x1C));
+	::FillRect(hdc, inner, GetStockBrush(DC_BRUSH));
+
+	constexpr uint32 Span = 1024;
+	m_scopeSamples.resize(Span);
+	const bool haveData = scopes.ReadLatest(chn, m_scopeSamples.data(), Span);
+	float peak = 0.0f;
+	if(haveData)
+	{
+		for(uint32 i = 0; i < Span; i++)
+			peak = std::max(peak, std::fabs(m_scopeSamples[i]));
+	}
+	// Усиление своё у каждого канала: одна нота чипа тише полной шкалы в
+	// десятки раз и без этого была бы чертой посреди кнопки.
+	if(chn < m_scopeGain.size())
+	{
+		float &gain = m_scopeGain[chn];
+		if(gain <= 0.0f)
+			gain = 1.0f;
+		const float wanted = (peak > 0.0001f) ? 0.45f / peak : gain;
+		gain = (wanted < gain) ? wanted : gain + (wanted - gain) * 0.08f;
+		gain = std::clamp(gain, 0.2f, 400.0f);
+	}
+	const float gain = (chn < m_scopeGain.size()) ? m_scopeGain[chn] : 1.0f;
+
+	const int middle = inner.top + inner.Height() / 2;
+	HPEN pen = ::CreatePen(PS_SOLID, 1, (peak > 0.0001f) ? RGB(0x60, 0xE8, 0x90) : RGB(0x38, 0x4C, 0x42));
+	HGDIOBJ oldPen = ::SelectObject(hdc, pen);
+	if(!haveData || peak <= 0.0f)
+	{
+		::MoveToEx(hdc, inner.left, middle, nullptr);
+		::LineTo(hdc, inner.right, middle);
+	} else
+	{
+		// Начало картинки ищется по переходу через ноль, иначе волна едет.
+		uint32 start = 0;
+		for(uint32 i = 1; i < Span / 2; i++)
+		{
+			if(m_scopeSamples[i - 1] <= 0.0f && m_scopeSamples[i] > 0.0f)
+			{
+				start = i;
+				break;
+			}
+		}
+		const uint32 visible = Span - start;
+		m_scopePoints.resize(inner.Width());
+		for(int x = 0; x < inner.Width(); x++)
+		{
+			const uint32 at = start + static_cast<uint32>(static_cast<uint64>(x) * visible / std::max(inner.Width(), 1));
+			const float value = m_scopeSamples[std::min(at, Span - 1)] * gain;
+			const int y = middle - static_cast<int>(value * inner.Height() * 0.5f);
+			m_scopePoints[x] = POINT{inner.left + x, std::clamp<int>(y, inner.top, inner.bottom - 1)};
+		}
+		::Polyline(hdc, m_scopePoints.data(), static_cast<int>(m_scopePoints.size()));
+	}
+	::SelectObject(hdc, oldPen);
+	::DeleteObject(pen);
+
+	// Имя канала поверх волны: тёмная подложка под текстом, чтобы читалось на
+	// любой картинке.
+	if(label != nullptr && label[0] != 0)
+	{
+		const int oldMode = ::SetBkMode(hdc, TRANSPARENT);
+		const COLORREF oldColor = ::SetTextColor(hdc, RGB(0x00, 0x00, 0x00));
+		CRect text = inner;
+		::OffsetRect(&text, 1, 1);
+		::DrawTextA(hdc, label, -1, &text, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+		::SetTextColor(hdc, RGB(0xE0, 0xE8, 0xF0));
+		::DrawTextA(hdc, label, -1, &inner, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+		::SetTextColor(hdc, oldColor);
+		::SetBkMode(hdc, oldMode);
+	}
 }
 
 

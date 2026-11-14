@@ -39,11 +39,15 @@ private:
 		std::atomic<uint32> written{0};  // Публикуется раз в блок
 	};
 	std::array<Lane, Channels> m_lanes;
-	std::atomic<bool> m_enabled{false};
+	// Смотрящих бывает несколько — сетка на вкладке Chips и шапки каналов в
+	// редакторе, — поэтому не флаг, а счётчик: иначе закрытие одного окна
+	// гасило бы картинку в другом.
+	std::atomic<int> m_users{0};
 
 public:
-	void SetEnabled(bool enabled) { m_enabled.store(enabled, std::memory_order_release); }
-	bool IsEnabled() const { return m_enabled.load(std::memory_order_acquire); }
+	void AddUser() { m_users.fetch_add(1, std::memory_order_acq_rel); }
+	void RemoveUser() { if(m_users.load(std::memory_order_acquire) > 0) m_users.fetch_sub(1, std::memory_order_acq_rel); }
+	bool IsEnabled() const { return m_users.load(std::memory_order_acquire) > 0; }
 
 	// Добавить отсчёт канала. Вызывается из микшера на каждый отсчёт, поэтому
 	// здесь нет ни атомарных операций, ни ветвлений сверх необходимого.

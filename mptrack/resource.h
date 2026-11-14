@@ -1130,6 +1130,7 @@
 #define ID_PATTERNDETAIL_VOLUME         32892
 #define ID_PATTERNDETAIL_EFFECT         32893
 #define ID_PATTERNDETAIL_EFFECT2        44657
+#define ID_PATTERN_CHANNELSCOPE        44658
 #define ID_INSTRUMENT_DUPLICATE         32894
 #define ID_PATTERN_AMPLIFY              32895
 #define ID_MODTREE_MUTE                 32896
@@ -1370,7 +1371,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_3D_CONTROLS                     1
 #define _APS_NEXT_RESOURCE_VALUE        546
-#define _APS_NEXT_COMMAND_VALUE         44658
+#define _APS_NEXT_COMMAND_VALUE         44659
 #define _APS_NEXT_CONTROL_VALUE         2654
 #define _APS_NEXT_SYMED_VALUE           901
 #endif

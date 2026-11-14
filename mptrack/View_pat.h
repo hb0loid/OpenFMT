@@ -309,6 +309,13 @@ public:
 	void DrawInstrument(int x, int y, UINT instr);
 	void DrawVolumeCommand(int x, int y, const ModCommand &mc, std::optional<int> defaultVolume, bool hex);
 	void DrawChannelVUMeter(HDC hdc, int x, int y, UINT nChn);
+	// Осциллограф в шапке канала вместо столбиков громкости.
+	void DrawChannelScope(HDC hdc, const CRect &rect, CHANNELINDEX chn, const char *label);
+	std::vector<float> m_scopeSamples;
+	std::vector<POINT> m_scopePoints;
+	std::array<float, 256> m_scopeGain{};
+	// Отмечено ли это окно как смотрящее на звук по каналам.
+	bool m_scopeUser = false;
 	void UpdateAllVUMeters(Notification *pnotify);
 	void DrawDragSel(HDC hdc);
 	void OnDrawDragSel();
@@ -467,6 +474,7 @@ protected:
 	afx_msg LRESULT OnRecordPlugParamChange(WPARAM, LPARAM);
 	afx_msg LRESULT OnCustomKeyMsg(WPARAM, LPARAM);
 	afx_msg void OnClearSelectionFromMenu();
+	afx_msg void OnToggleChannelScope();
 	afx_msg void OnSelectInstrument(UINT nid);
 	afx_msg void OnSelectPCNoteParam(UINT nid);
 	afx_msg void OnRunScript();
