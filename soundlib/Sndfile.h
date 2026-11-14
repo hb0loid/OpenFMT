@@ -822,6 +822,7 @@ public:
 	static ProbeResult ProbeFileHeaderFC(MemoryFileReader file, const uint64 *pfilesize);
 	static ProbeResult ProbeFileHeaderFMT(MemoryFileReader file, const uint64 *pfilesize);
 	static ProbeResult ProbeFileHeaderFUR(MemoryFileReader file, const uint64 *pfilesize);
+	static ProbeResult ProbeFileHeaderVGM(MemoryFileReader file, const uint64 *pfilesize);
 	static ProbeResult ProbeFileHeaderFTM(MemoryFileReader file, const uint64 *pfilesize);
 	static ProbeResult ProbeFileHeaderGDM(MemoryFileReader file, const uint64 *pfilesize);
 	static ProbeResult ProbeFileHeaderGMC(MemoryFileReader file, const uint64 *pfilesize);
@@ -890,6 +891,7 @@ public:
 	bool ReadFC(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
 	bool ReadFMT(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
 	bool ReadFUR(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
+	bool ReadVGM(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
 	bool ReadFTM(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
 	bool ReadGDM(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
 	bool ReadGMC(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);

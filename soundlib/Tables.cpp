@@ -80,6 +80,8 @@ static constexpr ModFormatInfo modFormatInfo[] =
 	{ UL_("Future Composer"),                    "fc14" },
 	{ UL_("FM Tracker"),                         "fmt" },
 	{ UL_("Furnace"),                            "fur" },
+	{ UL_("VGM register log"),                   "vgm" },
+	{ UL_("VGM register log"),                   "vgz" },
 	{ UL_("ProTracker"),                         "fst" },
 	{ UL_("Face The Music"),                     "ftm" },
 	{ UL_("Imago Orpheus"),                      "imf" },
