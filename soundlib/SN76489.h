@@ -7,6 +7,7 @@
 
 #include "ModChannel.h"
 #include "Snd_defs.h"
+#include "ChannelScopes.h"
 #include "BlipKernel.h"
 
 OPENMPT_NAMESPACE_BEGIN
@@ -289,7 +290,7 @@ public:
 		return true;
 	}
 
-	void Mix(int32 *target, size_t count, uint32 factor, const ModChannel *channels, uint16 chipVolume)
+	void Mix(int32 *target, size_t count, uint32 factor, const ModChannel *channels, uint16 chipVolume, ChannelScopes *scopes = nullptr)
 	{
 		constexpr double level[] = {0.0, 0.03981, 0.05012, 0.06310, 0.07943, 0.1, 0.12589, 0.15849,
 			0.19953, 0.25119, 0.31623, 0.39811, 0.50119, 0.63096, 0.79433, 1.0};
@@ -341,6 +342,12 @@ public:
 					voice.dc += 0.002 * (signal - voice.dc);
 					target[2 * i] += static_cast<int32>((signal - voice.dc) * left[lane]);
 					target[2 * i + 1] += static_cast<int32>((signal - voice.dc) * right[lane]);
+					if(scopes != nullptr && voice.channel != CHANNELINDEX_INVALID)
+					{
+						// В тех же единицах, что и общий осциллограф.
+						scopes->Push(voice.channel, static_cast<float>(
+							(signal - voice.dc) * (left[lane] + right[lane]) * 0.5 / 134217728.0));
+					}
 				}
 			}
 		}

@@ -90,7 +90,7 @@ public:
 
 	void Initialize(uint32 sampleRate);
 	// chipVolume — массив на ChipKinds элементов, громкость каждого чипа в 8.8.
-	void Mix(int32 *buffer, size_t count, uint32 volumeFactorQ16, const ModChannel *channels, const uint16 *chipVolume);
+	void Mix(int32 *buffer, size_t count, uint32 volumeFactorQ16, const ModChannel *channels, const uint16 *chipVolume, class ChannelScopes *scopes = nullptr);
 
 	void NoteOff(CHANNELINDEX c);
 	void NoteCut(CHANNELINDEX c, bool unassign = true);

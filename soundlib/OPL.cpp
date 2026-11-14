@@ -61,12 +61,12 @@ void OPL::Initialize(uint32 sampleRate)
 }
 
 
-void OPL::Mix(int32 *target, size_t count, uint32 volumeFactorQ16, const ModChannel *channels, const uint16 *chipVolume)
+void OPL::Mix(int32 *target, size_t count, uint32 volumeFactorQ16, const ModChannel *channels, const uint16 *chipVolume, ChannelScopes *scopes)
 {
 	if(m_psg)
-		m_psg->Mix(target, count, volumeFactorQ16, channels, chipVolume[ChipPSG]);
+		m_psg->Mix(target, count, volumeFactorQ16, channels, chipVolume[ChipPSG], scopes);
 	if(m_opn2)
-		m_opn2->Mix(target, count, volumeFactorQ16, chipVolume);
+		m_opn2->Mix(target, count, volumeFactorQ16, chipVolume, scopes);
 	if(!m_isActive)
 		return;
 

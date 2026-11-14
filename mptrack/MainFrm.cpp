@@ -1544,6 +1544,9 @@ bool CMainFrame::PlayMod(CModDoc *pModDoc)
 	m_VUMeterInput = VUMeter();
 	m_VUMeterOutput = VUMeter();
 	m_scopeBuffer.Clear();
+	m_channelScopes.Clear();
+	// Микшер пишет в осциллографы по каналам только пока они включены вкладкой.
+	sndFile.m_channelScopes = &m_channelScopes;
 
 	UpdateMetronomeSamples();
 

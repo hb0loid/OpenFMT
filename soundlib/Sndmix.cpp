@@ -20,6 +20,7 @@
 #endif // MODPLUG_TRACKER
 #include "plugins/PlugInterface.h"
 #include "OPL.h"
+#include "ChannelScopes.h"
 
 OPENMPT_NAMESPACE_BEGIN
 
@@ -306,12 +307,18 @@ samplecount_t CSoundFile::Read(samplecount_t count, IAudioTarget &target, IAudio
 
 		if(m_opl)
 		{
-			m_opl->Mix(MixSoundBuffer, countChunk, m_OPLVolumeFactor * m_nVSTiVolume / 48, m_PlayState.Chn.data(), m_chipVolume.data());
+			// Осциллографы по каналам стоят денег только когда их видно.
+			ChannelScopes *const scopes = (m_channelScopes != nullptr && m_channelScopes->IsEnabled()) ? m_channelScopes : nullptr;
+			m_opl->Mix(MixSoundBuffer, countChunk, m_OPLVolumeFactor * m_nVSTiVolume / 48, m_PlayState.Chn.data(), m_chipVolume.data(), scopes);
 		}
 
 #ifndef NO_REVERB
 		m_Reverb.Process(MixSoundBuffer, ReverbSendBuffer, m_RvbROfsVol, m_RvbLOfsVol, countChunk);
 #endif  // NO_REVERB
+
+		// Осциллографы по каналам: отдать рисованию то, что набралось за блок.
+		if(m_channelScopes != nullptr && m_channelScopes->IsEnabled())
+			m_channelScopes->Publish();
 
 		if(m_loadedPlugins)
 		{

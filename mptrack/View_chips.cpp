@@ -20,6 +20,7 @@ OPENMPT_NAMESPACE_BEGIN
 // Номера нужны только внутри этого окна: какой ползунок двигают, видно по его
 // собственному окну, а не по номеру, и командами они не управляют.
 static constexpr UINT FirstSliderID = 0x4000;
+static constexpr UINT ScopeGridID = 0x4100;
 // Ход ползунка микросхемы: от тишины до вдвое громче, единица посередине.
 static constexpr int MaxChipVolume = ChipVolumeUnity * 2;
 // У сэмплов шкала своя, 0..255, и середина у неё 128 — столько же, сколько
@@ -146,6 +147,7 @@ void CViewChips::CreateStrips()
 		strip.value.Create(_T(""), WS_CHILD | WS_VISIBLE | SS_CENTER, empty, this);
 		strip.value.SendMessage(WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
 	}
+	m_scopes.Create(this, ScopeGridID);
 }
 
 
@@ -185,6 +187,13 @@ void CViewChips::LayoutStrips()
 		top += sliderHeight;
 		strip.value.SetWindowPos(nullptr, left, top, stripWidth, valueHeight, SWP_NOZORDER | SWP_NOACTIVATE);
 	}
+
+	// Осциллографы занимают всё, что осталось справа от полосок.
+	CRect client;
+	GetClientRect(&client);
+	const int stripsRight = margin + NumStrips * stripWidth + margin;
+	CRect scopes(stripsRight, margin, client.right - margin, client.bottom - margin);
+	m_scopes.Place(scopes, scopes.Width() > HighDPISupport::ScalePixels(120, m_hWnd));
 }
 
 

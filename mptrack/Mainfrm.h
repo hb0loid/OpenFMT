@@ -19,6 +19,7 @@
 #include "../soundlib/AudioCriticalSection.h"
 #include "../soundlib/AudioReadTarget.h"
 #include "ScopeBuffer.h"
+#include "../soundlib/ChannelScopes.h"
 #include "../soundlib/Sndfile.h"
 #include "mpt/audio/span.hpp"
 #include "mpt/mutex/mutex.hpp"
@@ -173,12 +174,16 @@ public:
 	VUMeter m_VUMeterOutput;
 	// Звук для осциллографа снимается там же, где уровень для индикатора.
 	ScopeBuffer m_scopeBuffer;
+	// Звук каждого канала отдельно: для осциллографов по каналам. Живёт здесь,
+	// а не во вкладке, чтобы переживать закрытие окна во время игры.
+	ChannelScopes m_channelScopes;
 
 	DWORD m_AudioThreadId = 0;
 	bool m_InNotifyHandler = false;
 
 public:
 	const ScopeBuffer &GetScopeBuffer() const { return m_scopeBuffer; }
+	ChannelScopes &GetChannelScopes() { return m_channelScopes; }
 
 private:
 

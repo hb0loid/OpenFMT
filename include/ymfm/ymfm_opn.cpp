@@ -2377,6 +2377,54 @@ void ym2612::write(uint32_t offset, uint8_t data)
 //  generate - generate one sample of sound
 //-------------------------------------------------
 
+//-------------------------------------------------
+//  generate_split - like generate(), but also
+//  hands back what each channel contributed
+//
+//  OpenMPT: осциллограф по каналам. Отдельные
+//  каналы здесь и так считаются — generate() их
+//  просто складывает, — поэтому отдать их наружу
+//  ничего не стоит.
+//-------------------------------------------------
+
+void ym2612::generate_split(output_data *output, output_data *channels)
+{
+	// clock the system
+	m_fm.clock(fm_engine::ALL_CHANNELS);
+
+	output->clear();
+	output_data temp;
+
+	int const last_fm_channel = m_dac_enable ? 5 : 6;
+	for (int chan = 0; chan < 6; chan++)
+		channels[chan].clear();
+	for (int chan = 0; chan < last_fm_channel; chan++)
+	{
+		m_fm.output(temp.clear(), 5, 256, 1 << chan);
+		int32_t left = dac_discontinuity(temp.data[0]);
+		int32_t right = dac_discontinuity(temp.data[1]);
+		channels[chan].data[0] = (left * 128) * 64 / (6 * 65);
+		channels[chan].data[1] = (right * 128) * 64 / (6 * 65);
+		output->data[0] += left;
+		output->data[1] += right;
+	}
+
+	if (m_dac_enable)
+	{
+		int32_t dacval = dac_discontinuity(int16_t(m_dac_data << 7) >> 7);
+		int32_t left = m_fm.regs().ch_output_0(0x102) ? dacval : dac_discontinuity(0);
+		int32_t right = m_fm.regs().ch_output_1(0x102) ? dacval : dac_discontinuity(0);
+		channels[5].data[0] = (left * 128) * 64 / (6 * 65);
+		channels[5].data[1] = (right * 128) * 64 / (6 * 65);
+		output->data[0] += left;
+		output->data[1] += right;
+	}
+
+	output->data[0] = (output->data[0] * 128) * 64 / (6 * 65);
+	output->data[1] = (output->data[1] * 128) * 64 / (6 * 65);
+}
+
+
 void ym2612::generate(output_data *output, uint32_t numsamples)
 {
 	for (uint32_t samp = 0; samp < numsamples; samp++, output++)

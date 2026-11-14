@@ -14,6 +14,7 @@
 
 #include "openmpt/all/BuildSettings.hpp"
 #include "Globals.h"
+#include "ChannelScopeGrid.h"
 #include "../soundlib/Snd_defs.h"
 #include <array>
 
@@ -58,6 +59,9 @@ protected:
 		int def = 0;
 	};
 	std::array<Strip, NumStrips> m_strips;
+	// Осциллографы по каналам живут под полосками: место справа от микшера
+	// всё равно пустовало, а смотреть на них надо вместе с балансом.
+	ChannelScopeGrid m_scopes;
 	bool m_created = false;
 	// Пока ползунок под пальцем, подпись ведётся от него, а не от песни: иначе
 	// подхват собственной правки дёргал бы цифру.

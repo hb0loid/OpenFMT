@@ -520,6 +520,25 @@ void ym2151::write(uint32_t offset, uint8_t data)
 //  generate - generate one sample of sound
 //-------------------------------------------------
 
+//-------------------------------------------------
+//  generate_split - как generate(), но ещё отдаёт
+//  вклад каждого канала (осциллограф OpenMPT)
+//-------------------------------------------------
+
+void ym2151::generate_split(output_data *output, output_data *channels)
+{
+	m_fm.clock(fm_engine::ALL_CHANNELS);
+	output->clear();
+	for (int chan = 0; chan < 8; chan++)
+	{
+		m_fm.output(channels[chan].clear(), 0, 32767, 1 << chan);
+		channels[chan].roundtrip_fp();
+		output->data[0] += channels[chan].data[0];
+		output->data[1] += channels[chan].data[1];
+	}
+}
+
+
 void ym2151::generate(output_data *output, uint32_t numsamples)
 {
 	for (uint32_t samp = 0; samp < numsamples; samp++, output++)

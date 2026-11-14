@@ -1004,6 +1004,9 @@ public:
 		std::optional<std::reference_wrapper<IMonitorInput>> inputMonitor = std::nullopt
 		);
 	samplecount_t ReadOneTick();
+	// Осциллографы по каналам: приёмник ставит трекер, микшер только пишет.
+	// Пока его нет, вся затея стоит одной проверки указателя.
+	class ChannelScopes *m_channelScopes = nullptr;
 private:
 	void CreateStereoMix(int count);
 	bool MixChannel(int count, ModChannel &chn, CHANNELINDEX channel, bool doMix);

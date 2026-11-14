@@ -760,6 +760,8 @@ public:
 
 	// generate one sample of sound
 	void generate(output_data *output, uint32_t numsamples = 1);
+	// OpenMPT: то же, но с выдачей вклада каждого канала (осциллограф).
+	void generate_split(output_data *output, output_data *channels);
 
 protected:
 	// simulate the DAC discontinuity

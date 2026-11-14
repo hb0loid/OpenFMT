@@ -12,6 +12,7 @@
 #pragma once
 
 #include "Snd_defs.h"
+#include "ChannelScopes.h"
 #include "ModChannel.h"
 #include "BlipKernel.h"
 #include "../include/ymfm/ymfm_opn.h"
@@ -60,6 +61,8 @@ private:
 		OPN2Patch source = DefaultOPN2Patch;
 		std::array<int16, 4> levels = {-1, -1, -1, -1};
 		CHANNELINDEX channel = CHANNELINDEX_INVALID;
+		// Последний отсчёт голоса для осциллографа по каналам.
+		double scopeValue = 0.0;
 		// Какому каналу голос принадлежал в прошлый раз. NoteCut снимает голос
 		// с канала, и следующая нота берёт его заново как чужой — а вместе со
 		// всем состоянием стирались бы и уровни операторов. У Furnace они
@@ -583,7 +586,7 @@ public:
 		return true;
 	}
 
-	void Mix(int32 *target, size_t count, uint32 volumeFactorQ16, const uint16 *chipVolume)
+	void Mix(int32 *target, size_t count, uint32 volumeFactorQ16, const uint16 *chipVolume, ChannelScopes *scopes = nullptr)
 	{
 		for(auto &chip : m_chips)
 		{
@@ -608,13 +611,33 @@ public:
 					if(chip.opm)
 					{
 						ymfm::ym2151::output_data sample;
-						chip.opm->generate(&sample);
+						if(scopes != nullptr)
+						{
+							// Осциллограф по каналам: ymfm и так считает каналы
+							// по отдельности, generate() их только складывает.
+							std::array<ymfm::ym2151::output_data, OPMChannels> voices{};
+							chip.opm->generate_split(&sample, voices.data());
+							for(uint8 v = 0; v < OPMChannels; v++)
+								chip.slots[v].scopeValue = (voices[v].data[0] + voices[v].data[1]) * 0.5;
+						} else
+						{
+							chip.opm->generate(&sample);
+						}
 						raw[0] = sample.data[0];
 						raw[1] = sample.data[1];
 					} else
 					{
 						ymfm::ym2612::output_data sample;
-						chip.opn->generate(&sample);
+						if(scopes != nullptr)
+						{
+							std::array<ymfm::ym2612::output_data, OPN2Channels> voices{};
+							chip.opn->generate_split(&sample, voices.data());
+							for(uint8 v = 0; v < OPN2Channels; v++)
+								chip.slots[v].scopeValue = (voices[v].data[0] + voices[v].data[1]) * 0.5;
+						} else
+						{
+							chip.opn->generate(&sample);
+						}
 						raw[0] = sample.data[0];
 						raw[1] = sample.data[1];
 					}
@@ -652,6 +675,17 @@ public:
 				}
 				for(size_t ch = 0; ch < 2; ch++)
 					target[2 * i + ch] += static_cast<int32>(chip.lanes[ch].Pop() * gain);
+				if(scopes != nullptr)
+				{
+					// Отсчёт голоса в тех же единицах, что и общий осциллограф:
+					// вклад канала в выход, приведённый к единице.
+					for(uint8 v = 0; v < chip.NumChannels(); v++)
+					{
+						const CHANNELINDEX channel = chip.slots[v].channel;
+						if(channel != CHANNELINDEX_INVALID)
+							scopes->Push(channel, static_cast<float>(chip.slots[v].scopeValue * gain / 134217728.0));
+					}
+				}
 			}
 		}
 	}
