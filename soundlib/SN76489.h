@@ -7,6 +7,7 @@
 
 #include "ModChannel.h"
 #include "Snd_defs.h"
+#include "BlipKernel.h"
 
 OPENMPT_NAMESPACE_BEGIN
 
@@ -57,6 +58,8 @@ class SN76489
 		int16 pitchOffset = 0;
 		int32 pan = 128;
 		double dc = 0;
+		// Ступеньки, ещё не дошедшие до выхода.
+		Blip::Lane lane;
 	};
 
 	struct Chip
@@ -74,7 +77,12 @@ class SN76489
 			preset = newPreset;
 		}
 
-		void ClockTick(std::array<unsigned, 4> &high)
+		// Возвращает, что изменилось на этом такте: +1 если дорожка поднялась,
+		// -1 если опустилась. Раньше тики просто считались и усреднялись внутри
+		// выходного отсчёта, а усреднение — слабый фильтр: меандр несёт
+		// гармоники далеко за половину частоты микшера, и они заворачивались
+		// обратно.
+		void ClockTick(std::array<int, 4> &change)
 		{
 			bool thirdRising = false;
 			for(size_t lane = 0; lane < 3; lane++)
@@ -85,17 +93,19 @@ class SN76489
 					voice.counter = voice.period;
 					voice.high = !voice.high;
 					thirdRising = lane == 2 && voice.high;
+					change[lane] = voice.high ? 1 : -1;
 				}
-				high[lane] += voice.high;
 			}
 			const bool noiseClock = (mode & 2) ? thirdRising : --noiseCounter == 0;
 			if(noiseClock)
 			{
 				noiseCounter = static_cast<uint16>(32u << preset);
 				const uint16 feedback = static_cast<uint16>((noise ^ ((mode & 1) ? noise >> 3 : 0)) & 1);
+				const uint16 before = noise & 1;
 				noise = static_cast<uint16>((noise >> 1) | (feedback << 15));
+				if(before != (noise & 1))
+					change[3] = (noise & 1) ? 1 : -1;
 			}
-			high[3] += noise & 1;
 		}
 	};
 
@@ -309,19 +319,25 @@ public:
 			for(size_t i = 0; i < count; i++)
 			{
 				chip.phase += Clock;
-				std::array<unsigned, 4> high{};
-				unsigned ticks = 0;
 				while(chip.phase >= static_cast<uint64>(m_rate) * 16)
 				{
 					chip.phase -= static_cast<uint64>(m_rate) * 16;
-					chip.ClockTick(high);
-					ticks++;
+					std::array<int, 4> change{};
+					chip.ClockTick(change);
+					// Где внутри выходного отсчёта случился этот такт: остаток
+					// накопителя — время, прошедшее с него.
+					const double position = std::clamp(
+						1.0 - static_cast<double>(chip.phase) / Clock, 0.0, 0.999999);
+					for(size_t lane = 0; lane < 4; lane++)
+					{
+						if(change[lane])
+							chip.voices[lane].lane.Add(change[lane], position);
+					}
 				}
 				for(size_t lane = 0; lane < 4; lane++)
 				{
 					auto &voice = chip.voices[lane];
-					const bool current = lane == 3 ? (chip.noise & 1) != 0 : voice.high;
-					const double signal = ticks ? static_cast<double>(high[lane]) / ticks : (current ? 1.0 : 0.0);
+					const double signal = voice.lane.Pop();
 					voice.dc += 0.002 * (signal - voice.dc);
 					target[2 * i] += static_cast<int32>((signal - voice.dc) * left[lane]);
 					target[2 * i + 1] += static_cast<int32>((signal - voice.dc) * right[lane]);

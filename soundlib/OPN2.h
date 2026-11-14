@@ -13,6 +13,7 @@
 
 #include "Snd_defs.h"
 #include "ModChannel.h"
+#include "BlipKernel.h"
 #include "../include/ymfm/ymfm_opn.h"
 #include "../include/ymfm/ymfm_opm.h"
 
@@ -85,12 +86,9 @@ private:
 		uint64 phase = 0;
 		std::array<double, 2> previous{}, current{}, dc{};
 		double dcCoef = 0.0;
-		static constexpr uint32 HistorySize = 128, Taps = 64, Phases = 64;
-		static_assert(HistorySize >= Taps);
-		std::array<std::array<double, 2>, HistorySize> history{};
-		uint32 historyAt = 0;
-		std::array<double, Phases * Taps> filter{};
-		uint32 filterFor = 0;
+		// Левая и правая дорожки: в них копятся ступеньки от изменений выхода
+		// микросхемы, из них же берётся готовый отсчёт на частоте микшера.
+		std::array<Blip::Lane, 2> lanes;
 		size_t next = 0;
 		bool isOPM = false;
 		bool keyPending = false;  // Хоть у одного голоса ключ ждёт постановки
@@ -197,10 +195,8 @@ private:
 		chip.previous.fill(0.0);
 		chip.current.fill(0.0);
 		chip.dc.fill(0.0);
-		for(auto &sample : chip.history)
-			sample.fill(0.0);
-		chip.historyAt = 0;
-		chip.filterFor = 0;
+		for(auto &lane : chip.lanes)
+			lane.Reset();
 		// One-pole high pass at a fixed audio frequency, derived from the rate the chip is
 		// actually clocked at rather than a hand-picked coefficient.
 		constexpr double twoPi = 6.283185307179586;
@@ -587,38 +583,6 @@ public:
 		return true;
 	}
 
-	static void BuildFilter(Chip &chip, uint32 rate)
-	{
-		if(chip.filterFor == rate || !chip.rate || !rate)
-			return;
-		chip.filterFor = rate;
-		constexpr double pi = 3.14159265358979323846;
-		constexpr int half = Chip::Taps / 2;
-		const double cutoff = std::min(1.0, static_cast<double>(rate) / chip.rate) * 0.90;
-		for(uint32 phase = 0; phase < Chip::Phases; phase++)
-		{
-			const double offset = static_cast<double>(phase) / Chip::Phases;
-			double sum = 0.0;
-			for(uint32 tap = 0; tap < Chip::Taps; tap++)
-			{
-				const double u = (half - 1) + offset - static_cast<double>(tap);
-				const double x = u * cutoff;
-				const double sinc = (std::abs(x) < 1e-9) ? 1.0 : std::sin(pi * x) / (pi * x);
-				const double w = u / half;
-				const double window = (std::abs(w) >= 1.0) ? 0.0
-					: 0.42 + 0.5 * std::cos(pi * w) + 0.08 * std::cos(2.0 * pi * w);
-				const double value = sinc * window;
-				chip.filter[phase * Chip::Taps + tap] = value;
-				sum += value;
-			}
-			if(sum != 0.0)
-			{
-				for(uint32 tap = 0; tap < Chip::Taps; tap++)
-					chip.filter[phase * Chip::Taps + tap] /= sum;
-			}
-		}
-	}
-
 	void Mix(int32 *target, size_t count, uint32 volumeFactorQ16, const uint16 *chipVolume)
 	{
 		for(auto &chip : m_chips)
@@ -633,7 +597,6 @@ public:
 
 			const double gain = static_cast<double>(MixerReference) * volumeFactorQ16 / 65536.0
 				* chipVolume[chip.isOPM ? ChipOPM : ChipOPN2] / ChipVolumeUnity;
-			BuildFilter(chip, m_rate);
 			for(size_t i = 0; i < count; i++)
 			{
 				chip.phase += chip.rate;
@@ -661,8 +624,12 @@ public:
 						chip.dc[ch] += chip.dcCoef * (raw[ch] - chip.dc[ch]);
 						chip.current[ch] = raw[ch] - chip.dc[ch];
 					}
-					chip.history[chip.historyAt & (Chip::HistorySize - 1)] = chip.current;
-					chip.historyAt++;
+					// Где внутри выходного отсчёта оказался этот отсчёт
+					// микросхемы: остаток накопителя — время, прошедшее с него.
+					const double position = std::clamp(
+						1.0 - static_cast<double>(chip.phase) / chip.rate, 0.0, 0.999999);
+					for(size_t ch = 0; ch < 2; ch++)
+						chip.lanes[ch].Add(chip.current[ch] - chip.previous[ch], position);
 					// Отсчёт со снятым ключом отработан, теперь можно ставить
 					// ключ: огибающая начнётся заново.
 					if(chip.keyPending)
@@ -683,17 +650,8 @@ public:
 						chip.keyPending = pending;
 					}
 				}
-				const double behind = 1.0 - static_cast<double>(chip.phase) / m_rate;
-				const uint32 phase = std::min<uint32>(Chip::Phases - 1,
-					static_cast<uint32>(behind * Chip::Phases));
-				const double *weights = chip.filter.data() + phase * Chip::Taps;
 				for(size_t ch = 0; ch < 2; ch++)
-				{
-					double sample = 0.0;
-					for(uint32 tap = 0; tap < Chip::Taps; tap++)
-						sample += weights[tap] * chip.history[(chip.historyAt - 1 - tap) & (Chip::HistorySize - 1)][ch];
-					target[2 * i + ch] += static_cast<int32>(sample * gain);
-				}
+					target[2 * i + ch] += static_cast<int32>(chip.lanes[ch].Pop() * gain);
 			}
 		}
 	}
