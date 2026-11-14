@@ -1201,7 +1201,19 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		// своей громкости нет. Нот без громкости в треках кратно больше, чем с
 		// ней: на `mushroom hill alt 2` первый канал даёт 23 ноты с громкостью
 		// против 342 без.
-		std::vector<int> currentVolume(voices.size(), -1);
+		// Громкость канала считается здесь же и проставляется каждой ноте явно.
+		// У Furnace нота без громкости играет на текущей громкости канала, и
+		// пустая колонка значит «как было». Так точнее по оригиналу, но модуль
+		// перестаёт описывать сам себя: глядя на строку, нельзя сказать, как
+		// громко она прозвучит, надо знать всю историю канала. Это дважды
+		// подводило — при перемотке и при подстановке, — и мешает править
+		// вручную. Поэтому импорт ведёт громкость сам, теми же единицами и той
+		// же арифметикой, что и движок (0-256 с дробным остатком), и пишет её в
+		// колонку. Повторно используемых паттернов у нас нет: на каждую позицию
+		// в порядке создаётся свой, поэтому записанное число верно всегда.
+		std::vector<int> currentVolume(voices.size(), 256);
+		std::vector<int> volumeFraction(voices.size(), 0);
+		std::vector<uint8> volumeSlide(voices.size(), 0);
 		Order().resize(orders);
 		size_t phase = 0;
 		for(ORDERINDEX order = 0; order < orders; order++)
@@ -1280,16 +1292,15 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 						{
 							cell.vol = static_cast<uint8>((value * 64 + maxVolume / 2) / maxVolume);
 						}
-						currentVolume[c] = cell.vol;
-					} else if(cell.IsNote() && currentVolume[c] < 0)
+						currentVolume[c] = cell.vol * 4;
+						volumeFraction[c] = 0;
+					} else if(cell.IsNote())
 					{
-						// Первой ноте канала громкость нужна: до неё в канале
-						// ничего не задано. Дальше её не подставляем — иначе
-						// каждая нота отменяла бы набранное скольжением, а у
-						// Furnace нота без громкости наследует текущую.
+						// Нота без громкости: проставляем ту, что набралась.
 						cell.volcmd = VOLCMD_VOLUME;
-						cell.vol = 64;
-						currentVolume[c] = 64;
+						cell.vol = static_cast<ModCommand::VOL>(std::clamp((currentVolume[c] + 2) / 4, 0, 64));
+						currentVolume[c] = cell.vol * 4;
+						volumeFraction[c] = 0;
 					}
 					for(const auto &[fx, param] : sourceRow.effects)
 					{
@@ -1443,6 +1454,31 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 					{
 						cell.instr = static_cast<ModCommand::INSTR>(ins);
 						lastInstrument[c] = ins;
+					}
+					// Скольжение громкости едет каждый тик строки, и считать его
+					// надо той же арифметикой, что в движке: шаг там мельче нашей
+					// единицы громкости, поэтому копится дробный остаток, а шкала
+					// берётся у чипа — 15 у PSG, 255 у сэмплерного, 127 у
+					// остальных.
+					if(cell.command == CMD_VOLUMESLIDE)
+						volumeSlide[c] = cell.param;
+					if(volumeSlide[c])
+					{
+						const int up = volumeSlide[c] >> 4, down = volumeSlide[c] & 0x0f;
+						const int step = up ? up : -down;
+						const int chipScale = (voice == FurVoice::PSG || voice == FurVoice::Noise) ? 15
+							: (voice == FurVoice::PCM) ? 255 : 127;
+						const unsigned ticks = std::max(1u, static_cast<unsigned>(speeds[phase % speeds.size()]) * timeBase);
+						for(unsigned tick = 0; tick < ticks; tick++)
+						{
+							volumeFraction[c] += step * 16384 / chipScale;
+							const int whole = volumeFraction[c] / 256;
+							if(whole)
+							{
+								volumeFraction[c] -= whole * 256;
+								currentVolume[c] = std::clamp(currentVolume[c] + whole, 0, 256);
+							}
+						}
 					}
 					// Задержка ноты у Furnace отсчитывается тиками и спокойно
 					// переваливает за строку: по умолчанию там не отбрасывается
