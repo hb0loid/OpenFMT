@@ -1065,7 +1065,18 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 			if (m->IsEmpty() && ((!col_sel) || (col_sel == COLUMN_BITS_ALLCOLUMNS)) && allColumnsConsecutive)
 			{
 				m_Dib.SetTextColor(tx_col, bk_col);
-				m_Dib.TextBlt(xbmp, 0, nColumnWidth - SEPARATOR_WIDTH, m_szCell.cy, pfnt->nClrX, pfnt->nClrY, pfnt->dib);
+				// "Чистый" образец строки в картинке шрифта нарисован на пять
+				// колонок и кончается разделителем, поэтому пустая ячейка
+				// рисуется двумя кусками: сначала обычная часть, затем вторая
+				// пара колонок берёт точки из части первого эффекта.
+				const int plainWidth = static_cast<int>(pfnt->nEltWidths[0] + pfnt->nEltWidths[1] + pfnt->nEltWidths[2] + pfnt->nEltWidths[3] + pfnt->nEltWidths[4]);
+				m_Dib.TextBlt(xbmp, 0, plainWidth, m_szCell.cy, pfnt->nClrX, pfnt->nClrY, pfnt->dib);
+				const int extraWidth = static_cast<int>(nColumnWidth - SEPARATOR_WIDTH) - plainWidth;
+				if(extraWidth > 0)
+				{
+					const int xClearFx = static_cast<int>(pfnt->nEltWidths[0] + pfnt->nEltWidths[1] + pfnt->nEltWidths[2]);
+					m_Dib.TextBlt(xbmp + plainWidth, 0, extraWidth, m_szCell.cy, pfnt->nClrX + xClearFx, pfnt->nClrY, pfnt->dib);
+				}
 				goto DoBlit;
 			}
 
@@ -1244,9 +1255,12 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 				xClear += pfnt->nEltWidths[3] + pfnt->nEltWidths[4];
 			}
 			// Второй эффект строки: рисуется тем же способом, что и первый,
-			// только берётся из дополнительного слота ячейки.
+			// только берётся из дополнительного слота ячейки. Пустая ячейка
+			// берёт точки из той же части шрифта, что и первый эффект: дальше
+			// по строке "чистого" образца в картинке шрифта уже нет.
 			if (m_visibleColumns[PatternCursor::effectColumn2])
 			{
+				const int xClearFx = static_cast<int>(pfnt->nEltWidths[0] + pfnt->nEltWidths[1] + pfnt->nEltWidths[2]);
 				const auto [command2, parameter2] = m->GetEffect(1);
 				fx_col = row_col;
 				if (!m->IsPcNote() && command2 != CMD_NONE && command2 < MAX_EFFECTS && patternSetupFlags[PatternSetup::EffectHighlight])
@@ -1276,7 +1290,7 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 						DrawLetter(xbmp + x, 0, n, pfnt->nEltWidths[5], pfnt->nCmdOfs);
 					} else
 					{
-						m_Dib.TextBlt(xbmp + x, 0, pfnt->nEltWidths[5], pfnt->spacingY, pfnt->nClrX + xClear, pfnt->nClrY, pfnt->dib);
+						m_Dib.TextBlt(xbmp + x, 0, pfnt->nEltWidths[5], pfnt->spacingY, pfnt->nClrX + xClearFx, pfnt->nClrY, pfnt->dib);
 					}
 					DrawPadding(m_Dib, pfnt, xbmp + x, 0, PatternCursor::effectColumn2);
 				}
@@ -1298,7 +1312,7 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 						m_Dib.TextBlt(xbmp + x + pfnt->nParamHiWidth, 0, pfnt->nEltWidths[6] - pfnt->padding[6] - pfnt->nParamHiWidth, m_szCell.cy, pfnt->nNumX + pfnt->paramLoMargin, pfnt->nNumY + (parameter2 & 0x0F) * pfnt->spacingY, pfnt->dib);
 					} else
 					{
-						m_Dib.TextBlt(xbmp + x, 0, pfnt->nEltWidths[6], m_szCell.cy, pfnt->nClrX + xClear, pfnt->nClrY, pfnt->dib);
+						m_Dib.TextBlt(xbmp + x, 0, pfnt->nEltWidths[6], m_szCell.cy, pfnt->nClrX + xClearFx + pfnt->nEltWidths[3], pfnt->nClrY, pfnt->dib);
 					}
 					DrawPadding(m_Dib, pfnt, xbmp + x, 0, PatternCursor::paramColumn2);
 				}
