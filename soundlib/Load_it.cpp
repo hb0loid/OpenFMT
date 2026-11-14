@@ -1764,6 +1764,57 @@ bool CSoundFile::SaveIT(std::ostream &f, const mpt::PathString &filename, bool c
 	// Edit History. Just calculate the size of this extra block for now.
 	dwExtra += SaveITEditHistory(*this, nullptr);
 
+	// Дополнительные эффекты строки: "FFX2". В ячейке IT эффект один, поэтому
+	// всё, что не поместилось, пишется отдельным куском — пара координат,
+	// номер слота, команда и параметр. Читатель, который этой сигнатуры не
+	// знает, просто её не найдёт и прочтёт файл как прежде. Собирается кусок
+	// здесь, потому что его длина должна попасть в dwExtra: от неё считаются
+	// смещения инструментов, сэмплов и паттернов.
+	std::vector<std::byte> extraEffectsChunk;
+	if(!compatibilityExport)
+	{
+		std::vector<std::byte> records;
+		uint32 extraCount = 0;
+		for(PATTERNINDEX pat = 0; pat < Patterns.Size(); pat++)
+		{
+			if(!Patterns.IsValidPat(pat))
+				continue;
+			const auto &pattern = Patterns[pat];
+			for(ROWINDEX row = 0; row < pattern.GetNumRows(); row++)
+			{
+				for(CHANNELINDEX chn = 0; chn < pattern.GetNumChannels(); chn++)
+				{
+					const ModCommand &m = *pattern.GetpModCommand(row, chn);
+					for(uint8 slot = 1; slot < ModCommand::Effects(); slot++)
+					{
+						const auto [command, param] = m.GetEffect(slot);
+						if(command == CMD_NONE)
+							continue;
+						const uint8 record[] = {
+							static_cast<uint8>(pat & 0xff), static_cast<uint8>(pat >> 8),
+							static_cast<uint8>(row & 0xff), static_cast<uint8>(row >> 8),
+							static_cast<uint8>(chn & 0xff), static_cast<uint8>(chn >> 8),
+							slot, static_cast<uint8>(command), param};
+						for(uint8 value : record)
+							records.push_back(mpt::byte_cast<std::byte>(value));
+						extraCount++;
+					}
+				}
+			}
+		}
+		if(extraCount)
+		{
+			std::ostringstream header(std::ios::out | std::ios::binary);
+			mpt::IO::WriteVarInt(header, extraCount);
+			const std::string headerBytes = std::move(header).str();
+			extraEffectsChunk.reserve(headerBytes.size() + records.size());
+			for(char ch : headerBytes)
+				extraEffectsChunk.push_back(mpt::byte_cast<std::byte>(static_cast<uint8>(ch)));
+			extraEffectsChunk.insert(extraEffectsChunk.end(), records.begin(), records.end());
+			dwExtra += static_cast<uint32>(extraEffectsChunk.size()) + 8;
+		}
+	}
+
 	// Comments
 	uint16 msglength = 0;
 	if(!m_songMessage.empty())
@@ -1818,51 +1869,15 @@ bool CSoundFile::SaveIT(std::ostream &f, const mpt::PathString &filename, bool c
 		}
 	}
 
-	// Дополнительные эффекты строки: "FFX2". В ячейке IT эффект один, поэтому
-	// всё, что не поместилось, пишется отдельным куском — пара координат,
-	// номер слота, команда и параметр. Читатель, который этой сигнатуры не
-	// знает, просто её не найдёт и прочтёт файл как прежде.
-	if(!compatibilityExport)
+	// Дополнительные эффекты строки: "FFX2". Кусок уже собран выше, вместе с
+	// подсчётом размера заголовочной части файла: смещения инструментов,
+	// сэмплов и паттернов считаются от неё, поэтому записать кусок, не
+	// прибавив его длину к dwExtra, значит сдвинуть весь файл.
+	if(!extraEffectsChunk.empty())
 	{
-		std::vector<std::byte> extraEffects;
-		uint32 extraCount = 0;
-		for(PATTERNINDEX pat = 0; pat < Patterns.Size(); pat++)
-		{
-			if(!Patterns.IsValidPat(pat))
-				continue;
-			const auto &pattern = Patterns[pat];
-			for(ROWINDEX row = 0; row < pattern.GetNumRows(); row++)
-			{
-				for(CHANNELINDEX chn = 0; chn < pattern.GetNumChannels(); chn++)
-				{
-					const ModCommand &m = *pattern.GetpModCommand(row, chn);
-					for(uint8 slot = 1; slot < ModCommand::Effects(); slot++)
-					{
-						const auto [command, param] = m.GetEffect(slot);
-						if(command == CMD_NONE)
-							continue;
-						const uint8 record[] = {
-							static_cast<uint8>(pat & 0xff), static_cast<uint8>(pat >> 8),
-							static_cast<uint8>(row & 0xff), static_cast<uint8>(row >> 8),
-							static_cast<uint8>(chn & 0xff), static_cast<uint8>(chn >> 8),
-							slot, static_cast<uint8>(command), param};
-						for(uint8 value : record)
-							extraEffects.push_back(mpt::byte_cast<std::byte>(value));
-						extraCount++;
-					}
-				}
-			}
-		}
-		if(extraCount)
-		{
-			std::ostringstream header(std::ios::out | std::ios::binary);
-			mpt::IO::WriteVarInt(header, extraCount);
-			const std::string headerBytes = std::move(header).str();
-			mpt::IO::WriteRaw(f, "FFX2", 4);
-			mpt::IO::WriteIntLE<uint32>(f, static_cast<uint32>(headerBytes.size() + extraEffects.size()));
-			mpt::IO::WriteRaw(f, headerBytes.data(), headerBytes.size());
-			mpt::IO::WriteRaw(f, reinterpret_cast<const char *>(extraEffects.data()), extraEffects.size());
-		}
+		mpt::IO::WriteRaw(f, "FFX2", 4);
+		mpt::IO::WriteIntLE<uint32>(f, static_cast<uint32>(extraEffectsChunk.size()));
+		mpt::IO::WriteRaw(f, reinterpret_cast<const char *>(extraEffectsChunk.data()), extraEffectsChunk.size());
 	}
 
 	// Writing mix plugins info
