@@ -38,6 +38,7 @@ inline std::shared_ptr<PSGPatch> ReadPSGPatch(FileReader &file)
 	patch->easyPitch = (chipFlags & 1) != 0;
 	patch->resetNoise = (chipFlags & 2) != 0;
 	patch->furnacePitch = (chipFlags & 4) != 0;
+	patch->fastNoise = (chipFlags & 8) != 0;
 	patch->mixGain = std::min<uint16>(512, file.ReadUint16LE());
 	if(patch->lane >= 4 || patch->chip >= 32)
 		return {};
@@ -67,7 +68,7 @@ inline size_t WritePSGPatch(std::ostream &file, const PSGPatch &patch)
 {
 	mpt::IO::WriteIntLE(file, patch.lane);
 	mpt::IO::WriteIntLE(file, patch.chip);
-	mpt::IO::WriteIntLE(file, static_cast<uint8>((patch.easyPitch ? 1 : 0) | (patch.resetNoise ? 2 : 0) | (patch.furnacePitch ? 4 : 0)));
+	mpt::IO::WriteIntLE(file, static_cast<uint8>((patch.easyPitch ? 1 : 0) | (patch.resetNoise ? 2 : 0) | (patch.furnacePitch ? 4 : 0) | (patch.fastNoise ? 8 : 0)));
 	mpt::IO::WriteIntLE(file, patch.mixGain);
 	size_t bytes = 5;
 	for(const auto &macro : patch.macros)

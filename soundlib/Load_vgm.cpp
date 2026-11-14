@@ -117,6 +117,11 @@ struct VgmEvent
 // без поправки FM получал вдвое более высокую частоту, а PSG звучал октавой
 // ниже лога.
 constexpr int FMOctave = 12, PSGOctave = 24;
+// Шум стоит особняком: его тактует период третьего тона, и на периоде 1 это
+// 111 кГц. В шкалу PSG такая частота не влезает — нота выходит за потолок, и
+// вся шумовая партия садилась ровно на октаву ниже лога. Инструменту шума мы
+// ставим флаг fastNoise, который поднимает шкалу в движке на столько же.
+constexpr int NoiseOctave = PSGFastNoiseShift;
 
 ModCommand::NOTE NoteFromFrequency(double hertz, int shift = FMOctave)
 {
@@ -478,7 +483,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			// У шума крайние частоты законны: на предельной скорости он уходит
 			// далеко за слышимый тон, и это шипение, а не промах. Поэтому
 			// нота поджимается к краю шкалы, а не отбрасывается.
-			const auto note = (lane == 3) ? ClampedNote(hertz, PSGOctave) : NoteFromFrequency(hertz, PSGOctave);
+			const auto note = (lane == 3) ? ClampedNote(hertz, NoiseOctave) : NoteFromFrequency(hertz, PSGOctave);
 			const uint8 volume = static_cast<uint8>(level * 64 / 15);
 			if(!level)
 			{
@@ -696,11 +701,18 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		patch->chip = 0;
 		// Периоды мы знаем точно, поэтому фёрнейсовское отображение высоких
 		// нот здесь только мешает: с ним шум уходит ещё на две октавы вниз
-		// (проверено сверкой с логом). Остаток по шуму — в другом: его высоту
-		// голос берёт из трёх предустановленных скоростей, а не из периода
-		// третьего тона, и предельной скорости лога ему не достичь.
+		// (проверено сверкой с логом).
 		patch->easyPitch = false;
-		patch->furnacePitch = true;  // Те же две октавы, что и у импорта из Furnace
+		if(lane == 3)
+		{
+			// Своя шкала у шума: см. NoiseOctave. Режим голос берёт из
+			// значения по умолчанию — белый шум от периода третьего тона,
+			// а другого в логах Mega Drive и не встречается.
+			patch->fastNoise = true;
+		} else
+		{
+			patch->furnacePitch = true;  // Те же две октавы, что и у импорта из Furnace
+		}
 		smpl.psg = std::move(patch);
 		m_szNames[smp] = (lane == 3) ? "PSG noise" : ("PSG tone " + std::to_string(lane + 1));
 		const INSTRUMENTINDEX ins = ++m_nInstruments;

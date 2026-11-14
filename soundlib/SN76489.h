@@ -242,7 +242,9 @@ public:
 		}
 		const double frequency = (fixed ? 16351.6 : milliHertz) * std::exp2((semitones + voice->pitchOffset / 128.0) / 12.0);
 		// Furnace's Sega PSG note scale sounds two octaves above this tracker's note scale.
-		const double psgFrequency = patch.furnacePitch ? frequency * 4.0 : frequency;
+		const double psgFrequency = patch.fastNoise
+			? frequency * std::exp2(PSGFastNoiseShift / 12.0)
+			: (patch.furnacePitch ? frequency * 4.0 : frequency);
 		const double rawPeriod = Clock * 1000.0 / (32.0 * psgFrequency);
 		// Furnace's optional high-note shortcut uses successive hardware periods above period 16.
 		const double mappedPeriod = patch.easyPitch && rawPeriod < 16.0 ? 16.0 - 12.0 * std::log2(16.0 / rawPeriod) : rawPeriod;
