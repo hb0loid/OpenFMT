@@ -219,7 +219,29 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	std::array<uint8, FMChannels> block{};
 	std::array<uint16, PSGChannels> psgPeriod{};
 	std::array<uint8, PSGChannels> psgVolume{};
+	// Что сейчас звучит на голосе и с какой громкостью: по ним и решается,
+	// нужна ли новая нота, смена громкости или снятие.
+	std::array<ModCommand::NOTE, PSGChannels> psgSounding{};
+	std::array<uint8, PSGChannels> psgLastVolume{};
 	uint8 psgLatch = 0, psgLatchType = 0;
+	uint8 noiseMode = 0;
+	// Поток ЦАП: блок сэмплов из файла, указатель чтения и текущий удар.
+	// Команда перемотки стоит ровно в начале каждого удара, поэтому удар —
+	// это кусок блока от одной перемотки до следующей, и одинаковые куски
+	// становятся одним сэмплом.
+	std::vector<uint8> pcm;
+	uint32 pcmPointer = 0;
+	bool dacEnabled = false;
+	struct Hit { uint32 start = 0, bytes = 0, first = 0, last = 0; };
+	Hit hit;
+	bool hitOpen = false;
+	std::vector<Hit> hits;
+	const auto flushHit = [&]()
+	{
+		if(hitOpen && hit.bytes > 64)
+			hits.push_back(hit);
+		hitOpen = false;
+	};
 	std::vector<OPN2Patch> patches;
 	std::vector<VgmEvent> events;
 	uint32 sample = 0;
@@ -283,10 +305,15 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			pos += 2;
 			const uint8 port = (code == 0x52) ? 0 : 1;
 			registers[port][reg] = value;
+			if(code == 0x52 && reg == 0x2B)
+				dacEnabled = (value & 0x80) != 0;
 			if(code == 0x52 && reg == 0x28)
 			{
 				const uint8 channel = static_cast<uint8>((value & 3) + ((value & 4) ? 3 : 0));
 				if(channel >= FMChannels)
+					continue;
+				// Под ЦАПом шестой канал играет сэмплы, а не ноты FM.
+				if(channel == 5 && dacEnabled)
 					continue;
 				if(value & 0xF0)
 				{
@@ -325,31 +352,69 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 				if(psgLatchType == 0)
 				{
 					psgPeriod[psgLatch] = static_cast<uint16>((psgPeriod[psgLatch] & 0x3F0) | (value & 15));
+					if(psgLatch == 3)
+						noiseMode = value & 7;  // Биты 0-1 — скорость, бит 2 — белый шум
 				} else
 				{
-					const uint8 level = static_cast<uint8>(15 - (value & 15));
-					const uint8 channel = static_cast<uint8>(FMChannels + psgLatch);
-					if(level && !psgVolume[psgLatch])
-					{
-						const double hertz = (psgLatch == 3 || !psgPeriod[psgLatch])
-							? 0.0 : header.psgClock / (32.0 * psgPeriod[psgLatch]);
-						const auto note = (psgLatch == 3) ? static_cast<ModCommand::NOTE>(NOTE_MIDDLEC) : NoteFromFrequency(hertz);
-						if(note != NOTE_NONE)
-							events.push_back({sample, channel, note, static_cast<uint8>(level * 64 / 15), -1});
-					} else if(!level && psgVolume[psgLatch])
-					{
-						events.push_back({sample, channel, NOTE_KEYOFF, 255, -1});
-					} else if(level)
-					{
-						events.push_back({sample, channel, NOTE_NONE, static_cast<uint8>(level * 64 / 15), -1});
-					}
-					psgVolume[psgLatch] = level;
+					psgVolume[psgLatch] = static_cast<uint8>(15 - (value & 15));
 				}
+			} else if(psgLatchType == 0)
+			{
+				psgPeriod[psgLatch] = static_cast<uint16>((psgPeriod[psgLatch] & 15) | ((value & 0x3F) << 4));
 			} else
 			{
-				if(psgLatchType == 0)
-					psgPeriod[psgLatch] = static_cast<uint16>((psgPeriod[psgLatch] & 15) | ((value & 0x3F) << 4));
+				psgVolume[psgLatch] = static_cast<uint8>(15 - (value & 0x0F));
 			}
+
+			// Нота PSG складывается из двух независимых записей: период и
+			// громкость, и порядок у драйверов разный. Поэтому решение
+			// принимается после каждой записи по текущему состоянию голоса, а
+			// не по той единственной, которая оказалась последней. Из-за
+			// прежней проверки «громкость появилась» канал, у которого драйвер
+			// ставил громкость раньше периода, молчал всю песню: ноты в тот
+			// миг ещё не было, а потом событие уже не возникало.
+			// Период третьего голоса правит высоту шума, если тот на него
+			// настроен, поэтому решение принимается и за шум тоже.
+			const uint8 lane = (psgLatch == 2 && (noiseMode & 3) == 3 && !psgVolume[2]) ? 3 : psgLatch;
+			const uint8 channel = static_cast<uint8>(FMChannels + lane);
+			const uint8 level = psgVolume[lane];
+			// Высота шума. Три значения скорости задают её сами, а четвёртое
+			// берёт период третьего тонального голоса — тогда этот голос
+			// обычно и не звучит вовсе, он работает подстройкой шума. Без
+			// этого все удары выходили одной высоты.
+			double hertz = 0.0;
+			if(lane == 3)
+			{
+				const uint16 period = ((noiseMode & 3) == 3)
+					? psgPeriod[2]
+					: static_cast<uint16>(0x10u << (noiseMode & 3));
+				if(period)
+					hertz = header.psgClock / (32.0 * period);
+			} else if(psgPeriod[lane])
+			{
+				hertz = header.psgClock / (32.0 * psgPeriod[lane]);
+			}
+			const auto note = NoteFromFrequency(hertz);
+			const uint8 volume = static_cast<uint8>(level * 64 / 15);
+			if(!level)
+			{
+				if(psgSounding[lane] != NOTE_NONE)
+				{
+					events.push_back({sample, channel, NOTE_KEYOFF, 255, -1});
+					psgSounding[lane] = NOTE_NONE;
+				}
+			} else if(note != NOTE_NONE && note != psgSounding[lane])
+			{
+				// Новая нота — только когда сменился полутон: мелкие правки
+				// периода внутри ноты это вибрато, и каждую из них в строку
+				// выносить незачем.
+				events.push_back({sample, channel, note, volume, -1});
+				psgSounding[lane] = note;
+			} else if(volume != psgLastVolume[lane])
+			{
+				events.push_back({sample, channel, NOTE_NONE, volume, -1});
+			}
+			psgLastVolume[lane] = volume;
 		} else if(code == 0x61)
 		{
 			if(pos + 2 > data.size())
@@ -367,15 +432,41 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			sample += (code & 15) + 1;
 		} else if(code >= 0x80 && code <= 0x8F)
 		{
-			sample += code & 15;  // Поток ЦАП пока только отсчитывает время
+			// Байт из блока в ЦАП и пауза. Из таких команд и состоит удар.
+			if(!hitOpen)
+			{
+				hit = Hit{pcmPointer, 0, sample, sample};
+				hitOpen = true;
+			} else if(sample - hit.last > VgmRate / 20)
+			{
+				// Долгая тишина между записями: это уже следующий удар.
+				flushHit();
+				hit = Hit{pcmPointer, 0, sample, sample};
+				hitOpen = true;
+			}
+			hit.bytes++;
+			hit.last = sample;
+			pcmPointer++;
+			sample += code & 15;
 		} else if(code == 0x67)
 		{
 			if(pos + 6 > data.size())
 				break;
+			const uint8 blockType = data[pos + 1];
 			const uint32 size = ReadLE32(data, pos + 2) & 0x7FFFFFFF;
+			if(blockType == 0x00 && pos + 6 + size <= data.size())
+			{
+				// Тип 0 — сэмплы для ЦАПа YM2612. Блоков бывает несколько, и
+				// указатель потока считает их как один непрерывный кусок.
+				pcm.insert(pcm.end(), data.begin() + pos + 6, data.begin() + pos + 6 + size);
+			}
 			pos += 6 + size;
 		} else if(code == 0xE0)
 		{
+			if(pos + 4 > data.size())
+				break;
+			flushHit();
+			pcmPointer = ReadLE32(data, pos);
 			pos += 4;
 		} else if(code == 0x4F || code == 0x54 || (code >= 0x30 && code <= 0x3F))
 		{
@@ -395,6 +486,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		}
 	}
 
+	flushHit();
 	if(events.empty())
 		return false;
 
@@ -427,6 +519,86 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		if(auto *instrument = AllocateInstrument(ins, smp); instrument != nullptr)
 			instrument->name = m_szNames[smp];
 	}
+	// Удары ЦАПа: одинаковые куски блока становятся одним сэмплом, а каждый
+	// удар — нотой на шестом канале. Частота считается по самому удару: сколько
+	// байт он занял и сколько времени играл.
+	const INSTRUMENTINDEX firstDAC = m_nInstruments;
+	std::vector<std::pair<uint32, uint32>> dacSamples;  // начало и длина в блоке
+	if(!pcm.empty() && !hits.empty())
+	{
+		for(const auto &h : hits)
+		{
+			if(h.start >= pcm.size())
+				continue;
+			const uint32 length = std::min<uint32>(h.bytes, static_cast<uint32>(pcm.size() - h.start));
+			if(length < 64)
+				continue;
+			auto found = std::find_if(dacSamples.begin(), dacSamples.end(),
+				[&](const auto &known) { return known.first == h.start && known.second >= length; });
+			if(found != dacSamples.end())
+				continue;
+			// Тот же кусок, но длиннее — заменяем, короче — пропускаем.
+			found = std::find_if(dacSamples.begin(), dacSamples.end(),
+				[&](const auto &known) { return known.first == h.start; });
+			if(found != dacSamples.end())
+				found->second = length;
+			else if(dacSamples.size() < 64)
+				dacSamples.emplace_back(h.start, length);
+		}
+		for(const auto &[start, length] : dacSamples)
+		{
+			if(m_nSamples >= MAX_SAMPLES - 1 || m_nInstruments >= MAX_INSTRUMENTS - 1)
+				break;
+			const SAMPLEINDEX smp = ++m_nSamples;
+			ModSample &smpl = Samples[smp];
+			smpl.Initialize(MOD_TYPE_MPT);
+			smpl.nLength = length;
+			smpl.nC5Speed = 16000;  // Уточняется ниже по времени самого удара
+			if(smpl.AllocateSample())
+			{
+				int8 *target = smpl.sample8();
+				for(uint32 i = 0; i < length; i++)
+					target[i] = static_cast<int8>(static_cast<int>(pcm[start + i]) - 128);
+				smpl.PrecomputeLoops(*this, false);
+			}
+			m_szNames[smp] = "DAC " + std::to_string(start);
+			const INSTRUMENTINDEX ins = ++m_nInstruments;
+			if(auto *instrument = AllocateInstrument(ins, smp); instrument != nullptr)
+				instrument->name = m_szNames[smp];
+		}
+		// Частота: у одинаковых кусков берём среднюю по всем их ударам.
+		for(size_t i = 0; i < dacSamples.size(); i++)
+		{
+			double rate = 0.0;
+			int count = 0;
+			for(const auto &h : hits)
+			{
+				if(h.start != dacSamples[i].first || h.last <= h.first)
+					continue;
+				rate += static_cast<double>(h.bytes) * VgmRate / (h.last - h.first);
+				count++;
+			}
+			if(count && firstDAC + i + 1 <= m_nInstruments)
+			{
+				const SAMPLEINDEX smp = static_cast<SAMPLEINDEX>(firstDAC + i + 1);
+				if(smp <= m_nSamples)
+					Samples[smp].nC5Speed = mpt::saturate_round<uint32>(std::clamp(rate / count, 4000.0, 44100.0));
+			}
+		}
+		for(const auto &h : hits)
+		{
+			const auto found = std::find_if(dacSamples.begin(), dacSamples.end(),
+				[&](const auto &known) { return known.first == h.start; });
+			if(found == dacSamples.end())
+				continue;
+			const int index = static_cast<int>(std::distance(dacSamples.begin(), found));
+			events.push_back({h.first, 5, static_cast<ModCommand::NOTE>(NOTE_MIDDLEC), 64,
+				static_cast<int>(firstDAC) + index});
+		}
+		std::stable_sort(events.begin(), events.end(),
+			[](const VgmEvent &a, const VgmEvent &b) { return a.sample < b.sample; });
+	}
+
 	const INSTRUMENTINDEX firstPSG = m_nInstruments;
 	for(uint8 lane = 0; lane < PSGChannels; lane++)
 	{
