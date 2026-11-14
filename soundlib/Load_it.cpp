@@ -734,6 +734,15 @@ bool CSoundFile::ReadIT(FileReader &file, ModLoadingFlags loadFlags)
 		}
 	}
 
+	// Дополнительные эффекты строки: "FFX2". У Furnace на строку приходит до
+	// восьми эффектов, у IT в ячейке один, и лишние раньше терялись. Кусок
+	// пишется после имён каналов и читается только по своей сигнатуре, так что
+	// файл без него грузится как раньше. Сами значения раскладываются по
+	// паттернам ниже, когда они уже прочитаны.
+	FileReader extraEffects;
+	if(file.ReadMagic("FFX2"))
+		extraEffects = file.ReadChunk(file.ReadUint32LE());
+
 	// Read mix plugins information
 	FileReader pluginChunk = file.ReadChunk((minPtr >= file.GetPosition()) ? minPtr - file.GetPosition() : file.BytesLeft());
 	const auto [hasPluginChunks, isBeRoTracker] = LoadMixPlugins(pluginChunk, false);
@@ -1229,6 +1238,29 @@ bool CSoundFile::ReadIT(FileReader &file, ModLoadingFlags loadFlags)
 			}
 		}
 	}
+	// Разложить дополнительные эффекты по уже прочитанным паттернам.
+	if(extraEffects.IsValid())
+	{
+		extraEffects.Rewind();
+		uint32 count = 0;
+		extraEffects.ReadVarInt(count);
+		for(uint32 i = 0; i < count && extraEffects.CanRead(7); i++)
+		{
+			const auto pat = extraEffects.ReadUint16LE();
+			const auto row = extraEffects.ReadUint16LE();
+			const auto chn = extraEffects.ReadUint16LE();
+			const auto slot = extraEffects.ReadUint8();
+			const auto command = extraEffects.ReadUint8();
+			const auto param = extraEffects.ReadUint8();
+			if(!Patterns.IsValidPat(pat) || slot == 0 || slot >= ModCommand::Effects())
+				continue;
+			CPattern &pattern = Patterns[pat];
+			if(row >= pattern.GetNumRows() || chn >= pattern.GetNumChannels())
+				continue;
+			pattern.GetpModCommand(row, chn)->SetEffect(slot, static_cast<EffectCommand>(command), param);
+		}
+	}
+
 	// Remove (default) cue points if no volume column offset is found (unless it's a new enough MPTM file, which could contain intentionally-placed custom cue points that we don't want to lose)
 	if(!hasVolColOffset && (GetType() != MOD_TYPE_MPT || m_dwLastSavedWithVersion < MPT_V("1.24.02.06")))
 	{
@@ -1783,6 +1815,53 @@ bool CSoundFile::SaveIT(std::ostream &f, const mpt::PathString &filename, bool c
 			char name[MAX_CHANNELNAME];
 			mpt::String::WriteBuf(mpt::String::maybeNullTerminated, name) = ChnSettings[inam].szName;
 			mpt::IO::Write(f, name);
+		}
+	}
+
+	// Дополнительные эффекты строки: "FFX2". В ячейке IT эффект один, поэтому
+	// всё, что не поместилось, пишется отдельным куском — пара координат,
+	// номер слота, команда и параметр. Читатель, который этой сигнатуры не
+	// знает, просто её не найдёт и прочтёт файл как прежде.
+	if(!compatibilityExport)
+	{
+		std::vector<std::byte> extraEffects;
+		uint32 extraCount = 0;
+		for(PATTERNINDEX pat = 0; pat < Patterns.Size(); pat++)
+		{
+			if(!Patterns.IsValidPat(pat))
+				continue;
+			const auto &pattern = Patterns[pat];
+			for(ROWINDEX row = 0; row < pattern.GetNumRows(); row++)
+			{
+				for(CHANNELINDEX chn = 0; chn < pattern.GetNumChannels(); chn++)
+				{
+					const ModCommand &m = *pattern.GetpModCommand(row, chn);
+					for(uint8 slot = 1; slot < ModCommand::Effects(); slot++)
+					{
+						const auto [command, param] = m.GetEffect(slot);
+						if(command == CMD_NONE)
+							continue;
+						const uint8 record[] = {
+							static_cast<uint8>(pat & 0xff), static_cast<uint8>(pat >> 8),
+							static_cast<uint8>(row & 0xff), static_cast<uint8>(row >> 8),
+							static_cast<uint8>(chn & 0xff), static_cast<uint8>(chn >> 8),
+							slot, static_cast<uint8>(command), param};
+						for(uint8 value : record)
+							extraEffects.push_back(mpt::byte_cast<std::byte>(value));
+						extraCount++;
+					}
+				}
+			}
+		}
+		if(extraCount)
+		{
+			std::ostringstream header(std::ios::out | std::ios::binary);
+			mpt::IO::WriteVarInt(header, extraCount);
+			const std::string headerBytes = std::move(header).str();
+			mpt::IO::WriteRaw(f, "FFX2", 4);
+			mpt::IO::WriteIntLE<uint32>(f, static_cast<uint32>(headerBytes.size() + extraEffects.size()));
+			mpt::IO::WriteRaw(f, headerBytes.data(), headerBytes.size());
+			mpt::IO::WriteRaw(f, reinterpret_cast<const char *>(extraEffects.data()), extraEffects.size());
 		}
 	}
 
