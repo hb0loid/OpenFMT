@@ -1441,19 +1441,37 @@ void CViewPattern::DrawChannelScope(HDC hdc, const CRect &rect, CHANNELINDEX chn
 	::SelectObject(hdc, oldPen);
 	::DeleteObject(pen);
 
-	// Имя канала поверх волны: тёмная подложка под текстом, чтобы читалось на
-	// любой картинке.
+	// Имя канала поверх волны: вверху, приглушённым цветом и своим шрифтом
+	// помельче. Прозрачности у GDI тут нет, поэтому «полупрозрачность» —
+	// это цвет на полпути от фона к белому плюс мягкая тень под буквами.
 	if(label != nullptr && label[0] != 0)
 	{
+		if(m_scopeFont.m_hObject == nullptr)
+		{
+			LOGFONT logFont{};
+			if(::GetObject(CMainFrame::GetGUIFont(), sizeof(logFont), &logFont))
+			{
+				logFont.lfHeight = (logFont.lfHeight < 0) ? logFont.lfHeight + 1 : std::max(1L, logFont.lfHeight - 1);
+				logFont.lfWeight = FW_NORMAL;
+				m_scopeFont.CreateFontIndirect(&logFont);
+			}
+		}
+		HGDIOBJ oldFont = (m_scopeFont.m_hObject != nullptr) ? ::SelectObject(hdc, m_scopeFont.m_hObject) : nullptr;
 		const int oldMode = ::SetBkMode(hdc, TRANSPARENT);
-		const COLORREF oldColor = ::SetTextColor(hdc, RGB(0x00, 0x00, 0x00));
+		const COLORREF oldColor = ::GetTextColor(hdc);
 		CRect text = inner;
-		::OffsetRect(&text, 1, 1);
-		::DrawTextA(hdc, label, -1, &text, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
-		::SetTextColor(hdc, RGB(0xE0, 0xE8, 0xF0));
-		::DrawTextA(hdc, label, -1, &inner, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+		text.top += 1;
+		text.bottom = std::min<LONG>(text.bottom, text.top + inner.Height());
+		CRect shadow = text;
+		::OffsetRect(&shadow, 1, 1);
+		::SetTextColor(hdc, RGB(0x08, 0x0A, 0x10));
+		::DrawTextA(hdc, label, -1, &shadow, DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+		::SetTextColor(hdc, RGB(0x96, 0xA2, 0xB0));
+		::DrawTextA(hdc, label, -1, &text, DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
 		::SetTextColor(hdc, oldColor);
 		::SetBkMode(hdc, oldMode);
+		if(oldFont != nullptr)
+			::SelectObject(hdc, oldFont);
 	}
 }
 

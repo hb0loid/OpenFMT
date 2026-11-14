@@ -314,6 +314,8 @@ public:
 	std::vector<float> m_scopeSamples;
 	std::vector<POINT> m_scopePoints;
 	std::array<float, 256> m_scopeGain{};
+	// Шрифт подписи на осциллографе: чуть мельче обычного, заводится один раз.
+	CFont m_scopeFont;
 	// Отмечено ли это окно как смотрящее на звук по каналам.
 	bool m_scopeUser = false;
 	void UpdateAllVUMeters(Notification *pnotify);
