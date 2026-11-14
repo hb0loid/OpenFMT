@@ -536,7 +536,17 @@ void PatternViewState::Deserialize(FileReader &f)
 	f.ReadVarInt(initialOrder);
 	unsigned long columns = 0;
 	if(f.ReadVarInt(columns))
+	{
 		visibleColumns = columns;
+		// Состояние окна, записанное до появления второго эффекта, знает только
+		// про пять колонок, и новые две оказались бы выключены навсегда. Если
+		// про них в записи ничего нет, они повторяют видимость первого эффекта.
+		if(!visibleColumns[PatternCursor::effectColumn2] && !visibleColumns[PatternCursor::paramColumn2])
+		{
+			visibleColumns.set(PatternCursor::effectColumn2, visibleColumns[PatternCursor::effectColumn]);
+			visibleColumns.set(PatternCursor::paramColumn2, visibleColumns[PatternCursor::effectColumn]);
+		}
+	}
 }
 
 

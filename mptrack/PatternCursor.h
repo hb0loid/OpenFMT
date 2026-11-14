@@ -345,15 +345,17 @@ public:
 
 	// Create a bitset of the selected columns of a channel. If a column is selected, the corresponding bit is set.
 	// Example: If the first and second column of the channel are selected, the bits 00000011 would be returned.
-	uint8 GetSelectionBits(CHANNELINDEX chn) const
+	// Два байта, а не один: колонок стало семь, и в однобайтовое значение
+	// маска уже не помещается.
+	uint16 GetSelectionBits(CHANNELINDEX chn) const
 	{
 		const CHANNELINDEX startChn = GetStartChannel(), endChn = GetEndChannel();
-		uint8 bits = 0;
+		uint16 bits = 0;
 
 		if(chn >= startChn && chn <= endChn)
 		{
 			// All columns could be selected (unless this is the first or last channel).
-			bits = uint8_max;
+			bits = uint16_max;
 
 			if(chn == startChn)
 			{
@@ -366,7 +368,9 @@ public:
 				bits &= (2 << GetLowerRight().GetColumnType()) - 1;
 			}
 		}
-		return (bits & 0x1F);
+		// Маска по числу колонок, а не записанная числом: при добавлении
+		// колонки её не придётся искать.
+		return static_cast<uint16>(bits & ((2u << PatternCursor::lastColumn) - 1u));
 	}
 
 	// Get number of rows in selection

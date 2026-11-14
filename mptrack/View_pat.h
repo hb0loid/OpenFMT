@@ -175,7 +175,10 @@ protected:
 		uint16 vuMeterOld = 0;
 		std::pair<PLUGINDEX, PlugParamIndex> previousPCevent = {PLUGINDEX_INVALID, 0};
 		ModCommand::NOTE previousNote = NOTE_NONE;
-		uint8 selectedCols = 0;
+		// Два байта, а не один: колонок стало семь, и служебные биты пропуска
+		// и невидимости ушли выше восьмого. В однобайтовом поле они просто
+		// обнулялись, и отрисовка переставала пропускать каналы.
+		uint16 selectedCols = 0;
 	};
 
 	std::vector<ChannelState> m_chnState;
