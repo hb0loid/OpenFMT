@@ -29,8 +29,8 @@ static constexpr PATTERNFONT gDefaultPatternFont =
 	92,13,	// Column Width & Height
 	0,0,	// Clear location
 	130,8,	// Space Location.
-	{20, 20, 24, 9, 15},		// Element Widths
-	{0, 0, 0, 0, 0},			// Padding pixels contained in element width
+	{20, 20, 24, 9, 15, 9, 15},		// Element Widths (последние две — второй эффект)
+	{0, 0, 0, 0, 0, 0, 0},			// Padding pixels contained in element width
 	20,13,	// Numbers 0-F (hex)
 	30,13,	// Numbers 10-29 (dec)
 	64,26,	// A-M#
@@ -59,8 +59,8 @@ static constexpr PATTERNFONT gSmallPatternFont =
 	70,11,	// Column Width & Height
 	92,0,	// Clear location
 	130,8,	// Space Location.
-	{16, 14, 18, 7, 11},		// Element Widths
-	{0, 0, 0, 0, 0},			// Padding pixels contained in element width
+	{16, 14, 18, 7, 11, 7, 11},		// Element Widths (последние две — второй эффект)
+	{0, 0, 0, 0, 0, 0, 0},			// Padding pixels contained in element width
 	108,13,	// Numbers 0-F (hex)
 	120,13,	// Numbers 10-29 (dec)
 	142,26,	// A-M#
