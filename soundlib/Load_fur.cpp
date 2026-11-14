@@ -1405,23 +1405,42 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 								return 3;
 							}
 						};
-						const bool replaceLocal = command != CMD_NONE && cell.command != CMD_NONE
-							&& priority(command) > priority(cell.command);
-						// Панораму, проигравшую борьбу за колонку, ещё можно
-						// сохранить в колонке громкости.
-						if(replaceLocal && cell.command == CMD_PANNING8 && cell.volcmd == VOLCMD_NONE)
+						if(command == CMD_NONE)
 						{
-							cell.volcmd = VOLCMD_PANNING;
-							cell.vol = static_cast<ModCommand::VOL>((cell.param + 2) / 4);
-						}
-						if(command != CMD_NONE && (cell.command == CMD_NONE || replaceLocal))
+							if(fx != 0 || value)
+								unsupported++;
+						} else if(const uint8 slot = cell.FreeEffectSlot(); slot < ModCommand::Effects())
 						{
-							unsupported += replaceLocal && cell.volcmd != VOLCMD_PANNING;
-							cell.command = command;
-							cell.param = argument;
-						} else if(fx != 0 || value)
+							// Свободный слот есть — эффект сохраняется целиком,
+							// бороться за колонку не нужно.
+							cell.SetEffect(slot, command, argument);
+						} else
 						{
-							unsupported++;
+							// Слоты кончились: тогда выживает более важный, а
+							// слабейший из всех уходит. Панораму, проигравшую
+							// борьбу, ещё можно сохранить в колонке громкости.
+							uint8 weakest = 0;
+							for(uint8 i = 1; i < ModCommand::Effects(); i++)
+							{
+								if(priority(cell.GetEffect(i).first) < priority(cell.GetEffect(weakest).first))
+									weakest = i;
+							}
+							const auto [loserCommand, loserParam] = cell.GetEffect(weakest);
+							if(priority(command) > priority(loserCommand))
+							{
+								if(loserCommand == CMD_PANNING8 && cell.volcmd == VOLCMD_NONE)
+								{
+									cell.volcmd = VOLCMD_PANNING;
+									cell.vol = static_cast<ModCommand::VOL>((loserParam + 2) / 4);
+								} else
+								{
+									unsupported++;
+								}
+								cell.SetEffect(weakest, command, argument);
+							} else
+							{
+								unsupported++;
+							}
 						}
 					}
 					if(sourceRow.instrument >= 0 && furIns >= 0 && furInstruments[furIns].type == 4)

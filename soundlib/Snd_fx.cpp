@@ -3458,6 +3458,13 @@ bool CSoundFile::ProcessEffects()
 		}
 
 		// Effects
+		// Эффектов в строке может быть несколько, а разбирать их надо одним и
+		// тем же кодом. Поэтому разбор завёрнут в лямбду: тело осталось
+		// прежним, а вызывается по разу на каждый занятый слот. Имена cmd и
+		// param здесь намеренно перекрывают внешние — так тело не пришлось
+		// править ни в одной строке.
+		const auto runEffect = [&](ModCommand::COMMAND cmd, uint32 param)
+		{
 		if(cmd != CMD_NONE) switch (cmd)
 		{
 		// Set Volume
@@ -3963,6 +3970,14 @@ bool CSoundFile::ProcessEffects()
 		{
 			UpdateS3MEffectMemory(chn, static_cast<ModCommand::PARAM>(param));
 		}
+		};
+		runEffect(cmd, param);
+		for(uint8 slot = 1; slot < ModCommand::Effects(); slot++)
+		{
+			const auto [extraCommand, extraParam] = chn.rowCommand.GetEffect(slot);
+			if(extraCommand != CMD_NONE)
+				runEffect(extraCommand, extraParam);
+		}
 
 		if(chn.rowCommand.instr)
 		{
@@ -3971,7 +3986,25 @@ bool CSoundFile::ProcessEffects()
 		}
 
 		if(m_furnaceSlides)
-			ProcessFurnaceSlide(chn, cmd, static_cast<uint8>(param), triggerNote);
+		{
+			// Скольжениям важен тот эффект строки, который про высоту: он
+			// может оказаться в любом слоте, потому что в первый попадает
+			// эффект с большим приоритетом.
+			ModCommand::COMMAND slideCommand = cmd;
+			uint8 slideParam = static_cast<uint8>(param);
+			for(uint8 slot = 0; slot < ModCommand::Effects(); slot++)
+			{
+				const auto [slotCommand, slotParam] = chn.rowCommand.GetEffect(slot);
+				if(slotCommand == CMD_PORTAMENTOUP || slotCommand == CMD_PORTAMENTODOWN
+					|| slotCommand == CMD_TONEPORTAMENTO || slotCommand == CMD_TONEPORTAVOL)
+				{
+					slideCommand = slotCommand;
+					slideParam = slotParam;
+					break;
+				}
+			}
+			ProcessFurnaceSlide(chn, slideCommand, slideParam, triggerNote);
+		}
 		ProcessAutoSlides(m_PlayState, nChn);
 	} // for(...) end
 

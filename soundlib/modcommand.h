@@ -11,6 +11,8 @@
 #pragma once
 
 #include "openmpt/all/BuildSettings.hpp"
+#include <array>
+#include <utility>
 #include "Snd_defs.h"
 #include "mpt/base/algorithm.hpp"
 
@@ -251,12 +253,54 @@ public:
 	static bool CombineEffects(EffectCommand &eff1, uint8 &param1, EffectCommand &eff2, uint8 &param2);
 
 public:
+	// Сколько эффектов помещается в строку. У Furnace их до восьми, у нас пока
+	// два: первый лежит в command/param, остальные в extra. Всё, что считает
+	// эффекты, ходит через Effects(), GetEffect() и SetEffect(), поэтому
+	// добавить третий — это поменять одно число здесь и ширины колонок в
+	// редакторе, а не искать по всему коду.
+	static constexpr uint8 NumEffects = 2;
+
 	uint8 note = NOTE_NONE;
 	uint8 instr = 0;
 	VolumeCommand volcmd = VOLCMD_NONE;
 	EffectCommand command = CMD_NONE;
 	uint8 vol = 0;
 	uint8 param = 0;
+	std::array<std::pair<EffectCommand, uint8>, NumEffects - 1> extra{};
+
+	static constexpr uint8 Effects() { return NumEffects; }
+
+	std::pair<EffectCommand, uint8> GetEffect(uint8 slot) const
+	{
+		if(slot == 0)
+			return {command, param};
+		return slot <= extra.size() ? extra[slot - 1] : std::pair<EffectCommand, uint8>{CMD_NONE, uint8(0)};
+	}
+
+	void SetEffect(uint8 slot, EffectCommand cmd, uint8 value)
+	{
+		if(slot == 0)
+		{
+			command = cmd;
+			param = value;
+		} else if(slot <= extra.size())
+		{
+			extra[slot - 1] = {cmd, value};
+		}
+	}
+
+	// Первый свободный слот эффекта, или NumEffects, если все заняты.
+	uint8 FreeEffectSlot() const
+	{
+		if(command == CMD_NONE)
+			return 0;
+		for(uint8 i = 0; i < extra.size(); i++)
+		{
+			if(extra[i].first == CMD_NONE)
+				return static_cast<uint8>(i + 1);
+		}
+		return NumEffects;
+	}
 };
 
 OPENMPT_NAMESPACE_END
