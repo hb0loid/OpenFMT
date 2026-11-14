@@ -231,6 +231,13 @@ public:
 	ORDERINDEX GetCurrentOrder() const { return m_nOrder; }
 	void SetCurrentOrder(ORDERINDEX ord);
 	// Get ModCommand at the pattern cursor position.
+	// Какой слот эффекта правит курсор: 0 — обычная пара колонок, 1 — вторая.
+	static uint8 EffectSlotFromColumn(PatternCursor::Columns column)
+	{
+		return (column == PatternCursor::effectColumn2 || column == PatternCursor::paramColumn2) ? 1 : 0;
+	}
+	uint8 CursorEffectSlot() const { return EffectSlotFromColumn(m_Cursor.GetColumnType()); }
+
 	ModCommand &GetCursorCommand() { return GetModCommand(m_Cursor); };
 	const ModCommand& GetCursorCommand() const { return const_cast<CViewPattern *>(this)->GetModCommand(m_Cursor); };
 	void SanitizeCursor();

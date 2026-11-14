@@ -273,6 +273,7 @@ protected:
 	afx_msg void OnDetailInstr();
 	afx_msg void OnDetailVolume();
 	afx_msg void OnDetailEffect();
+	afx_msg void OnDetailEffect2();
 	afx_msg void OnEditUndo();
 	afx_msg void OnUpdateRecord(CCmdUI *pCmdUI);
 	afx_msg void TogglePluginEditor();

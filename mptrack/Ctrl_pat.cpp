@@ -75,6 +75,7 @@ BEGIN_MESSAGE_MAP(CCtrlPatterns, CModControlDlg)
 	ON_COMMAND(ID_PATTERNDETAIL_INSTR,        &CCtrlPatterns::OnDetailInstr)
 	ON_COMMAND(ID_PATTERNDETAIL_VOLUME,       &CCtrlPatterns::OnDetailVolume)
 	ON_COMMAND(ID_PATTERNDETAIL_EFFECT,       &CCtrlPatterns::OnDetailEffect)
+	ON_COMMAND(ID_PATTERNDETAIL_EFFECT2,      &CCtrlPatterns::OnDetailEffect2)
 	ON_COMMAND(ID_OVERFLOWPASTE,              &CCtrlPatterns::OnToggleOverflowPaste)
 	ON_CBN_DROPDOWN(IDC_COMBO_INSTRUMENT,     &CCtrlPatterns::OnOpenInstrumentDropdown)
 	ON_CBN_SELENDCANCEL(IDC_COMBO_INSTRUMENT, &CCtrlPatterns::OnCancelInstrumentDropdown)
@@ -1310,6 +1311,7 @@ void CCtrlPatterns::OnTbnDropDownToolBar(NMHDR *pNMHDR, LRESULT *pResult)
 		menu.AppendMenu(MF_STRING | (visibleColumns[PatternCursor::instrColumn] ? MF_CHECKED : 0), ID_PATTERNDETAIL_INSTR, ih->GetKeyTextFromCommand(kcToggleVisibilityInstrColumn, _T("Show &Instrument Column")));
 		menu.AppendMenu(MF_STRING | (visibleColumns[PatternCursor::volumeColumn] ? MF_CHECKED : 0), ID_PATTERNDETAIL_VOLUME, ih->GetKeyTextFromCommand(kcToggleVisibilityVolumeColumn, _T("Show &Volume Column")));
 		menu.AppendMenu(MF_STRING | (visibleColumns[PatternCursor::effectColumn] ? MF_CHECKED : 0), ID_PATTERNDETAIL_EFFECT, ih->GetKeyTextFromCommand(kcToggleVisibilityEffectColumn, _T("Show &Effect Column")));
+		menu.AppendMenu(MF_STRING | (visibleColumns[PatternCursor::effectColumn2] ? MF_CHECKED : 0), ID_PATTERNDETAIL_EFFECT2, _T("Show Second Effect &Column"));
 		menu.TrackPopupMenu(TPM_LEFTALIGN | TPM_RIGHTBUTTON, x, y, this);
 		menu.DestroyMenu();
 		break;
@@ -1324,6 +1326,7 @@ void CCtrlPatterns::OnDetailSwitch()
 	auto visibleColumns = std::bitset<PatternCursor::numColumns>{static_cast<unsigned long>(SendViewMessage(VIEWMSG_GETDETAIL) + 1)};
 	visibleColumns.set(PatternCursor::noteColumn);
 	visibleColumns.set(PatternCursor::paramColumn, visibleColumns[PatternCursor::effectColumn]);
+	visibleColumns.set(PatternCursor::paramColumn2, visibleColumns[PatternCursor::effectColumn2]);
 	SendViewMessage(VIEWMSG_SETDETAIL, visibleColumns.to_ulong());
 	SwitchToViewIfMouse();
 }
@@ -1352,6 +1355,17 @@ void CCtrlPatterns::OnDetailEffect()
 	auto visibleColumns = std::bitset<PatternCursor::numColumns>{static_cast<unsigned long>(SendViewMessage(VIEWMSG_GETDETAIL))};
 	visibleColumns.flip(PatternCursor::effectColumn);
 	visibleColumns.flip(PatternCursor::paramColumn);
+	SendViewMessage(VIEWMSG_SETDETAIL, visibleColumns.to_ulong());
+	SwitchToViewIfMouse();
+}
+
+
+void CCtrlPatterns::OnDetailEffect2()
+{
+	// Вторая пара колонок эффекта включается отдельно от первой.
+	auto visibleColumns = std::bitset<PatternCursor::numColumns>{static_cast<unsigned long>(SendViewMessage(VIEWMSG_GETDETAIL))};
+	visibleColumns.flip(PatternCursor::effectColumn2);
+	visibleColumns.set(PatternCursor::paramColumn2, visibleColumns[PatternCursor::effectColumn2]);
 	SendViewMessage(VIEWMSG_SETDETAIL, visibleColumns.to_ulong());
 	SwitchToViewIfMouse();
 }

@@ -162,7 +162,8 @@ public:
 			&& (volcmd == mc.volcmd)
 			&& (command == mc.command)
 			&& ((volcmd == VOLCMD_NONE && !IsPcNote()) || vol == mc.vol)
-			&& ((command == CMD_NONE && !IsPcNote()) || param == mc.param);
+			&& ((command == CMD_NONE && !IsPcNote()) || param == mc.param)
+			&& (extra == mc.extra);
 	}
 	bool operator!=(const ModCommand& mc) const { return !(*this == mc); }
 
@@ -189,7 +190,14 @@ public:
 	// Returns true if modcommand is empty, false otherwise.
 	bool IsEmpty() const
 	{
-		return (note == NOTE_NONE && instr == 0 && volcmd == VOLCMD_NONE && command == CMD_NONE);
+		if(note != NOTE_NONE || instr != 0 || volcmd != VOLCMD_NONE || command != CMD_NONE)
+			return false;
+		for(const auto &effect : extra)
+		{
+			if(effect.first != CMD_NONE)
+				return false;
+		}
+		return true;
 	}
 
 	// Returns true if instrument column represents plugin index.

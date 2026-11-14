@@ -705,7 +705,13 @@ BOOL CViewPattern::PreTranslateMessage(MSG *pMsg)
 		{
 			CInputHandler *ih = CMainFrame::GetInputHandler();
 
-			InputTargetContext ctx = (InputTargetContext)(kCtxViewPatterns + 1 + m_Cursor.GetColumnType());
+			// Вторая пара колонок эффекта пользуется теми же раскладками, что и первая.
+			PatternCursor::Columns keyColumn = m_Cursor.GetColumnType();
+			if(keyColumn == PatternCursor::effectColumn2)
+				keyColumn = PatternCursor::effectColumn;
+			else if(keyColumn == PatternCursor::paramColumn2)
+				keyColumn = PatternCursor::paramColumn;
+			InputTargetContext ctx = (InputTargetContext)(kCtxViewPatterns + 1 + keyColumn);
 			// If editing is disabled, preview notes no matter which column we are in
 			if(!IsEditingEnabled() && TrackerSettings::Instance().patternNoEditPopup)
 				ctx = kCtxViewPatternsNote;
@@ -878,6 +884,16 @@ void CViewPattern::OnGrowSelection()
 					dest->param = src->param;
 					blank->param = 0;
 					break;
+
+				case PatternCursor::effectColumn2:
+					dest->SetEffect(1, src->GetEffect(1).first, dest->GetEffect(1).second);
+					blank->SetEffect(1, CMD_NONE, blank->GetEffect(1).second);
+					break;
+
+				case PatternCursor::paramColumn2:
+					dest->SetEffect(1, dest->GetEffect(1).first, src->GetEffect(1).second);
+					blank->SetEffect(1, blank->GetEffect(1).first, 0);
+					break;
 				}
 			}
 		}
@@ -980,6 +996,14 @@ void CViewPattern::OnShrinkSelection()
 				case PatternCursor::paramColumn:
 					dest->param = src.param;
 					break;
+
+				case PatternCursor::effectColumn2:
+					dest->SetEffect(1, src.GetEffect(1).first, dest->GetEffect(1).second);
+					break;
+
+				case PatternCursor::paramColumn2:
+					dest->SetEffect(1, dest->GetEffect(1).first, src.GetEffect(1).second);
+					break;
 				}
 			}
 		}
@@ -1063,6 +1087,14 @@ void CViewPattern::OnClearSelection(bool ITStyle, std::bitset<PatternCursor::num
 				{
 					m.SetValueEffectCol(0);
 				}
+				break;
+
+			case PatternCursor::effectColumn2:  // Clear second command
+				m.SetEffect(1, CMD_NONE, 0);
+				break;
+
+			case PatternCursor::paramColumn2:  // Clear second command param
+				m.SetEffect(1, m.GetEffect(1).first, 0);
 				break;
 
 			case PatternCursor::paramColumn:  // Clear Command Param
@@ -2305,6 +2337,11 @@ void CViewPattern::OnCursorCopy()
 		m_cmdOld.param = m.param;
 		break;
 
+	case PatternCursor::effectColumn2:
+	case PatternCursor::paramColumn2:
+		std::tie(m_cmdOld.command, m_cmdOld.param) = m.GetEffect(1);
+		break;
+
 	case PatternCursor::numColumns:
 		MPT_ASSERT_NOTREACHED();
 		break;
@@ -2353,6 +2390,15 @@ void CViewPattern::OnCursorPaste()
 			break;
 		m.command = m_cmdOld.command;
 		m.param = m_cmdOld.param;
+		break;
+
+	case PatternCursor::effectColumn2:
+	case PatternCursor::paramColumn2:
+		if(!specs.HasCommand(m_cmdOld.command))
+			break;
+		if(m_cmdOld.command == CMD_DUMMY && sndFile.GetType() != MOD_TYPE_XM)
+			break;
+		m.SetEffect(1, m_cmdOld.command, m_cmdOld.param);
 		break;
 
 	case PatternCursor::numColumns:
@@ -5161,38 +5207,42 @@ void CViewPattern::TempEnterFX(ModCommand::COMMAND c, int v)
 	if(pSndFile == nullptr || !IsEditingEnabled_bmsg())
 		return;
 
+	const uint8 slot = CursorEffectSlot();
 	ModCommand &target = GetCursorCommand();
 	ModCommand m = target;
 
 	if(m.IsPcNote())
 	{
-		if(EnterPCNoteValue(c, m, &ModCommand::GetValueEffectCol, &ModCommand::SetValueEffectCol))
+		// У PC-ноты колонка эффекта занята значением параметра, второго эффекта там нет.
+		if(slot == 0 && EnterPCNoteValue(c, m, &ModCommand::GetValueEffectCol, &ModCommand::SetValueEffectCol))
 			m_PCNoteEditMemory = m;
 	} else if(pSndFile->GetModSpecifications().HasCommand(c))
 	{
+		auto [command, param] = m.GetEffect(slot);
 		if(c != CMD_NONE)
 		{
-			if((c == m_cmdOld.command) && (!m.param) && (m.command == CMD_NONE))
+			if((c == m_cmdOld.command) && (!param) && (command == CMD_NONE))
 			{
-				m.param = m_cmdOld.param;
+				param = m_cmdOld.param;
 			} else
 			{
 				m_cmdOld.param = 0;
 			}
 			m_cmdOld.command = c;
 		}
-		m.command = c;
+		command = c;
 		if(v >= 0)
 		{
-			m.param = static_cast<ModCommand::PARAM>(v);
+			param = static_cast<ModCommand::PARAM>(v);
 		}
 
 		// Check for MOD/XM Speed/Tempo command
 		if((pSndFile->GetType() & (MOD_TYPE_MOD | MOD_TYPE_XM))
-		   && (m.command == CMD_SPEED || m.command == CMD_TEMPO))
+		   && (command == CMD_SPEED || command == CMD_TEMPO))
 		{
-			m.command = static_cast<ModCommand::COMMAND>((m.param <= pSndFile->GetModSpecifications().speedMax) ? CMD_SPEED : CMD_TEMPO);
+			command = static_cast<ModCommand::COMMAND>((param <= pSndFile->GetModSpecifications().speedMax) ? CMD_SPEED : CMD_TEMPO);
 		}
+		m.SetEffect(slot, command, param);
 	}
 
 	SetSelToCursor();
@@ -5228,28 +5278,30 @@ void CViewPattern::TempEnterFXparam(int v)
 		return;
 	}
 
+	const uint8 slot = CursorEffectSlot();
 	ModCommand &target = GetCursorCommand();
 	ModCommand m = target;
 
 	if(m.IsPcNote())
 	{
-		if(EnterPCNoteValue(v, m, &ModCommand::GetValueEffectCol, &ModCommand::SetValueEffectCol))
+		if(slot == 0 && EnterPCNoteValue(v, m, &ModCommand::GetValueEffectCol, &ModCommand::SetValueEffectCol))
 			m_PCNoteEditMemory = m;
 	} else
 	{
-
-		m.param = static_cast<ModCommand::PARAM>((m.param << 4) | v);
-		if(m.command == m_cmdOld.command)
+		auto [command, param] = m.GetEffect(slot);
+		param = static_cast<ModCommand::PARAM>((param << 4) | v);
+		if(command == m_cmdOld.command)
 		{
-			m_cmdOld.param = m.param;
+			m_cmdOld.param = param;
 		}
 
 		// Check for MOD/XM Speed/Tempo command
 		if((pSndFile->GetType() & (MOD_TYPE_MOD | MOD_TYPE_XM))
-		   && (m.command == CMD_SPEED || m.command == CMD_TEMPO))
+		   && (command == CMD_SPEED || command == CMD_TEMPO))
 		{
-			m.command = static_cast<ModCommand::COMMAND>((m.param <= pSndFile->GetModSpecifications().speedMax) ? CMD_SPEED : CMD_TEMPO);
+			command = static_cast<ModCommand::COMMAND>((param <= pSndFile->GetModSpecifications().speedMax) ? CMD_SPEED : CMD_TEMPO);
 		}
+		m.SetEffect(slot, command, param);
 	}
 
 	SetSelToCursor();

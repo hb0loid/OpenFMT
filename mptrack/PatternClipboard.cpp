@@ -323,6 +323,16 @@ std::string PatternClipboard::CreateClipboardString(const CSoundFile &sndFile, P
 			{
 				data += "   ";
 			}
+
+			// Второй эффект строки. Дописывается тремя символами сразу за первым
+			// и только когда он есть, поэтому ячейки без него выглядят точно так
+			// же, как в обычном OpenMPT, и вставляются в него без правок.
+			cursor.Move(0, 0, 1);
+			if(const auto [command2, param2] = m->GetEffect(1); command2 != CMD_NONE && !m->IsPcNote() && selection.ContainsHorizontal(cursor))
+			{
+				data += sndFile.GetModSpecifications().GetEffectLetter(command2);
+				data += mpt::afmt::HEX0<2>(param2);
+			}
 		}
 
 		// Next Row
@@ -942,6 +952,37 @@ bool PatternClipboard::HandlePaste(CSoundFile &sndFile, PatternEditPos &pastePos
 			}
 
 			pos += 11;
+
+			// Необязательный второй эффект: три символа сразу за ячейкой. Если
+			// там уже начало следующей ячейки или конец строки, его просто нет.
+			if(pos + 2 < eol && data[pos] != '|' && data[pos] != 13 && data[pos] != 10)
+			{
+				if(!skipPaste && !m.IsPcNote())
+				{
+					EffectCommand command2 = CMD_NONE;
+					uint8 param2 = 0;
+					if(data[pos] != '.')
+					{
+						for(int i = CMD_NONE + 1; i < MAX_EFFECTS; i++)
+						{
+							const char cmd = sourceSpecs.GetEffectLetter(static_cast<EffectCommand>(i));
+							if(data[pos] == cmd && cmd != '?')
+							{
+								command2 = static_cast<EffectCommand>(i);
+								break;
+							}
+						}
+					}
+					for(uint8 i = 0; i < 16; i++)
+					{
+						if(data[pos + 1] == szHexChar[i]) param2 |= static_cast<uint8>(i << 4);
+						if(data[pos + 2] == szHexChar[i]) param2 |= i;
+					}
+					if(command2 != CMD_NONE)
+						m.SetEffect(1, command2, param2);
+				}
+				pos += 3;
+			}
 			col++;
 		}
 		// Next row

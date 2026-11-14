@@ -116,6 +116,7 @@ void CViewPattern::UpdateVisibileColumns(std::bitset<PatternCursor::numColumns> 
 	m_visibleColumns = visibleColumns;
 	m_visibleColumns.set(PatternCursor::noteColumn);  // Cannot be disabled at the moment
 	m_visibleColumns.set(PatternCursor::paramColumn, m_visibleColumns[PatternCursor::effectColumn]);
+	m_visibleColumns.set(PatternCursor::paramColumn2, m_visibleColumns[PatternCursor::effectColumn2]);
 	UpdateSizes();
 	UpdateScrollSize();
 	SetCurrentColumn(m_Cursor);
