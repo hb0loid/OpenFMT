@@ -106,27 +106,33 @@ struct VgmEvent
 	ModCommand::NOTE note = NOTE_NONE;
 	uint8 volume = 0;       // 0–64, 255 — не менять
 	int patch = -1;         // индекс тембра, -1 — не менять
+	int pan = -1;           // 0 влево, 128 по центру, 255 вправо, -1 — не менять
 };
 
-ModCommand::NOTE NoteFromFrequency(double hertz)
+// Голоса микросхем в этой сборке живут по нотной шкале Furnace, где до первой
+// октавы это C-4, а не C-5: импорт из Furnace переносит ноты один в один, и
+// шкала досталась от него. У FM это одна октава, а голоса SN76489 звучат на
+// две октавы выше своей ноты — ровно это и включает флаг furnacePitch, который
+// мы ставим инструментам PSG. Проверено сравнением с эталонным рендером лога:
+// без поправки FM получал вдвое более высокую частоту, а PSG звучал октавой
+// ниже лога.
+constexpr int FMOctave = 12, PSGOctave = 24;
+
+ModCommand::NOTE NoteFromFrequency(double hertz, int shift = FMOctave)
 {
 	if(!(hertz > 8.0) || hertz > 30000.0)
 		return NOTE_NONE;
-	// Голоса микросхем в этой сборке живут по нотной шкале Furnace, где до
-	// первой октавы это C-4, а не C-5: импорт из Furnace переносит ноты один
-	// в один, и шкала досталась от него. Проверено сравнением регистров: без
-	// этой поправки чип получал частоту ровно вдвое больше нужной.
-	const int note = static_cast<int>(std::lround(12.0 * std::log2(hertz / MiddleC))) + NOTE_MIDDLEC - 12;
+	const int note = static_cast<int>(std::lround(12.0 * std::log2(hertz / MiddleC))) + NOTE_MIDDLEC - shift;
 	if(note < NOTE_MIN || note > NOTE_MAX)
 		return NOTE_NONE;
 	return static_cast<ModCommand::NOTE>(note);
 }
 
-ModCommand::NOTE ClampedNote(double hertz)
+ModCommand::NOTE ClampedNote(double hertz, int shift = FMOctave)
 {
 	if(!(hertz > 0.0))
 		return NOTE_NONE;
-	const int note = static_cast<int>(std::lround(12.0 * std::log2(hertz / MiddleC))) + NOTE_MIDDLEC - 12;
+	const int note = static_cast<int>(std::lround(12.0 * std::log2(hertz / MiddleC))) + NOTE_MIDDLEC - shift;
 	return static_cast<ModCommand::NOTE>(std::clamp(note, static_cast<int>(NOTE_MIN), static_cast<int>(NOTE_MAX)));
 }
 
@@ -258,6 +264,11 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// чтобы ловить ведение уровня по ходу ноты, а не только в момент нажатия.
 	std::array<ModCommand::NOTE, FMChannels> fmSounding{};
 	std::array<uint8, FMChannels> fmLastVolume{};
+	// Панорама: микросхема умеет только «влево», «вправо» и «в оба», и драйверы
+	// ею пользуются вовсю — голос, уведённый в одну сторону, звучит на шесть
+	// децибел тише того же голоса по центру. Пока мы её не переносили, тихие
+	// крайние голоса выходили заметно громче, чем на приставке.
+	std::array<uint8, FMChannels> fmPan{3, 3, 3, 3, 3, 3};
 	std::vector<OPN2Patch> patches;
 	std::vector<VgmEvent> events;
 	uint32 sample = 0;
@@ -362,6 +373,18 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 					events.push_back({sample, channel, NOTE_KEYOFF, 255, -1});
 					fmSounding[channel] = NOTE_NONE;
 				}
+			} else if(reg >= 0xB4 && reg <= 0xB6)
+			{
+				const uint8 channel = static_cast<uint8>((port ? 3 : 0) + reg - 0xB4);
+				const uint8 sides = (value >> 6) & 3;
+				// Ноль — голос отключён от обоих выходов; это не положение в
+				// панораме, и прежнее положение мы сохраняем.
+				if(sides && sides != fmPan[channel])
+				{
+					fmPan[channel] = sides;
+					const int pan = (sides == 1) ? 255 : ((sides == 2) ? 0 : 128);
+					events.push_back({sample, channel, NOTE_NONE, 255, -1, pan});
+				}
 			} else if(reg >= 0x40 && reg <= 0x4E)
 			{
 				// Ведение уровня по ходу ноты. Драйвер плавно двигает уровень
@@ -455,7 +478,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			// У шума крайние частоты законны: на предельной скорости он уходит
 			// далеко за слышимый тон, и это шипение, а не промах. Поэтому
 			// нота поджимается к краю шкалы, а не отбрасывается.
-			const auto note = (lane == 3) ? ClampedNote(hertz) : NoteFromFrequency(hertz);
+			const auto note = (lane == 3) ? ClampedNote(hertz, PSGOctave) : NoteFromFrequency(hertz, PSGOctave);
 			const uint8 volume = static_cast<uint8>(level * 64 / 15);
 			if(!level)
 			{
@@ -671,8 +694,13 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		auto patch = std::make_shared<PSGPatch>();
 		patch->lane = lane;
 		patch->chip = 0;
+		// Периоды мы знаем точно, поэтому фёрнейсовское отображение высоких
+		// нот здесь только мешает: с ним шум уходит ещё на две октавы вниз
+		// (проверено сверкой с логом). Остаток по шуму — в другом: его высоту
+		// голос берёт из трёх предустановленных скоростей, а не из периода
+		// третьего тона, и предельной скорости лога ему не достичь.
 		patch->easyPitch = false;
-		patch->furnacePitch = false;
+		patch->furnacePitch = true;  // Те же две октавы, что и у импорта из Furnace
 		smpl.psg = std::move(patch);
 		m_szNames[smp] = (lane == 3) ? "PSG noise" : ("PSG tone " + std::to_string(lane + 1));
 		const INSTRUMENTINDEX ins = ++m_nInstruments;
@@ -725,6 +753,11 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		{
 			cell.volcmd = VOLCMD_VOLUME;
 			cell.vol = std::min<uint8>(event.volume, 64);
+		}
+		if(event.pan >= 0)
+		{
+			cell.command = CMD_PANNING8;
+			cell.param = static_cast<ModCommand::PARAM>(event.pan);
 		}
 	}
 
