@@ -846,8 +846,14 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		}
 	}
 	std::string title, author;
-	if(!FurString(info, title) || !FurString(info, author) || !info.Skip(4))
+	if(!FurString(info, title) || !FurString(info, author) || !info.CanRead(4))
 		return false;
+	// Строй песни: частота A4. Он раньше пропускался, а у Furnace он двигает
+	// все голоса микросхем — в `death egg alt 2` стоит 448 Гц, и каждый голос FM
+	// и PSG звучал у нас на 31 цент ниже, в `athletic rrt` 435 Гц — на 20 выше.
+	// Сэмплов строй не касается: их высоту задаёт их собственная частота.
+	const float furTuning = info.ReadFloatLE();
+	const double tuningRatio = (furTuning >= 300.0f && furTuning <= 600.0f) ? furTuning / 440.0 : 1.0;
 	std::array<uint8, 20> compat{};
 	if(!info.ReadArray(compat))
 		return false;
@@ -1099,6 +1105,7 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 			auto &sample = Samples[mappedSample];
 			sample.Initialize(MOD_TYPE_MPT);
 			sample.SetAdlib(true);
+			sample.nC5Speed = mpt::saturate_round<uint32>(sample.nC5Speed * tuningRatio);
 			sample.isOPN2 = true;
 			// Нота не задаёт громкость канала заново: у Furnace она живёт в
 			// канале и переживает ноты, а скольжение её двигает. Без этого
@@ -1181,6 +1188,7 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		auto &sample = Samples[smp];
 		sample.Initialize(MOD_TYPE_MPT);
 		sample.SetAdlib(true);
+		sample.nC5Speed = mpt::saturate_round<uint32>(sample.nC5Speed * tuningRatio);
 		sample.uFlags.set(SMP_NODEFAULTVOLUME);
 		sample.psg = std::move(patch);
 		const std::string name = realInstrument ? furInstruments[furIns].name : "SN76489";
@@ -1225,6 +1233,15 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		std::vector<int> currentInstrument(voices.size(), -1);
 		std::vector<unsigned> bank(voices.size(), 0);
 		std::vector<bool> legacyDAC(voices.size(), false);
+		// Вибрато у Furnace — состояние канала: 04xy включает его, и оно держится,
+		// пока не придёт 0400. У OpenMPT вибрато действует только на строке с H,
+		// а H00 значит «продолжай с прежними параметрами». Поэтому остановка
+		// переносилась как продолжение, и вибрато оставалось ровно там, где
+		// автор его выключил, а между включением и выключением, наоборот,
+		// пропадало. Здесь помним, включено ли оно, и пока нота звучит, ставим
+		// продолжение на каждую строку.
+		std::vector<uint8> vibrato(voices.size(), 0);
+		std::vector<bool> sounding(voices.size(), false);
 		std::vector<int> lastInstrument(voices.size(), 0);
 		// Громкость канала в Furnace живёт сама по себе: note on её не трогает,
 		// нота звучит тем уровнем, что стоит на канале сейчас, а меняют его
@@ -1336,10 +1353,19 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 						currentVolume[c] = cell.vol * 4;
 						volumeFraction[c] = 0;
 					}
+					bool vibratoOnRow = false;
 					for(const auto &[fx, param] : sourceRow.effects)
 					{
 						if(fx < 0) continue;
 						const auto value = static_cast<uint8>(std::max<int16>(0, param));
+						if(fx == 0x04)
+						{
+							vibratoOnRow = true;
+							vibrato[c] = value;
+							// 0400 — это остановка, а не H00 «продолжай».
+							if(!value)
+								continue;
+						}
 						if(fx == 0x08)
 						{
 							const unsigned l = value >> 4, r = value & 15;
@@ -1482,6 +1508,23 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 							}
 						}
 					}
+					if(cell.IsNote())
+						sounding[c] = true;
+					else if(cell.note == NOTE_KEYOFF || cell.note == NOTE_NOTECUT)
+						sounding[c] = false;
+					if(!vibratoOnRow && vibrato[c] && sounding[c])
+					{
+						bool hasVibrato = false;
+						for(uint8 i = 0; i < ModCommand::Effects(); i++)
+						{
+							const auto command = cell.GetEffect(i).first;
+							hasVibrato |= (command == CMD_VIBRATO || command == CMD_VIBRATOVOL);
+						}
+						// Свободного слота нет — эта строка останется без
+						// вибрато: заменять чужой эффект ради продолжения нельзя.
+						if(const uint8 slot = cell.FreeEffectSlot(); !hasVibrato && slot < ModCommand::Effects())
+							cell.SetEffect(slot, CMD_VIBRATO, 0);
+					}
 					if(sourceRow.instrument >= 0 && furIns >= 0 && furInstruments[furIns].type == 4)
 						legacyDAC[c] = false;
 					if(dacChannel && legacyDAC[c] && cell.IsNote() && sampleCount)
@@ -1599,6 +1642,19 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 	m_modFormat.type = UL_("fur");
 	m_modFormat.madeWithTracker = UL_("Furnace");
 	m_modFormat.charset = mpt::Charset::UTF8;
+	// Строй у Furnace двигает и сэмплы, которые звучат по ноте: на YMZ280B в
+	// `athletic rrt` без этого все шестнадцать сэмплерных голосов шли на 20
+	// центов выше. Сэмплы ЦАПа в старом режиме играются на собственной частоте,
+	// ноту не слушают, и строй их не касается — их и пропускаем.
+	if(tuningRatio != 1.0)
+	{
+		for(SAMPLEINDEX smp = 1; smp <= std::min<SAMPLEINDEX>(sampleCount, m_nSamples); smp++)
+		{
+			if(smp - 1u < rawSamples.size() && rawSamples[smp - 1])
+				continue;
+			Samples[smp].nC5Speed = mpt::saturate_round<uint32>(Samples[smp].nC5Speed * tuningRatio);
+		}
+	}
 #ifdef MODPLUG_TRACKER
 	if(unsupported || extraSubsongs || std::find(voices.begin(), voices.end(), FurVoice::PCM) != voices.end())
 		AddToLog(LogWarning, MPT_UFORMAT("Furnace import is approximate. {} unsupported effects or macros, {} extra subsongs. YMZ280B is represented by PCM samples.")(unsupported, extraSubsongs));
