@@ -202,8 +202,6 @@ public:
 					break;
 				}
 
-				if(sndFile.m_furnaceSlides)
-					sndFile.ProcessFurnaceSlide(chn, command, m.param, i == portaStart);
 				if(chn.autoSlide.IsActive(AutoSlideCommand::TonePortamento) && !chn.rowCommand.IsTonePortamento())
 					sndFile.TonePortamento(*state, channel, chn.portamentoSlide);
 				else if(chn.autoSlide.IsActive(AutoSlideCommand::TonePortamentoWithDuration))
@@ -1072,8 +1070,32 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 				case CMD_FINETUNE_SMOOTH:
 					chn.microTuning = CalculateFinetuneTarget(playState.m_nPattern, playState.m_nRow, nChn);
 					break;
+				case CMD_VOLUMESLIDE:
+					if(m_furnaceSlides)
+						chn.furnaceSlide.volSlide = extraParam;
+					if(extraParam)
+						chn.nOldVolumeSlide = extraParam;
+					break;
 				default:
 					break;
+				}
+			}
+
+			for(uint8 slot = 0; slot < ModCommand::Effects(); slot++)
+			{
+				const auto [chipCommand, chipParam] = chn.rowCommand.GetEffect(slot);
+				if(chipCommand >= CMD_FM_LEVEL1 && chipCommand <= CMD_FM_LEVEL4)
+				{
+					auto &state = chn.furnaceSlide;
+					if(state.opLevelsOwner != chn.pModSample)
+					{
+						state.opLevels.fill(-1);
+						state.opLevelsOwner = chn.pModSample;
+					}
+					state.opLevels[chipCommand - CMD_FM_LEVEL1] = static_cast<int16>(chipParam & 127);
+				} else if(chipCommand == CMD_PSG_NOISE)
+				{
+					chn.furnaceSlide.psgNoise = static_cast<int8>(chipParam & 3);
 				}
 			}
 
@@ -1149,19 +1171,7 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 		// подряд: на `the toilet lock` до девяти децибел, и это не выправлялось.
 		// Поэтому здесь скольжение проходит по всем каналам и всем тикам строки,
 		// ровно как при проигрывании.
-		if(m_furnaceSlides)
-		{
-			for(CHANNELINDEX nChn = 0; nChn < GetNumChannels(); nChn++)
-			{
-				ModChannel &chn = playState.Chn[nChn];
-				for(uint32 tick = 0; tick < numTicks; tick++)
-				{
-					chn.isFirstTick = (tick == 0);
-					ProcessFurnaceSlide(chn, CMD_NONE, 0, false);
-				}
-				chn.isFirstTick = true;
-			}
-		}
+		// Само скольжение считается ниже, после смены нот строки.
 
 		if(!m_globalScript.empty())
 		{
@@ -1454,6 +1464,39 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 				}
 			}
 		}
+		// Скольжения Furnace — и громкости, и высоты — здесь, в одном месте, по
+		// всем каналам и всем тикам строки, и уже после смены нот, как при
+		// проигрывании. Раньше высоту двигала ещё и синхронизация сэмплов, тик за
+		// тиком, а этот цикл двигал её второй раз: скольжение 0230 на death egg
+		// alt 2 (канал 5) после старта с середины уезжало вдвое дальше, на 180
+		// центов. Команду строки ищем во всех колонках, как при проигрывании.
+		if(m_furnaceSlides)
+		{
+			for(CHANNELINDEX nChn = 0; nChn < GetNumChannels(); nChn++)
+			{
+				ModChannel &chn = playState.Chn[nChn];
+				ModCommand::COMMAND slideCommand = CMD_NONE;
+				uint8 slideParam = 0;
+				for(uint8 slot = 0; slot < ModCommand::Effects(); slot++)
+				{
+					const auto [slotCommand, slotParam] = chn.rowCommand.GetEffect(slot);
+					if(slotCommand == CMD_PORTAMENTOUP || slotCommand == CMD_PORTAMENTODOWN
+						|| slotCommand == CMD_TONEPORTAMENTO || slotCommand == CMD_TONEPORTAVOL)
+					{
+						slideCommand = slotCommand;
+						slideParam = slotParam;
+						break;
+					}
+				}
+				for(uint32 tick = 0; tick < numTicks; tick++)
+				{
+					chn.isFirstTick = (tick == 0);
+					ProcessFurnaceSlide(chn, slideCommand, slideParam, tick == 0);
+				}
+				chn.isFirstTick = true;
+			}
+		}
+
 		oldTickDuration = tickDuration;
 
 		breakToRow = HandleNextRow(playState, orderList, false);
@@ -1506,6 +1549,20 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 				{
 					m_opl->Patch(n, *chn.pModSample);
 					m_opl->NoteCut(n);
+					// Голос создан заново, а с ним пропали правки уровней
+					// операторов и режим шума: вернуть то, что насчитала
+					// перемотка. Голос того же канала их потом сохранит.
+					const auto &state = chn.furnaceSlide;
+					if(state.opLevelsOwner == chn.pModSample)
+					{
+						for(uint8 op = 0; op < 4; op++)
+						{
+							if(state.opLevels[op] >= 0)
+								m_opl->FMOperatorLevel(n, op, static_cast<uint8>(state.opLevels[op]));
+						}
+					}
+					if(state.psgNoise >= 0)
+						m_opl->PSGNoiseMode(n, static_cast<uint8>(state.psgNoise));
 				}
 				chn.pCurrentSample = nullptr;
 			}

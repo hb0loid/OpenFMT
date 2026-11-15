@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include <array>
+
 #include "openmpt/all/BuildSettings.hpp"
 
 #include "InstrumentSynth.h"
@@ -111,6 +113,13 @@ struct ModChannel
 		int32 volAccum = 0;
 		int32 target = 0;
 		double precisePeriod = 0;
+		// Уровни операторов FM (12xx-15xx) и режим шума PSG применяются прямо
+		// к микросхеме, мимо состояния канала. Перемотка микросхему не трогает,
+		// поэтому канал помнит их здесь — чтобы при старте с середины вернуть
+		// их голосу. Уровни относятся к инструменту: сменился он — они ничьи.
+		std::array<int16, 4> opLevels{-1, -1, -1, -1};
+		const ModSample *opLevelsOwner = nullptr;
+		int8 psgNoise = -1;
 	} furnaceSlide;
 	int32 cachedPeriod, glissandoPeriod;
 	int32 nCalcVolume;                 // Calculated channel volume, 14-Bit (without global volume, pre-amp etc applied) - for MIDI macros
