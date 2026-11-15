@@ -813,6 +813,25 @@ enum ChipKind : uint8
 inline constexpr uint16 ChipVolumeUnity = 256;
 
 using OPN2Patch = std::array<uint8, 1 + 4 * 7>;
+
+// LFO инструмента YM2612 / YM2151. Чувствительность канала (AMS, FMS/PMS)
+// у чипа своя на каждый канал, поэтому живёт в инструменте. Сам LFO общий на
+// весь чип: по умолчанию он такой же, как у Furnace после сброса, а инструмент
+// может задать его сам (флаг FMLfoSetChip) — тогда LFO меняется при его ноте.
+enum FMLfoField : uint8
+{
+	FMLfoAMS = 0,    // 0-3
+	FMLfoFMS,        // 0-7 (у YM2151 это PMS)
+	FMLfoFlags,      // бит 0: инструмент задаёт LFO чипа
+	FMLfoRate,       // YM2612: 0-7; YM2151: LFRQ 0-255
+	FMLfoAMD,        // YM2151: 0-127
+	FMLfoPMD,        // YM2151: 0-127
+	FMLfoWave,       // YM2151: 0 пила, 1 меандр, 2 треугольник, 3 шум
+	FMLfoFields
+};
+inline constexpr uint8 FMLfoSetChip = 0x01;
+using FMLfo = std::array<uint8, FMLfoFields>;
+inline constexpr FMLfo DefaultFMLfo = {0, 0, 0, 0, 0x7F, 0x7F, 0};
 inline constexpr OPN2Patch DefaultOPN2Patch = {
   0x20,
   0x01, 32, 0x1F, 0x0C, 0x03, 0x48, 0,

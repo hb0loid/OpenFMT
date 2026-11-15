@@ -59,6 +59,7 @@ private:
 		// каждая нота заново грузила patch, и инструмент на миг возвращался к
 		// своему исходному, более резкому уровню.
 		OPN2Patch source = DefaultOPN2Patch;
+		FMLfo lfo = DefaultFMLfo;
 		std::array<int16, 4> levels = {-1, -1, -1, -1};
 		CHANNELINDEX channel = CHANNELINDEX_INVALID;
 		// Последний отсчёт голоса для осциллографа по каналам.
@@ -207,6 +208,37 @@ private:
 		chip.next = 0;
 		for(auto &slot : chip.slots)
 			slot = Slot{};
+		// LFO после сброса — как у Furnace: у YM2612 включён на самой медленной
+		// скорости (0x22 = 8), у YM2151 глубины AM и PM на максимуме, скорость 0,
+		// форма пила. Тогда инструмент с чувствительностью AMS/FMS качает
+		// звук сразу, как и в Furnace.
+		if(useOPM)
+		{
+			Write(chip, 0x18, 0x00);
+			Write(chip, 0x19, 0x7F);
+			Write(chip, 0x19, 0x80 | 0x7F);
+			Write(chip, 0x1B, 0x00);
+		} else
+		{
+			Write(chip, 0x22, 0x08);
+		}
+	}
+
+	// Общий LFO чипа, если инструмент его задаёт.
+	static void WriteChipLfo(Chip &chip, const FMLfo &lfo)
+	{
+		if(!(lfo[FMLfoFlags] & FMLfoSetChip))
+			return;
+		if(chip.isOPM)
+		{
+			Write(chip, 0x18, lfo[FMLfoRate]);
+			Write(chip, 0x19, static_cast<uint8>(lfo[FMLfoAMD] & 0x7F));
+			Write(chip, 0x19, static_cast<uint8>(0x80 | (lfo[FMLfoPMD] & 0x7F)));
+			Write(chip, 0x1B, static_cast<uint8>(lfo[FMLfoWave] & 3));
+		} else
+		{
+			Write(chip, 0x22, static_cast<uint8>(0x08 | (lfo[FMLfoRate] & 7)));
+		}
 	}
 
 	Slot *Find(CHANNELINDEX channel, Chip **owner = nullptr, uint8 *index = nullptr)
@@ -276,11 +308,14 @@ private:
 		{
 			const uint8 outputs = slot.muted ? 0x00 : (slot.panning < 0 ? 0x40 : slot.panning > 0 ? 0x80 : 0xC0);
 			Write(chip, ChannelRegister(chip, channel, 0x20), static_cast<uint8>(algorithmFeedback | outputs));
+			// Чувствительность канала к LFO: PMS в битах 4-6, AMS в битах 0-1.
+			Write(chip, ChannelRegister(chip, channel, 0x38), static_cast<uint8>(((slot.lfo[FMLfoFMS] & 7) << 4) | (slot.lfo[FMLfoAMS] & 3)));
 		} else
 		{
 			const uint8 outputs = slot.muted ? 0x00 : (slot.panning < 0 ? 0x80 : slot.panning > 0 ? 0x40 : 0xC0);
 			Write(chip, ChannelRegister(chip, channel, 0xB0), algorithmFeedback);
-			Write(chip, ChannelRegister(chip, channel, 0xB4), outputs);
+			// Тот же регистр, что панорама: AMS в битах 4-5, FMS в битах 0-2.
+			Write(chip, ChannelRegister(chip, channel, 0xB4), static_cast<uint8>(outputs | ((slot.lfo[FMLfoAMS] & 3) << 4) | (slot.lfo[FMLfoFMS] & 7)));
 		}
 	}
 
@@ -343,7 +378,7 @@ public:
 		}
 	}
 
-	void Patch(CHANNELINDEX channel, const OPN2Patch &patch, bool useOPM)
+	void Patch(CHANNELINDEX channel, const OPN2Patch &patch, bool useOPM, const FMLfo &lfo = DefaultFMLfo)
 	{
 		Chip &chip = m_chips[useOPM ? 1 : 0];
 		if(!chip.Exists())
@@ -417,6 +452,8 @@ public:
 		}
 		slot.lastChannel = channel;
 		slot.patch = patch;
+		slot.lfo = lfo;
+		WriteChipLfo(chip, lfo);
 		if(slot.source != patch)
 		{
 			// Инструмент сменился: правки уровней к нему не относятся.

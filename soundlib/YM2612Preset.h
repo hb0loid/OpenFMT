@@ -16,6 +16,7 @@ struct YM2612Preset
 {
 	OPN2Patch patch;
 	std::string name;
+	FMLfo lfo = DefaultFMLfo;
 };
 
 YM2612PresetFormat GetYM2612PresetFormat(std::string_view extension);

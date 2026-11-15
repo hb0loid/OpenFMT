@@ -2575,6 +2575,8 @@ void CSoundFile::SaveExtendedSongProperties(std::ostream &f) const
 			{
 				kind = sample.isOPM ? 2 : 1;
 				mpt::IO::WriteRaw(patch, sample.opn2.data(), sample.opn2.size());
+				// LFO инструмента — сразу за патчем; старые файлы его не имеют.
+				mpt::IO::WriteRaw(patch, sample.fmLfo.data(), sample.fmLfo.size());
 			}
 			const std::string data = std::move(patch).str();
 			if(data.size() + 3 > uint16_max)
@@ -2834,6 +2836,13 @@ bool CSoundFile::LoadExtendedSongProperties(FileReader &file, bool ignoreChannel
 							sample.opn2 = patch;
 							sample.isOPN2 = true;
 							sample.isOPM = (kind == 2);
+							sample.fmLfo = DefaultFMLfo;
+							for(auto &value : sample.fmLfo)
+							{
+								if(!chunk.CanRead(1))
+									break;
+								value = chunk.ReadUint8();
+							}
 						}
 					}
 				}

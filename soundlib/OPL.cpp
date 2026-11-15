@@ -377,7 +377,7 @@ void OPL::Patch(CHANNELINDEX c, const ModSample &sample)
 			if(!m_opn2->HasChannel(c))
 				NoteCut(c);
 		}
-		m_opn2->Patch(c, sample.opn2, sample.isOPM);
+		m_opn2->Patch(c, sample.opn2, sample.isOPM, sample.fmLfo);
 	} else
 	{
 		if(m_opn2)

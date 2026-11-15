@@ -53,6 +53,7 @@ struct ModSample
 	};
 
 	OPN2Patch opn2{};
+	FMLfo fmLfo = DefaultFMLfo;
 	bool isOPN2 = false;  // Four-operator Yamaha patch uses the native FM mixer.
 	bool isOPM = false;
 	std::shared_ptr<const PSGPatch> psg;

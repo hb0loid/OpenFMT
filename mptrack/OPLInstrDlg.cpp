@@ -22,6 +22,7 @@ BEGIN_MESSAGE_MAP(OPLInstrDlg, DialogBase)
 	ON_WM_HSCROLL()
 	ON_WM_SIZE()
 	ON_COMMAND(2720, &OPLInstrDlg::Randomize)
+	ON_CONTROL_RANGE(BN_CLICKED, 2732, 2753, &OPLInstrDlg::OnExtraClicked)
 	ON_MESSAGE(WM_MOD_DRAGONDROPPING, &OPLInstrDlg::OnDragonDropping)
 	ON_COMMAND(IDC_CHECK1, &OPLInstrDlg::ParamsChanged)
 	ON_COMMAND(IDC_CHECK2, &OPLInstrDlg::ParamsChanged)
@@ -92,8 +93,14 @@ struct OPN2Param
 
 constexpr OPN2Param Algorithm{0, 0, 7}, Feedback{0, 3, 7};
 constexpr int OPN2Rows = 9;   // параметров в операторе, нарисованных в ресурсах
-constexpr int OPN2LayoutRows = OPN2Rows + 1;  // плюс SSG-EG / Detune 2
+constexpr int OPN2AmRows = 1;  // ряд флажка AM под операторами
+constexpr int OPN2LayoutRows = OPN2Rows + 1 + OPN2AmRows;  // плюс SSG-EG / Detune 2 и флажок AM
 constexpr int ExtraLabelId = 2700, ExtraSliderId = 2710, RandomButtonId = 2720;
+// Строка LFO: подписи 2730+, ползунки 2740+ (по полю FMLfo), флажок «задать
+// LFO чипа» 2732, флажки AM операторов 2750-2753.
+constexpr int LfoLabelId = 2730, LfoSliderId = 2740, LfoSetChipId = 2732, AmCheckId = 2750;
+// Какие поля FMLfo показываются ползунками и в каком порядке.
+constexpr FMLfoField LfoSliders[] = {FMLfoAMS, FMLfoFMS, FMLfoRate, FMLfoAMD, FMLfoPMD, FMLfoWave};
 constexpr int OPN2MinRow = 16;
 // Выше этого ряды разъезжаются впустую: на развёрнутом окне между слайдерами
 // получались пустые полосы в полсотни пикселей. Лишнюю высоту лучше оставить
@@ -161,7 +168,7 @@ BOOL OPLInstrDlg::OnInitDialog()
 		}
 		// Минимум нарочно меньше нарисованного: вкладке сэмплов часто достаётся
 		// полоса ниже диалога, и тогда нижние ряды уезжали бы за край.
-		m_minimumHeight = m_designedRects[IDC_OPN2_GROUP1].top + OPN2LayoutRows * OPN2MinRow + 20;
+		m_minimumHeight = m_designedRects[IDC_OPN2_GROUP1].top + 24 + OPN2LayoutRows * OPN2MinRow + 20;
 		return TRUE;
 	}
 	CreateExtraControls();
@@ -204,7 +211,9 @@ CSize OPLInstrDlg::GetPreferredSize() const
 	const CRect &label = m_designedRects.at(IDC_OPN2_LABEL1);
 	const int column = 5 + label.Width() + unit.Width() + 9;
 	const int rowTop = label.top - group.top;
-	return CSize(group.left * 2 + column * 4, group.top + rowTop + OPN2LayoutRows * std::max<int>(unit.Height(), OPN2MinRow) + 20);
+	CRect lfoRow(0, 0, 0, 16);
+	const_cast<OPLInstrDlg *>(this)->MapDialogRect(lfoRow);
+	return CSize(group.left * 2 + column * 4, group.top + lfoRow.Height() + rowTop + OPN2LayoutRows * std::max<int>(unit.Height(), OPN2MinRow) + 20);
 }
 
 
@@ -284,8 +293,11 @@ void OPLInstrDlg::LayoutOPN2()
 	// масштабу (лупы на панели): так и на полном экране размер выбирается.
 	const int columnWidth = (client.Width() - margin * 2) / 4;
 	const int usedWidth = columnWidth * 4;
-	const int groupTop = group.top;
-	const int rowTop = label.top - groupTop;
+	// Под строкой алгоритма — строка LFO, рамки операторов опускаются на неё.
+	CRect lfoRow(0, 0, 0, 16);
+	MapDialogRect(lfoRow);
+	const int groupTop = group.top + lfoRow.Height();
+	const int rowTop = label.top - group.top;
 	const int available = client.Height() - groupTop - 6 - rowTop - 8;
 	const int rowHeight = std::max(available / OPN2LayoutRows, OPN2MinRow);
 	// Рамка кончается сразу под последним рядом, а не тянется до низа окна.
@@ -308,6 +320,41 @@ void OPLInstrDlg::LayoutOPN2()
 	place(IDC_OPN2_FIRST + 1, fbStart, algSlider.top, std::max(buttonLeft - 10 - fbStart, 40), algSlider.Height());
 	place(RandomButtonId, buttonLeft, algSlider.top - 1, buttonSize.Width(), buttonSize.Height());
 
+	// Строка LFO: подпись, ползунок, подпись, ползунок… и флажок перед
+	// общими параметрами чипа. У YM2612 общих параметров только скорость.
+	{
+		const int y = algSlider.top + lfoRow.Height();
+		const int sliders = m_isOPM ? 6 : 3;
+		CRect checkSize(0, 0, 62, 10);
+		MapDialogRect(checkSize);
+		int labelsWidth = 0;
+		for(int i = 0; i < sliders; i++)
+			labelsWidth += 34;
+		CRect labelUnit(0, 0, 34, 9);
+		MapDialogRect(labelUnit);
+		labelsWidth = labelUnit.Width() * sliders;
+		const int sliderWidth = std::max((usedWidth - labelsWidth - checkSize.Width() - 8 * sliders - 12) / sliders, 30);
+		int x = margin;
+		for(int i = 0; i < 6; i++)
+		{
+			const FMLfoField field = LfoSliders[i];
+			const bool shown = i < sliders;
+			if(CWnd *w = GetDlgItem(LfoLabelId + field)) w->ShowWindow(shown ? SW_SHOW : SW_HIDE);
+			if(CWnd *w = GetDlgItem(LfoSliderId + field)) w->ShowWindow(shown ? SW_SHOW : SW_HIDE);
+			if(!shown)
+				continue;
+			if(field == FMLfoRate)
+			{
+				place(LfoSetChipId, x, y, checkSize.Width(), checkSize.Height());
+				x += checkSize.Width() + 6;
+			}
+			place(LfoLabelId + field, x, y + 1, labelUnit.Width(), labelUnit.Height());
+			x += labelUnit.Width();
+			place(LfoSliderId + field, x, y - 1, sliderWidth, algSlider.Height());
+			x += sliderWidth + 8;
+		}
+	}
+
 	for(int op = 0; op < 4; op++)
 	{
 		const int left = margin + op * columnWidth;
@@ -316,6 +363,12 @@ void OPLInstrDlg::LayoutOPN2()
 		{
 			const int y = groupTop + rowTop + row * rowHeight;
 			const int sliderLeft = left + 5 + labelWidth;
+			if(row == OPN2Rows + 1)
+			{
+				// Флажок AM занимает весь ряд.
+				place(AmCheckId + op, left + 5, y - 1, columnWidth - 14, label.Height() + 2);
+				continue;
+			}
 			const bool extra = row == OPN2Rows;
 			place(extra ? ExtraLabelId + op : IDC_OPN2_LABEL1 + op * OPN2Rows + row, left + 5, y, labelWidth, label.Height());
 			place(extra ? ExtraSliderId + op : IDC_OPN2_FIRST + 2 + op * OPN2Rows + row, sliderLeft, y - 2,
@@ -338,7 +391,18 @@ void OPLInstrDlg::CreateExtraControls()
 			m_extraLabel[op].SetFont(font);
 			m_extraSlider[op].Create(WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_HORZ | TBS_TOOLTIPS, placeholder, this, ExtraSliderId + op);
 			m_extraSlider[op].SetRange(0, 8);
+			m_amCheck[op].Create(_T("AM (LFO tremolo)"), WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, placeholder, this, AmCheckId + op);
+			m_amCheck[op].SetFont(font);
 		}
+		static constexpr const TCHAR *lfoNames[] = {_T("AMS"), _T("FMS"), _T(""), _T("Rate"), _T("AM Depth"), _T("PM Depth"), _T("Wave")};
+		for(const FMLfoField field : LfoSliders)
+		{
+			m_lfoLabel[field].Create(lfoNames[field], WS_CHILD | WS_VISIBLE | SS_LEFT, placeholder, this, LfoLabelId + field);
+			m_lfoLabel[field].SetFont(font);
+			m_lfoSlider[field].Create(WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_HORZ | TBS_TOOLTIPS, placeholder, this, LfoSliderId + field);
+		}
+		m_lfoSetChip.Create(_T("Set chip LFO"), WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, placeholder, this, LfoSetChipId);
+		m_lfoSetChip.SetFont(font);
 	}
 	// Кнопка случайного патча. У YM2612 её ставит раскладка, у OPL — сюда:
 	// в просвет между флажком и обратной связью в верхней строке.
@@ -378,7 +442,13 @@ void OPLInstrDlg::Randomize()
 		}
 		m_parent.SendMessage(WM_MOD_VIEWMSG, VIEWMSG_PREPAREUNDO);
 		*m_opn2Patch = patch;
-		SetPatch(*m_opn2Patch, m_isOPM);
+		if(m_fmLfo)
+		{
+			// Случайный патч чаще без LFO, иногда с лёгким вибрато.
+			(*m_fmLfo)[FMLfoAMS] = 0;
+			(*m_fmLfo)[FMLfoFMS] = static_cast<uint8>(rnd(0, 4) == 0 ? rnd(1, 3) : 0);
+			SetPatch(*m_opn2Patch, m_isOPM, *m_fmLfo);
+		}
 		m_parent.SendMessage(WM_MOD_VIEWMSG, VIEWMSG_SETMODIFIED, SampleHint().Data().AsLPARAM());
 	} else if(!m_isOPN2 && m_patch)
 	{
@@ -516,7 +586,7 @@ void OPLInstrDlg::SetPatch(OPLPatch &patch)
 }
 
 
-void OPLInstrDlg::SetPatch(OPN2Patch &patch, bool opm)
+void OPLInstrDlg::SetPatch(OPN2Patch &patch, bool opm, FMLfo &lfo)
 {
 	SetDlgItemText(2558, opm ? _T("YM2151 / OPM") : _T("YM2612 / OPN2"));
 	m_isOPM = opm;
@@ -543,7 +613,48 @@ void OPLInstrDlg::SetPatch(OPN2Patch &patch, bool opm)
 			m_extraSlider[op].SetPos((ssg & 8) ? (ssg & 7) + 1 : 0);
 		}
 	}
+	for(int op = 0; op < 4; op++)
+	{
+		if(m_amCheck[op].m_hWnd)
+			m_amCheck[op].SetCheck((patch[1 + op * 7 + 3] & 0x80) ? BST_CHECKED : BST_UNCHECKED);
+	}
+	if(m_lfoSlider[FMLfoAMS].m_hWnd)
+	{
+		m_lfoLabel[FMLfoFMS].SetWindowText(opm ? _T("PMS") : _T("FMS"));
+		const int ranges[FMLfoFields] = {3, 7, 0, opm ? 255 : 7, 127, 127, 3};
+		for(const FMLfoField field : LfoSliders)
+		{
+			m_lfoSlider[field].SetRange(0, ranges[field], TRUE);
+			m_lfoSlider[field].SetPos(lfo[field]);
+		}
+		m_lfoSetChip.SetCheck((lfo[FMLfoFlags] & FMLfoSetChip) ? BST_CHECKED : BST_UNCHECKED);
+	}
+	m_fmLfo = &lfo;
 	m_opn2Patch = &patch;
+	UpdateLfoEnable();
+	if(m_isOPN2)
+		LayoutOPN2();
+}
+
+
+// Общие параметры LFO доступны, только когда инструмент их задаёт.
+void OPLInstrDlg::UpdateLfoEnable()
+{
+	if(!m_lfoSetChip.m_hWnd)
+		return;
+	const bool setChip = m_lfoSetChip.GetCheck() != BST_UNCHECKED;
+	for(const FMLfoField field : {FMLfoRate, FMLfoAMD, FMLfoPMD, FMLfoWave})
+	{
+		m_lfoSlider[field].EnableWindow(setChip);
+		m_lfoLabel[field].EnableWindow(setChip);
+	}
+}
+
+
+void OPLInstrDlg::OnExtraClicked(UINT)
+{
+	UpdateLfoEnable();
+	ParamsChanged();
 }
 
 
@@ -567,10 +678,26 @@ void OPLInstrDlg::OPN2ParamsChanged()
 		else
 			patch[1 + op * 7 + 6] = static_cast<uint8>(value > 0 ? (8 | ((value - 1) & 7)) : 0);
 	}
-	if(patch != *m_opn2Patch)
+	for(int op = 0; op < 4; op++)
+	{
+		if(!m_amCheck[op].m_hWnd)
+			continue;
+		uint8 &reg = patch[1 + op * 7 + 3];
+		reg = static_cast<uint8>((reg & 0x7F) | (m_amCheck[op].GetCheck() != BST_UNCHECKED ? 0x80 : 0));
+	}
+	FMLfo lfo = m_fmLfo ? *m_fmLfo : DefaultFMLfo;
+	if(m_lfoSlider[FMLfoAMS].m_hWnd)
+	{
+		for(const FMLfoField field : LfoSliders)
+			lfo[field] = static_cast<uint8>(m_lfoSlider[field].GetPos());
+		lfo[FMLfoFlags] = static_cast<uint8>((lfo[FMLfoFlags] & ~FMLfoSetChip) | (m_lfoSetChip.GetCheck() != BST_UNCHECKED ? FMLfoSetChip : 0));
+	}
+	if(patch != *m_opn2Patch || (m_fmLfo && lfo != *m_fmLfo))
 	{
 		m_parent.SendMessage(WM_MOD_VIEWMSG, VIEWMSG_PREPAREUNDO);
 		*m_opn2Patch = patch;
+		if(m_fmLfo)
+			*m_fmLfo = lfo;
 		m_parent.SendMessage(WM_MOD_VIEWMSG, VIEWMSG_SETMODIFIED, SampleHint().Data().AsLPARAM());
 	}
 }
@@ -630,6 +757,39 @@ CString OPLInstrDlg::GetToolTipText(UINT id, HWND) const
 	}
 	if(id == RandomButtonId)
 		return _T("Random patch (undo with Ctrl+Z)");
+	if(id >= LfoSliderId && id < LfoSliderId + FMLfoFields && slider != nullptr)
+	{
+		const int pos = slider->GetPos();
+		switch(id - LfoSliderId)
+		{
+		case FMLfoAMS:
+			{
+				static constexpr const TCHAR *ams[] = {_T("0 dB"), _T("1.4 dB"), _T("5.9 dB"), _T("11.8 dB")};
+				return CString(_T("Tremolo depth (AMS): ")) + (m_isOPM ? mpt::cfmt::val(pos) : CString(ams[pos & 3]));
+			}
+		case FMLfoFMS:
+			{
+				static constexpr const TCHAR *fms[] = {_T("0"), _T("±3.4 cents"), _T("±6.7 cents"), _T("±10 cents"), _T("±14 cents"), _T("±20 cents"), _T("±40 cents"), _T("±80 cents")};
+				return CString(m_isOPM ? _T("Vibrato depth (PMS): ") : _T("Vibrato depth (FMS): ")) + (m_isOPM ? mpt::cfmt::val(pos) : CString(fms[pos & 7]));
+			}
+		case FMLfoRate:
+			{
+				if(m_isOPM)
+					return _T("LFO frequency (LFRQ): ") + mpt::cfmt::val(pos);
+				static constexpr const TCHAR *rates[] = {_T("3.98 Hz"), _T("5.56 Hz"), _T("6.02 Hz"), _T("6.37 Hz"), _T("6.88 Hz"), _T("9.63 Hz"), _T("48.1 Hz"), _T("72.2 Hz")};
+				return CString(_T("LFO speed: ")) + rates[pos & 7];
+			}
+		case FMLfoAMD: return _T("LFO AM depth: ") + mpt::cfmt::val(pos);
+		case FMLfoPMD: return _T("LFO PM depth: ") + mpt::cfmt::val(pos);
+		case FMLfoWave:
+			{
+				static constexpr const TCHAR *waves[] = {_T("saw"), _T("square"), _T("triangle"), _T("noise")};
+				return CString(_T("LFO waveform: ")) + waves[pos & 3];
+			}
+		}
+	}
+	if(id == LfoSetChipId)
+		return _T("When this instrument plays, it sets the chip's shared LFO. Otherwise the LFO keeps its current setting (Furnace default after reset).");
 	switch(id)
 	{
 	case IDC_SLIDER1:

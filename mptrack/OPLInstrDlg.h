@@ -45,7 +45,16 @@ class OPLInstrDlg : public DialogBase
 	CStatic m_extraLabel[4];
 	CSliderCtrl m_extraSlider[4];
 	CButton m_randomButton;
+	// LFO: флажок AM у каждого оператора и строка над операторами —
+	// чувствительность канала, а также общий LFO чипа, если инструмент его задаёт.
+	CButton m_amCheck[4];
+	CStatic m_lfoLabel[7];
+	CSliderCtrl m_lfoSlider[7];
+	CButton m_lfoSetChip;
+	FMLfo *m_fmLfo = nullptr;
 	bool m_isOPM = false;
+	void UpdateLfoEnable();
+	afx_msg void OnExtraClicked(UINT id);
 	void CreateExtraControls();
 	void Randomize();
 	// Нарисованные в ресурсах положения всех элементов редактора OPL.
@@ -56,7 +65,7 @@ public:
 	~OPLInstrDlg();
 	void SetEnabled(bool enabled);
 	void SetPatch(OPLPatch &patch);
-	void SetPatch(OPN2Patch &patch, bool opm);
+	void SetPatch(OPN2Patch &patch, bool opm, FMLfo &lfo);
 	bool IsOPN2() const { return m_isOPN2; }
 	CSize GetMinimumSize() const
 	{

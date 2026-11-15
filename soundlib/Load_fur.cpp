@@ -129,6 +129,7 @@ struct FurInstrument
 	// звучит «crash», у которого своего сэмпла нет вовсе.
 	int sample = 0;
 	OPN2Patch patch = FurnaceDefaultPatch;
+	FMLfo lfo = DefaultFMLfo;
 	bool hasFMPatch = false;
 	std::array<std::pair<int16, int16>, 120> noteMap{};
 	bool mapped = false;
@@ -212,7 +213,11 @@ void ReadFurFM(FileReader file, FurInstrument &ins, uint16 version)
 {
 	const auto flags = file.ReadUint8();
 	const auto algorithm = file.ReadUint8();
-	file.Skip(2 + (version >= 224 ? 1 : 0));
+	// Чувствительность канала к LFO: AMS в битах 3-4, FMS (у YM2151 PMS) в 0-2.
+	const auto sensitivity = file.ReadUint8();
+	ins.lfo[FMLfoAMS] = static_cast<uint8>((sensitivity >> 3) & 3);
+	ins.lfo[FMLfoFMS] = static_cast<uint8>(sensitivity & 7);
+	file.Skip(1 + (version >= 224 ? 1 : 0));
 	if((flags & 15) != 4 || !file.CanRead(32))
 		return;
 	ins.hasFMPatch = true;
@@ -291,7 +296,11 @@ bool ReadFurInstrument(FileReader file, const std::string &id, FurInstrument &in
 	ins.type &= 0xff;
 	const auto algorithm = file.ReadUint8(), feedback = file.ReadUint8();
 	ins.patch[0] = static_cast<uint8>(((feedback & 7) << 3) | (algorithm & 7));
-	file.Skip(6);
+	// Старый формат: FMS, AMS, число операторов, пресет OPLL и два резервных.
+	const auto fms = file.ReadUint8(), ams = file.ReadUint8();
+	ins.lfo[FMLfoFMS] = static_cast<uint8>(fms & 7);
+	ins.lfo[FMLfoAMS] = static_cast<uint8>(ams & 3);
+	file.Skip(4);
 	constexpr uint8 map[] = {0, 2, 1, 3};
 	for(uint8 op : map)
 	{
@@ -658,6 +667,7 @@ std::optional<YM2612Preset> ReadYM2612Preset(FileReader file, YM2612PresetFormat
 			if(!ReadFurInstrument(file, id, instrument, unsupported, true) || instrument.type != 1 || !instrument.hasFMPatch)
 				return std::nullopt;
 			preset.patch = instrument.patch;
+			preset.lfo = instrument.lfo;
 			preset.name = std::move(instrument.name);
 		}
 		break;
@@ -669,10 +679,10 @@ std::optional<YM2612Preset> ReadYM2612Preset(FileReader file, YM2612PresetFormat
 			const auto system = file.ReadUint8();
 			if((system != 2 && system != 9) || file.ReadUint8() != 1)
 				return std::nullopt;
-			file.Skip(1);  // FMS
+			preset.lfo[FMLfoFMS] = static_cast<uint8>(file.ReadUint8() & 7);
 			const auto feedback = file.ReadUint8(), algorithm = file.ReadUint8();
 			preset.patch[0] = static_cast<uint8>(((feedback & 7) << 3) | (algorithm & 7));
-			file.Skip(1);  // AMS
+			preset.lfo[FMLfoAMS] = static_cast<uint8>(file.ReadUint8() & 3);
 			for(auto op : operatorOrder)
 			{
 				const auto reg = file.ReadArray<uint8, 11>();
@@ -724,7 +734,10 @@ std::optional<YM2612Preset> ReadYM2612Preset(FileReader file, YM2612PresetFormat
 			file.ReadString<mpt::String::spacePadded>(preset.name, 32);
 			file.Skip(3);  // MIDI note offset and percussion key
 			preset.patch[0] = file.ReadUint8() & 63;
-			file.Skip(1);  // LFO sensitivity
+			// Чувствительность к LFO в формате регистра B4: AMS в битах 4-5, FMS в 0-2.
+			const auto sensitivity = file.ReadUint8();
+			preset.lfo[FMLfoAMS] = static_cast<uint8>((sensitivity >> 4) & 3);
+			preset.lfo[FMLfoFMS] = static_cast<uint8>(sensitivity & 7);
 			constexpr uint8 masks[] = {0x7f, 0x7f, 0xdf, 0x9f, 0x1f, 0xff, 0x0f};
 			for(auto op : operatorOrder)
 				for(size_t reg = 0; reg < std::size(masks); reg++)
@@ -1149,6 +1162,7 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 			sample.uFlags.set(SMP_NODEFAULTVOLUME);
 			sample.isOPM = fur.type == 33;
 			sample.opn2 = fur.patch;
+			sample.fmLfo = fur.lfo;
 			m_szNames[mappedSample] = fur.name;
 		} else if(fur.type == 4 || fur.type == 41)
 		{

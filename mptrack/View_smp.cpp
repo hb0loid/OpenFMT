@@ -470,7 +470,7 @@ void CViewSample::UpdateOPLEditor()
 		}
 	}
 	if(sample.isOPN2)
-		m_oplEditor->SetPatch(sample.opn2, sample.isOPM);
+		m_oplEditor->SetPatch(sample.opn2, sample.isOPM, sample.fmLfo);
 	else
 		m_oplEditor->SetPatch(sample.adlib);
 	m_oplEditor->SetEnabled(true);

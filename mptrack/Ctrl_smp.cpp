@@ -1013,6 +1013,7 @@ bool CCtrlSamples::OpenSample(const mpt::PathString &fileName, FlagSet<OpenSampl
 		sample.SetAdlib(true);
 		sample.isOPN2 = true;
 		sample.opn2 = preset->patch;
+		sample.fmLfo = preset->lfo;
 		m_sndFile.m_szNames[m_nSample] = preset->name;
 		m_sndFile.InitOPL();
 		bOk = true;
