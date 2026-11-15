@@ -4,8 +4,9 @@
  * Назначение: звук каждого канала отдельно, для осциллографов по каналам.
  *
  * Общий осциллограф показывает сумму, в которой голоса не разобрать. Здесь у
- * каждого канала своё кольцо: микшер складывает в него свой вклад, рисование
- * забирает последние отсчёты. Замка нет и быть не должно — аудиопоток ждать
+ * каждого канала своё кольцо. За блок микширования источники — чипы и
+ * сэмплы — прибавляют свой вклад в накопитель, в конце блока он уходит в
+ * кольцо, рисование забирает последние отсчёты. Замка нет и быть не должно — аудиопоток ждать
  * не может, — поэтому счётчик публикуется один раз на блок, а не на отсчёт.
  *
  * Пока приёмник не включён, вся работа сводится к проверке указателя: платить
@@ -16,6 +17,7 @@
 
 #include "openmpt/all/BuildSettings.hpp"
 #include "Snd_defs.h"
+#include <algorithm>
 #include <array>
 #include <atomic>
 
@@ -43,28 +45,60 @@ private:
 	// редакторе, — поэтому не флаг, а счётчик: иначе закрытие одного окна
 	// гасило бы картинку в другом.
 	std::atomic<int> m_users{0};
+	// Накопитель текущего блока; трогает только аудиопоток.
+	std::array<std::array<float, 512>, Channels> m_pending{};
+	std::array<bool, Channels> m_touched{};
+	uint32 m_blockLength = 0;
 
 public:
 	void AddUser() { m_users.fetch_add(1, std::memory_order_acq_rel); }
 	void RemoveUser() { if(m_users.load(std::memory_order_acquire) > 0) m_users.fetch_sub(1, std::memory_order_acq_rel); }
 	bool IsEnabled() const { return m_users.load(std::memory_order_acquire) > 0; }
 
-	// Добавить отсчёт канала. Вызывается из микшера на каждый отсчёт, поэтому
-	// здесь нет ни атомарных операций, ни ветвлений сверх необходимого.
-	inline void Push(CHANNELINDEX channel, float value)
+	// Блок микширования: сюда каждый источник прибавляет свой вклад в канал —
+	// и чип, и сэмплы, и несколько голосов одного канала (фоновые ноты NNA).
+	// Поэтому не «дописать отсчёт», а «прибавить к i-му отсчёту блока».
+	static constexpr uint32 MaxBlock = 512;  // MIXBUFFERSIZE
+
+	void BeginBlock(uint32 count)
 	{
-		if(channel >= Channels)
+		m_blockLength = std::min(count, MaxBlock);
+		m_touched.fill(false);
+	}
+
+	// Канал звучит в этом блоке, даже если вклад нулевой: картинка должна
+	// показать тишину, а не застыть на прошлом.
+	inline void Touch(CHANNELINDEX channel)
+	{
+		if(channel >= Channels || m_touched[channel])
 			return;
-		Lane &lane = m_lanes[channel];
-		lane.samples[lane.head & (Size - 1)] = value;
-		lane.head++;
+		m_touched[channel] = true;
+		std::fill(m_pending[channel].begin(), m_pending[channel].begin() + m_blockLength, 0.0f);
+	}
+
+	inline void Add(CHANNELINDEX channel, size_t index, float value)
+	{
+		if(channel >= Channels || index >= m_blockLength)
+			return;
+		Touch(channel);
+		m_pending[channel][index] += value;
 	}
 
 	// Конец блока: отдать рисованию то, что набралось.
 	void Publish()
 	{
-		for(auto &lane : m_lanes)
+		for(uint32 channel = 0; channel < Channels; channel++)
+		{
+			Lane &lane = m_lanes[channel];
+			if(m_touched[channel])
+			{
+				for(uint32 i = 0; i < m_blockLength; i++)
+					lane.samples[(lane.head + i) & (Size - 1)] = m_pending[channel][i];
+				lane.head += m_blockLength;
+			}
 			lane.written.store(lane.head, std::memory_order_release);
+		}
+		m_touched.fill(false);
 	}
 
 	void Clear()

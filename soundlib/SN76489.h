@@ -347,7 +347,7 @@ public:
 					if(scopes != nullptr && voice.channel != CHANNELINDEX_INVALID)
 					{
 						// В тех же единицах, что и общий осциллограф.
-						scopes->Push(voice.channel, static_cast<float>(
+						scopes->Add(voice.channel, i, static_cast<float>(
 							(signal - voice.dc) * (left[lane] + right[lane]) * 0.5 / 134217728.0));
 					}
 				}

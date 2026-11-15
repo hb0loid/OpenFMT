@@ -683,7 +683,7 @@ public:
 					{
 						const CHANNELINDEX channel = chip.slots[v].channel;
 						if(channel != CHANNELINDEX_INVALID)
-							scopes->Push(channel, static_cast<float>(chip.slots[v].scopeValue * gain / 134217728.0));
+							scopes->Add(channel, i, static_cast<float>(chip.slots[v].scopeValue * gain / 134217728.0));
 					}
 				}
 			}

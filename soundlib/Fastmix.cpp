@@ -18,6 +18,7 @@
 
 #include "stdafx.h"
 #include "Sndfile.h"
+#include "ChannelScopes.h"
 #include "MixerLoops.h"
 #include "MixFuncTable.h"
 #include "plugins/PlugInterface.h"
@@ -394,6 +395,40 @@ bool CSoundFile::MixChannel(int count, ModChannel &chn, CHANNELINDEX channel, bo
 					mixState.dwFlags |= SNDMIXPLUGINSTATE::psfMixReady;
 				}
 			}
+		}
+
+		// Осциллограф канала: его вклад — разница буфера до и после того,
+		// как канал в него смешан. Звук этим не затрагивается: смотрим, а не
+		// перенаправляем. Снимок делается здесь, когда буфер уже выбран и
+		// подготовлен; разницу считает деструктор на любом выходе.
+		struct ScopeTap
+		{
+			ChannelScopes *scopes = nullptr;
+			const mixsample_t *buffer = nullptr;
+			CHANNELINDEX channel = 0;
+			int count = 0;
+			std::array<mixsample_t, MIXBUFFERSIZE * 2> before;
+			~ScopeTap()
+			{
+				if(!scopes)
+					return;
+				scopes->Touch(channel);
+				const double scale = std::is_floating_point<mixsample_t>::value ? 0.5 : 0.5 / 134217728.0;
+				for(int i = 0; i < count; i++)
+				{
+					const double sum = static_cast<double>(buffer[2 * i] - before[2 * i]) + static_cast<double>(buffer[2 * i + 1] - before[2 * i + 1]);
+					if(sum != 0)
+						scopes->Add(channel, i, static_cast<float>(sum * scale));
+				}
+			}
+		} scopeTap;
+		if(m_channelScopes != nullptr && m_channelScopes->IsEnabled() && count <= MIXBUFFERSIZE)
+		{
+			scopeTap.scopes = m_channelScopes;
+			scopeTap.buffer = pbuffer;
+			scopeTap.channel = chn.nMasterChn ? static_cast<CHANNELINDEX>(chn.nMasterChn - 1) : channel;
+			scopeTap.count = count;
+			std::copy(pbuffer, pbuffer + count * 2, scopeTap.before.begin());
 		}
 
 		if(chn.isPaused)

@@ -303,6 +303,11 @@ samplecount_t CSoundFile::Read(samplecount_t count, IAudioTarget &target, IAudio
 			inputMonitor->get().Process(mpt::audio_span_planar<const mixsample_t>(buffers, m_MixerSettings.NumInputChannels, countChunk));
 		}
 
+		// Осциллографы по каналам: новый блок, источники прибавляют в него
+		// свой вклад — сэмплы в CreateStereoMix, чипы ниже.
+		if(m_channelScopes != nullptr && m_channelScopes->IsEnabled())
+			m_channelScopes->BeginBlock(countChunk);
+
 		CreateStereoMix(countChunk);
 
 		if(m_opl)
