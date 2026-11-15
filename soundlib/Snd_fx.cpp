@@ -980,6 +980,10 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 
 			case CMD_VIBRATOVOL:
 				if (param) chn.nOldVolumeSlide = param;
+				// У Furnace 05xy продолжает вибрато, а не выключает его; ниже
+				// param = 0 в фёрнейсовском режиме значило бы остановку.
+				if(m_furnaceSlides)
+					break;
 				param = 0;
 				[[fallthrough]];
 			case CMD_VIBRATO:
@@ -1018,6 +1022,59 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 
 			default:
 				break;
+			}
+
+			// Вторая колонка эффектов. Перемотка — то, что восстанавливает
+			// состояние каналов, когда воспроизведение запускают не с начала, —
+			// читала только первую колонку. Всё, что импорт Furnace кладёт во
+			// вторую (вибрато и его остановки, подстройку, панораму, громкость),
+			// при старте с середины терялось: вибрато оставалось включённым или
+			// выключенным не там, канал застревал в одном ухе. Здесь — только
+			// то, что задаёт состояние; скольжения второй колонки при перемотке
+			// не накапливаются, чтобы не посчитать их дважды.
+			for(uint8 slot = 1; slot < ModCommand::Effects(); slot++)
+			{
+				const auto [extraCommand, extraParam] = chn.rowCommand.GetEffect(slot);
+				switch(extraCommand)
+				{
+				case CMD_VIBRATO:
+					if(m_furnaceSlides && !extraParam)
+						chn.dwFlags.reset(CHN_VIBRATO);
+					else
+						Vibrato(chn, extraParam);
+					break;
+				case CMD_VIBRATOVOL:
+					if(extraParam)
+						chn.nOldVolumeSlide = extraParam;
+					if(!m_furnaceSlides)
+						Vibrato(chn, 0);
+					break;
+				case CMD_TREMOLO:
+					if(m_furnaceSlides && !extraParam)
+						chn.dwFlags.reset(CHN_TREMOLO);
+					else
+						Tremolo(chn, extraParam);
+					break;
+				case CMD_PANNING8:
+					Panning(chn, extraParam, Pan8bit);
+					break;
+				case CMD_CHANNELVOLUME:
+					if(extraParam <= 64)
+						chn.nGlobalVol = extraParam;
+					break;
+				case CMD_VOLUME:
+					memory.chnSettings[nChn].vol = extraParam;
+					break;
+				case CMD_VOLUME8:
+					memory.chnSettings[nChn].vol = static_cast<uint8>((extraParam + 3u) / 4u);
+					break;
+				case CMD_FINETUNE:
+				case CMD_FINETUNE_SMOOTH:
+					chn.microTuning = CalculateFinetuneTarget(playState.m_nPattern, playState.m_nRow, nChn);
+					break;
+				default:
+					break;
+				}
 			}
 
 			switch(chn.rowCommand.volcmd)
