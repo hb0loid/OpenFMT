@@ -93,6 +93,12 @@ protected:
 	ROWINDEX editRow = ROWINDEX_INVALID;
 	UINT xParam, xMultiplier;
 	bool modified = false;
+	// Какой эффект строки правит окно: 0 — первая колонка, 1 — вторая. Берётся
+	// из колонки, на которой стоял курсор, когда окно открыли.
+	uint8 effectSlot = 0;
+	ModCommand::COMMAND SlotCommand() const { return m->GetEffect(effectSlot).first; }
+	ModCommand::PARAM SlotParam() const { return m->GetEffect(effectSlot).second; }
+	void SetSlotEffect(ModCommand::COMMAND command, ModCommand::PARAM param) { m->SetEffect(effectSlot, static_cast<decltype(m->GetEffect(0).first)>(command), param); }
 
 public:
 	CEditCommand(CSoundFile &sndFile);

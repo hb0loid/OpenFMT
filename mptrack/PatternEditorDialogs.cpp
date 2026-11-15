@@ -623,6 +623,7 @@ bool CEditCommand::ShowEditWindow(PATTERNINDEX pat, const PatternCursor &cursor,
 
 	m = sndFile.Patterns[pat].GetpModCommand(row, chn);
 	modified = false;
+	effectSlot = (cursor.GetColumnType() == PatternCursor::effectColumn2 || cursor.GetColumnType() == PatternCursor::paramColumn2) ? 1 : 0;
 
 	InitAll();
 
@@ -641,12 +642,14 @@ bool CEditCommand::ShowEditWindow(PATTERNINDEX pat, const PatternCursor &cursor,
 			cbnVolCmd.SetFocus();
 		break;
 	case PatternCursor::effectColumn:
+	case PatternCursor::effectColumn2:
 		if(m->IsPcNote())
 			sldParam.SetFocus();
 		else
 			cbnCommand.SetFocus();
 		break;
 	case PatternCursor::paramColumn:
+	case PatternCursor::paramColumn2:
 		sldParam.SetFocus();
 		break;
 	case PatternCursor::numColumns:
@@ -778,14 +781,14 @@ void CEditCommand::InitEffect()
 	cbnCommand.ShowWindow(SW_SHOW);
 	xParam = 0;
 	xMultiplier = 1;
-	getXParam(m->command, editPattern, editRow, editChannel, sndFile, xParam, xMultiplier);
+	getXParam(SlotCommand(), editPattern, editRow, editChannel, sndFile, xParam, xMultiplier);
 
 	cbnCommand.SetRedraw(FALSE);
 	cbnCommand.ResetContent();
 	uint32 numfx = effectInfo.GetNumEffects();
-	uint32 fxndx = effectInfo.GetIndexFromEffect(m->command, m->param);
+	uint32 fxndx = effectInfo.GetIndexFromEffect(SlotCommand(), SlotParam());
 	cbnCommand.SetItemData(cbnCommand.AddString(_T(" None")), (DWORD_PTR)-1);
-	if(m->command == CMD_NONE)
+	if(SlotCommand() == CMD_NONE)
 		cbnCommand.SetCurSel(0);
 
 	CString s;
@@ -865,10 +868,10 @@ void CEditCommand::UpdateEffectRange(bool set)
 	{
 		// process as effect
 		ModCommand::PARAM rangeMin = 0, rangeMax = 0;
-		LONG fxndx = effectInfo.GetIndexFromEffect(m->command, m->param);
+		LONG fxndx = effectInfo.GetIndexFromEffect(SlotCommand(), SlotParam());
 		enable = ((fxndx >= 0) && (effectInfo.GetEffectInfo(fxndx, NULL, false, &rangeMin, &rangeMax)));
 
-		pos = effectInfo.MapValueToPos(fxndx, m->param);
+		pos = effectInfo.MapValueToPos(fxndx, SlotParam());
 		if(pos > rangeMax)
 			pos = rangeMin | (pos & 0x0F);
 		Limit(pos, rangeMin, rangeMax);
@@ -977,8 +980,8 @@ void CEditCommand::OnVolCmdChanged()
 
 void CEditCommand::OnCommandChanged()
 {
-	ModCommand::COMMAND newCommand = m->command;
-	ModCommand::PARAM newParam = m->param;
+	ModCommand::COMMAND newCommand = SlotCommand();
+	ModCommand::PARAM newParam = SlotParam();
 
 	int n = cbnCommand.GetCurSel();
 	if(n >= 0)
@@ -987,15 +990,11 @@ void CEditCommand::OnCommandChanged()
 		newCommand = static_cast<ModCommand::COMMAND>((ndx >= 0) ? effectInfo.GetEffectFromIndex(ndx, newParam) : CMD_NONE);
 	}
 
-	if(m->command != newCommand || m->param != newParam)
+	if(SlotCommand() != newCommand || SlotParam() != newParam)
 	{
 		PrepareUndo("Effect Entry");
 
-		m->command = newCommand;
-		if(newCommand != CMD_NONE)
-		{
-			m->param = newParam;
-		}
+		SetSlotEffect(newCommand, newCommand != CMD_NONE ? newParam : SlotParam());
 
 		xParam = 0;
 		xMultiplier = 1;
@@ -1062,18 +1061,18 @@ void CEditCommand::UpdateEffectValue(bool set)
 	} else
 	{
 		// process as effect
-		LONG fxndx = effectInfo.GetIndexFromEffect(m->command, m->param);
+		LONG fxndx = effectInfo.GetIndexFromEffect(SlotCommand(), SlotParam());
 		if(fxndx >= 0)
 		{
 			newParam = static_cast<ModCommand::PARAM>(effectInfo.MapPosToValue(fxndx, sldParam.GetPos()));
-			effectInfo.GetEffectNameEx(s, *m, newParam * xMultiplier + xParam, editChannel);
+			{ ModCommand shown = *m; shown.command = SlotCommand(); shown.param = SlotParam(); effectInfo.GetEffectNameEx(s, shown, newParam * xMultiplier + xParam, editChannel); }
 		}
 	}
 	SetDlgItemText(IDC_TEXT1, s);
 
 	if(set)
 	{
-		if((!m->IsPcNote() && m->param != newParam)
+		if((!m->IsPcNote() && SlotParam() != newParam)
 		   || (m->IsPcNote() && m->GetValueVolCol() != newPlugParam))
 		{
 			PrepareUndo("Effect Entry");
@@ -1083,7 +1082,7 @@ void CEditCommand::UpdateEffectValue(bool set)
 				m->SetValueEffectCol(newPlugParam);
 			} else
 			{
-				m->param = newParam;
+				SetSlotEffect(SlotCommand(), newParam);
 			}
 
 			modDoc->UpdateAllViews(nullptr, RowHint(editRow), nullptr);
