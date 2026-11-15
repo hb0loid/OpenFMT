@@ -1584,6 +1584,9 @@ bool CMainFrame::StopMod(CModDoc *pModDoc)
 	if(!IsPlaying()) return true;
 
 	PausePlayback();
+	// Звук остановлен — осциллографам больше нечего показывать. Без очистки
+	// после конца трека они так и стояли с последней волной.
+	m_channelScopes.Clear();
 	SetElapsedTime(0);
 	GenerateStopNotification();
 
