@@ -1186,7 +1186,24 @@ void CViewSample::OnDraw(CDC *pDC)
 	const SmpLength smpScrollPos = std::min(ScrollPosToSamplePos(), sample.nLength);
 	if(sample.uFlags[CHN_ADLIB])
 	{
-		CModScrollView::OnDraw(pDC);
+		// Редактор чипа теперь занимает не весь вид, а столько, сколько задал
+		// масштаб. Остальное место закрашивается фоном диалога, иначе там
+		// оставались куски прежней картинки — волны или другого редактора.
+		// Сам редактор из заливки вырезаем: он рисует себя сам.
+		for(CWnd *editor : {static_cast<CWnd *>(m_oplEditor.get()), static_cast<CWnd *>(m_psgEditor.get())})
+		{
+			if(editor != nullptr && editor->IsWindowVisible())
+			{
+				CRect area;
+				editor->GetWindowRect(area);
+				ScreenToClient(area);
+				pDC->DPtoLP(area);
+				pDC->ExcludeClipRect(area);
+			}
+		}
+		CRect clip;
+		pDC->GetClipBox(clip);
+		pDC->FillSolidRect(clip, ::GetSysColor(COLOR_BTNFACE));
 		return;
 	}
 	LimitMax(m_dwBeginSel, sample.nLength);
