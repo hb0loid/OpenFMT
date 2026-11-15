@@ -2499,6 +2499,50 @@ void ym3438::generate(output_data *output, uint32_t numsamples)
 
 
 //-------------------------------------------------
+//  generate_split - generate() для одного отсчёта
+//  плюс вклад каждого канала, для осциллографов
+//-------------------------------------------------
+
+void ym3438::generate_split(output_data *output, output_data *channels)
+{
+	// Сумма — ровно как в generate(): одним вызовом, с тем же промежуточным
+	// ограничением. Сложение отдельно посчитанных каналов дало бы другой
+	// звук там, где сумма упирается в предел.
+	m_fm.clock(fm_engine::ALL_CHANNELS);
+	if (!m_dac_enable)
+	{
+		m_fm.output(output->clear(), 5, 256, fm_engine::ALL_CHANNELS);
+	}
+	else
+	{
+		int32_t dacval = int16_t(m_dac_data << 7) >> 7;
+		output->data[0] = m_fm.regs().ch_output_0(0x102) ? dacval : 0;
+		output->data[1] = m_fm.regs().ch_output_1(0x102) ? dacval : 0;
+		m_fm.output(*output, 5, 256, fm_engine::ALL_CHANNELS ^ (1 << 5));
+	}
+	output->data[0] = (output->data[0] * 128) / 6;
+	output->data[1] = (output->data[1] * 128) / 6;
+
+	// Каналы по отдельности — только для картинки, в звук они не идут.
+	int const last_fm_channel = m_dac_enable ? 5 : 6;
+	for (int chan = 0; chan < 6; chan++)
+	{
+		channels[chan].clear();
+		if (chan < last_fm_channel)
+			m_fm.output(channels[chan], 5, 256, 1 << chan);
+		else
+		{
+			int32_t dacval = int16_t(m_dac_data << 7) >> 7;
+			channels[chan].data[0] = m_fm.regs().ch_output_0(0x102) ? dacval : 0;
+			channels[chan].data[1] = m_fm.regs().ch_output_1(0x102) ? dacval : 0;
+		}
+		channels[chan].data[0] = (channels[chan].data[0] * 128) / 6;
+		channels[chan].data[1] = (channels[chan].data[1] * 128) / 6;
+	}
+}
+
+
+//-------------------------------------------------
 //  generate - generate one sample of sound
 //-------------------------------------------------
 

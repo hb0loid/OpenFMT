@@ -527,15 +527,15 @@ void ym2151::write(uint32_t offset, uint8_t data)
 
 void ym2151::generate_split(output_data *output, output_data *channels)
 {
+	// Сумма — ровно как в generate(): ЦАП YM3012 округляет уже сумму, а не
+	// каждый канал. Округление по каналам добавляло шум квантования, пока
+	// открыты осциллографы.
 	m_fm.clock(fm_engine::ALL_CHANNELS);
-	output->clear();
+	m_fm.output(output->clear(), 0, 32767, fm_engine::ALL_CHANNELS);
+	output->roundtrip_fp();
+	// Каналы по отдельности — только для картинки.
 	for (int chan = 0; chan < 8; chan++)
-	{
 		m_fm.output(channels[chan].clear(), 0, 32767, 1 << chan);
-		channels[chan].roundtrip_fp();
-		output->data[0] += channels[chan].data[0];
-		output->data[1] += channels[chan].data[1];
-	}
 }
 
 

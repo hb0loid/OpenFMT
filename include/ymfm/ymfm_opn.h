@@ -784,6 +784,11 @@ public:
 
 	// generate one sample of sound
 	void generate(output_data *output, uint32_t numsamples = 1);
+
+	// generate() плюс вклад каждого канала отдельно, для осциллографов.
+	// Своя версия обязательна: унаследованная от ym2612 добавляет ступеньку
+	// ЦАП, которой у YM3438 нет, и при открытых осциллографах звук менялся.
+	void generate_split(output_data *output, output_data *channels);
 };
 
 
