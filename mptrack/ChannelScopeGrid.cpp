@@ -336,13 +336,14 @@ void ChannelScopeGrid::Draw(CDC &dc, const CRect &client)
 		}
 		// Усиление: быстро вниз на громком, медленно вверх на тихом.
 		float &gain = m_gain[chn];
-		const float wanted = (peak > 0.0001f) ? 0.45f / peak : gain;
+		const bool audible = peak > ChannelScopes::SilencePeak;
+		const float wanted = audible ? 0.45f / peak : gain;
 		gain = (wanted < gain) ? wanted : gain + (wanted - gain) * 0.05f;
-		gain = std::clamp(gain, 0.2f, 400.0f);
+		gain = std::clamp(gain, 0.2f, 0.45f / ChannelScopes::SilencePeak);
 
 		const int middle = cell.top + cell.Height() / 2;
-		HGDIOBJ oldPen = ::SelectObject(dc.m_hDC, (peak > 0.0001f) ? wavePen : quietPen);
-		if(!haveData || peak <= 0.0f)
+		HGDIOBJ oldPen = ::SelectObject(dc.m_hDC, audible ? wavePen : quietPen);
+		if(!haveData || !audible)
 		{
 			dc.MoveTo(cell.left, middle);
 			dc.LineTo(cell.right, middle);

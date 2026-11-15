@@ -1412,16 +1412,17 @@ void CViewPattern::DrawChannelScope(HDC hdc, const CRect &rect, CHANNELINDEX chn
 		float &gain = m_scopeGain[chn];
 		if(gain <= 0.0f)
 			gain = 1.0f;
-		const float wanted = (peak > 0.0001f) ? 0.45f / peak : gain;
+		const float wanted = (peak > ChannelScopes::SilencePeak) ? 0.45f / peak : gain;
 		gain = (wanted < gain) ? wanted : gain + (wanted - gain) * 0.08f;
-		gain = std::clamp(gain, 0.2f, 400.0f);
+		gain = std::clamp(gain, 0.2f, 0.45f / ChannelScopes::SilencePeak);
 	}
 	const float gain = (chn < m_scopeGain.size()) ? m_scopeGain[chn] : 1.0f;
 
 	const int middle = inner.top + inner.Height() / 2;
-	HPEN pen = ::CreatePen(PS_SOLID, 1, (peak > 0.0001f) ? RGB(0x60, 0xE8, 0x90) : RGB(0x38, 0x4C, 0x42));
+	const bool audible = peak > ChannelScopes::SilencePeak;
+	HPEN pen = ::CreatePen(PS_SOLID, 1, audible ? RGB(0x60, 0xE8, 0x90) : RGB(0x38, 0x4C, 0x42));
 	HGDIOBJ oldPen = ::SelectObject(hdc, pen);
-	if(!haveData || peak <= 0.0f)
+	if(!haveData || !audible)
 	{
 		::MoveToEx(hdc, inner.left, middle, nullptr);
 		::LineTo(hdc, inner.right, middle);

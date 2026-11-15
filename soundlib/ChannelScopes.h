@@ -60,6 +60,11 @@ public:
 	// Поэтому не «дописать отсчёт», а «прибавить к i-му отсчёту блока».
 	static constexpr uint32 MaxBlock = 512;  // MIXBUFFERSIZE
 
+	// Ниже этого пика (около −54 дБ от полной шкалы) канал считается тихим и
+	// рисуется ровной линией. Иначе подстройка усиления (до ×400) раздувала
+	// хвосты затухания и остатки молчащих голосов чипов в полноценную волну.
+	static constexpr float SilencePeak = 0.002f;
+
 	void BeginBlock(uint32 count)
 	{
 		m_blockLength = std::min(count, MaxBlock);
