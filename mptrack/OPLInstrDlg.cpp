@@ -8,6 +8,7 @@
  */
 
 #include "stdafx.h"
+#include <random>
 #include "OPLInstrDlg.h"
 #include "resource.h"
 #include "UpdateHints.h"
@@ -20,6 +21,7 @@ OPENMPT_NAMESPACE_BEGIN
 BEGIN_MESSAGE_MAP(OPLInstrDlg, DialogBase)
 	ON_WM_HSCROLL()
 	ON_WM_SIZE()
+	ON_COMMAND(2720, &OPLInstrDlg::Randomize)
 	ON_MESSAGE(WM_MOD_DRAGONDROPPING, &OPLInstrDlg::OnDragonDropping)
 	ON_COMMAND(IDC_CHECK1, &OPLInstrDlg::ParamsChanged)
 	ON_COMMAND(IDC_CHECK2, &OPLInstrDlg::ParamsChanged)
@@ -89,7 +91,9 @@ struct OPN2Param
 };
 
 constexpr OPN2Param Algorithm{0, 0, 7}, Feedback{0, 3, 7};
-constexpr int OPN2Rows = 9;   // параметров в операторе
+constexpr int OPN2Rows = 9;   // параметров в операторе, нарисованных в ресурсах
+constexpr int OPN2LayoutRows = OPN2Rows + 1;  // плюс SSG-EG / Detune 2
+constexpr int ExtraLabelId = 2700, ExtraSliderId = 2710, RandomButtonId = 2720;
 constexpr int OPN2MinRow = 16;
 // Выше этого ряды разъезжаются впустую: на развёрнутом окне между слайдерами
 // получались пустые полосы в полсотни пикселей. Лишнюю высоту лучше оставить
@@ -141,6 +145,7 @@ BOOL OPLInstrDlg::OnInitDialog()
 				m_designedRects[id] = rect;
 			}
 		};
+		CreateExtraControls();
 		remember(IDC_OPN2_ALGLABEL);
 		remember(IDC_OPN2_FBLABEL);
 		remember(IDC_OPN2_FIRST);
@@ -156,9 +161,10 @@ BOOL OPLInstrDlg::OnInitDialog()
 		}
 		// Минимум нарочно меньше нарисованного: вкладке сэмплов часто достаётся
 		// полоса ниже диалога, и тогда нижние ряды уезжали бы за край.
-		m_minimumHeight = m_designedRects[IDC_OPN2_GROUP1].top + OPN2Rows * OPN2MinRow + 20;
+		m_minimumHeight = m_designedRects[IDC_OPN2_GROUP1].top + OPN2LayoutRows * OPN2MinRow + 20;
 		return TRUE;
 	}
+	CreateExtraControls();
 	m_feedback.SetRange(0, 7);
 	for(int op = 0; op < 2; op++)
 	{
@@ -198,7 +204,7 @@ CSize OPLInstrDlg::GetPreferredSize() const
 	const CRect &label = m_designedRects.at(IDC_OPN2_LABEL1);
 	const int column = 5 + label.Width() + unit.Width() + 9;
 	const int rowTop = label.top - group.top;
-	return CSize(group.left * 2 + column * 4, group.top + rowTop + OPN2Rows * std::max<int>(unit.Height(), OPN2MinRow) + 20);
+	return CSize(group.left * 2 + column * 4, group.top + rowTop + OPN2LayoutRows * std::max<int>(unit.Height(), OPN2MinRow) + 20);
 }
 
 
@@ -281,35 +287,124 @@ void OPLInstrDlg::LayoutOPN2()
 	const int groupTop = group.top;
 	const int rowTop = label.top - groupTop;
 	const int available = client.Height() - groupTop - 6 - rowTop - 8;
-	const int rowHeight = std::max(available / OPN2Rows, OPN2MinRow);
+	const int rowHeight = std::max(available / OPN2LayoutRows, OPN2MinRow);
 	// Рамка кончается сразу под последним рядом, а не тянется до низа окна.
-	const int groupHeight = rowTop + OPN2Rows * rowHeight + 8;
+	const int groupHeight = rowTop + OPN2LayoutRows * rowHeight + 8;
 
 	// Верхний ряд: алгоритм и обратная связь делят ширину пополам.
-	const int topSlider = usedWidth / 2 - m_designedRects[IDC_OPN2_ALGLABEL].Width() - 12;
+	// Ползунок алгоритма начинается после своей подписи и кончается перед
+	// подписью обратной связи. Раньше его ширина считалась от края окна, и он
+	// наезжал на подпись Feedback, так что её не было видно.
 	const CRect &algSlider = m_designedRects[IDC_OPN2_FIRST];
-	place(IDC_OPN2_FIRST, m_designedRects[IDC_OPN2_ALGLABEL].right + 6, algSlider.top,
-		std::max(topSlider, 40), algSlider.Height());
-	const int fbLabel = margin + usedWidth / 2 + 6;
+	CRect buttonSize(0, 0, 44, 13);
+	MapDialogRect(buttonSize);
+	const int buttonLeft = margin + usedWidth - buttonSize.Width();
+	const int algStart = m_designedRects[IDC_OPN2_ALGLABEL].right + 6;
+	const int fbLabel = std::max(margin + usedWidth / 2 + 6, algStart + 46);
+	place(IDC_OPN2_FIRST, algStart, algSlider.top, std::max(fbLabel - 12 - algStart, 40), algSlider.Height());
 	place(IDC_OPN2_FBLABEL, fbLabel, m_designedRects[IDC_OPN2_FBLABEL].top,
 		m_designedRects[IDC_OPN2_FBLABEL].Width(), m_designedRects[IDC_OPN2_FBLABEL].Height());
-	place(IDC_OPN2_FIRST + 1, fbLabel + m_designedRects[IDC_OPN2_FBLABEL].Width() + 6, algSlider.top,
-		std::max(topSlider, 40), algSlider.Height());
+	const int fbStart = fbLabel + m_designedRects[IDC_OPN2_FBLABEL].Width() + 6;
+	place(IDC_OPN2_FIRST + 1, fbStart, algSlider.top, std::max(buttonLeft - 10 - fbStart, 40), algSlider.Height());
+	place(RandomButtonId, buttonLeft, algSlider.top - 1, buttonSize.Width(), buttonSize.Height());
 
 	for(int op = 0; op < 4; op++)
 	{
 		const int left = margin + op * columnWidth;
 		place(IDC_OPN2_GROUP1 + op, left, groupTop, columnWidth - 3, groupHeight);
-		for(int row = 0; row < OPN2Rows; row++)
+		for(int row = 0; row < OPN2LayoutRows; row++)
 		{
 			const int y = groupTop + rowTop + row * rowHeight;
 			const int sliderLeft = left + 5 + labelWidth;
-			place(IDC_OPN2_LABEL1 + op * OPN2Rows + row, left + 5, y, labelWidth, label.Height());
-			place(IDC_OPN2_FIRST + 2 + op * OPN2Rows + row, sliderLeft, y - 2,
+			const bool extra = row == OPN2Rows;
+			place(extra ? ExtraLabelId + op : IDC_OPN2_LABEL1 + op * OPN2Rows + row, left + 5, y, labelWidth, label.Height());
+			place(extra ? ExtraSliderId + op : IDC_OPN2_FIRST + 2 + op * OPN2Rows + row, sliderLeft, y - 2,
 				std::max(left + columnWidth - 9 - sliderLeft, 30), rowHeight - 4);
 		}
 	}
 	Invalidate(TRUE);
+}
+
+
+void OPLInstrDlg::CreateExtraControls()
+{
+	CFont *font = GetFont();
+	const CRect placeholder(0, 0, 10, 10);
+	if(m_isOPN2)
+	{
+		for(int op = 0; op < 4; op++)
+		{
+			m_extraLabel[op].Create(_T("SSG-EG"), WS_CHILD | WS_VISIBLE | SS_LEFT, placeholder, this, ExtraLabelId + op);
+			m_extraLabel[op].SetFont(font);
+			m_extraSlider[op].Create(WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_HORZ | TBS_TOOLTIPS, placeholder, this, ExtraSliderId + op);
+			m_extraSlider[op].SetRange(0, 8);
+		}
+	}
+	// Кнопка случайного патча. У YM2612 её ставит раскладка, у OPL — сюда:
+	// в просвет между флажком и обратной связью в верхней строке.
+	CRect button(182, 5, 182 + 32, 5 + 13);
+	MapDialogRect(button);
+	m_randomButton.Create(_T("Random"), WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, button, this, RandomButtonId);
+	m_randomButton.SetFont(font);
+}
+
+
+// Случайный, но почти всегда звучащий патч: несущие операторы громкие,
+// модуляторы тише, атака быстрая, множители чаще маленькие.
+void OPLInstrDlg::Randomize()
+{
+	static std::mt19937 rng{std::random_device{}()};
+	const auto rnd = [](int lo, int hi) { return std::uniform_int_distribution<int>(lo, hi)(rng); };
+	const auto multiplier = [&]() { return rnd(0, 3) < 3 ? rnd(0, 4) : rnd(0, 15); };
+
+	if(m_isOPN2 && m_opn2Patch)
+	{
+		// Операторы, которые идут на выход при каждом из восьми алгоритмов (бит 0 — оператор 1).
+		static constexpr uint8 carriers[] = {0x08, 0x08, 0x08, 0x08, 0x0A, 0x0E, 0x0E, 0x0F};
+		OPN2Patch patch = *m_opn2Patch;
+		const int algorithm = rnd(0, 7);
+		patch[0] = static_cast<uint8>(algorithm | (rnd(0, 6) << 3));
+		for(int op = 0; op < 4; op++)
+		{
+			const int base = 1 + op * 7;
+			const bool carrier = (carriers[algorithm] >> op) & 1;
+			patch[base + 0] = static_cast<uint8>((rnd(0, 7) << 4) | multiplier());
+			patch[base + 1] = static_cast<uint8>(carrier ? rnd(0, 18) : rnd(12, 60));
+			patch[base + 2] = static_cast<uint8>((rnd(0, 3) << 6) | rnd(20, 31));
+			patch[base + 3] = static_cast<uint8>(rnd(0, 20));
+			patch[base + 4] = static_cast<uint8>(rnd(0, 12) | (m_isOPM && rnd(0, 3) == 0 ? rnd(1, 3) << 6 : 0));
+			patch[base + 5] = static_cast<uint8>((rnd(0, 15) << 4) | rnd(3, 15));
+			patch[base + 6] = static_cast<uint8>(!m_isOPM && rnd(0, 7) == 0 ? (8 | rnd(0, 7)) : 0);
+		}
+		m_parent.SendMessage(WM_MOD_VIEWMSG, VIEWMSG_PREPAREUNDO);
+		*m_opn2Patch = patch;
+		SetPatch(*m_opn2Patch, m_isOPM);
+		m_parent.SendMessage(WM_MOD_VIEWMSG, VIEWMSG_SETMODIFIED, SampleHint().Data().AsLPARAM());
+	} else if(!m_isOPN2 && m_patch)
+	{
+		OPLPatch patch{{}};
+		const bool additive = rnd(0, 3) == 0;
+		patch[10] = static_cast<uint8>((rnd(0, 6) << 1) | (additive ? OPL::CONNECTION_BIT : 0));
+		for(int op = 0; op < 2; op++)
+		{
+			// Байт 0 — модулятор, 1 — несущий; в аддитивном режиме звучат оба.
+			const bool audible = additive || op == 1;
+			uint8 flags = static_cast<uint8>(multiplier());
+			if(rnd(0, 1)) flags |= OPL::SUSTAIN_ON;
+			if(rnd(0, 3) == 0) flags |= OPL::KSR;
+			if(rnd(0, 5) == 0) flags |= OPL::VIBRATO_ON;
+			if(rnd(0, 7) == 0) flags |= OPL::TREMOLO_ON;
+			patch[op] = flags;
+			patch[2 + op] = static_cast<uint8>((audible ? rnd(0, 10) : rnd(5, 45)) | (rnd(0, 3) << 6));
+			patch[4 + op] = static_cast<uint8>((rnd(9, 15) << 4) | rnd(1, 15));
+			patch[6 + op] = static_cast<uint8>((rnd(0, 15) << 4) | rnd(2, 12));
+			patch[8 + op] = static_cast<uint8>(rnd(0, 3) == 0 ? rnd(1, 7) : 0);
+		}
+		m_parent.SendMessage(WM_MOD_VIEWMSG, VIEWMSG_PREPAREUNDO);
+		*m_patch = patch;
+		SetPatch(*m_patch);
+		m_parent.SendMessage(WM_MOD_VIEWMSG, VIEWMSG_SETMODIFIED, SampleHint().Data().AsLPARAM());
+	}
 }
 
 
@@ -424,10 +519,30 @@ void OPLInstrDlg::SetPatch(OPLPatch &patch)
 void OPLInstrDlg::SetPatch(OPN2Patch &patch, bool opm)
 {
 	SetDlgItemText(2558, opm ? _T("YM2151 / OPM") : _T("YM2612 / OPN2"));
+	m_isOPM = opm;
 	ForEachOPN2Param([&](int id, OPN2Param param)
 	{
 		GetDlgItem(id)->SendMessage(TBM_SETPOS, TRUE, (patch[param.reg] >> param.shift) & param.mask);
 	});
+	for(int op = 0; op < 4; op++)
+	{
+		if(!m_extraSlider[op].m_hWnd)
+			continue;
+		if(opm)
+		{
+			// YM2151: Detune 2, два старших бита регистра D2R.
+			m_extraLabel[op].SetWindowText(_T("Detune 2"));
+			m_extraSlider[op].SetRange(0, 3, TRUE);
+			m_extraSlider[op].SetPos(patch[1 + op * 7 + 4] >> 6);
+		} else
+		{
+			// YM2612: SSG-EG. 0 — выключен, 1–8 — режимы 0–7 (с битом включения).
+			const uint8 ssg = patch[1 + op * 7 + 6];
+			m_extraLabel[op].SetWindowText(_T("SSG-EG"));
+			m_extraSlider[op].SetRange(0, 8, TRUE);
+			m_extraSlider[op].SetPos((ssg & 8) ? (ssg & 7) + 1 : 0);
+		}
+	}
 	m_opn2Patch = &patch;
 }
 
@@ -442,6 +557,16 @@ void OPLInstrDlg::OPN2ParamsChanged()
 		const auto value = GetDlgItem(id)->SendMessage(TBM_GETPOS);
 		patch[param.reg] = static_cast<uint8>((patch[param.reg] & ~(param.mask << param.shift)) | (value << param.shift));
 	});
+	for(int op = 0; op < 4; op++)
+	{
+		if(!m_extraSlider[op].m_hWnd)
+			continue;
+		const int value = m_extraSlider[op].GetPos();
+		if(m_isOPM)
+			patch[1 + op * 7 + 4] = static_cast<uint8>((patch[1 + op * 7 + 4] & 0x3F) | ((value & 3) << 6));
+		else
+			patch[1 + op * 7 + 6] = static_cast<uint8>(value > 0 ? (8 | ((value - 1) & 7)) : 0);
+	}
 	if(patch != *m_opn2Patch)
 	{
 		m_parent.SendMessage(WM_MOD_VIEWMSG, VIEWMSG_PREPAREUNDO);
@@ -491,6 +616,20 @@ CString OPLInstrDlg::GetToolTipText(UINT id, HWND) const
 	CString text;
 	const CWnd *wnd = GetDlgItem(static_cast<int>(id));
 	const CSliderCtrl *slider = static_cast<const CSliderCtrl *>(wnd);
+	if(id >= ExtraSliderId && id < ExtraSliderId + 4 && slider != nullptr)
+	{
+		const int pos = slider->GetPos();
+		if(m_isOPM)
+			return _T("Detune 2: ") + mpt::cfmt::val(pos);
+		// Форма огибающей SSG-EG по режимам 0-7.
+		static constexpr const TCHAR *shapes[] = {_T("\\\\ repeat"), _T("\\___ once"), _T("\\/\\/ alternate"), _T("\\--- hold"),
+			_T("//// repeat"), _T("/___ once, then silent"), _T("/\\/\\ alternate"), _T("/--- hold")};
+		if(pos == 0)
+			return _T("SSG-EG off");
+		return _T("SSG-EG mode ") + mpt::cfmt::val(pos - 1) + _T(": ") + CString(shapes[(pos - 1) & 7]);
+	}
+	if(id == RandomButtonId)
+		return _T("Random patch (undo with Ctrl+Z)");
 	switch(id)
 	{
 	case IDC_SLIDER1:

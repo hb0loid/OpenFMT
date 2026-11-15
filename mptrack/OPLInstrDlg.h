@@ -40,6 +40,14 @@ class OPLInstrDlg : public DialogBase
 	void OPN2ParamsChanged();
 	void LayoutOPN2();
 	void LayoutOPL();
+	// Десятый ряд оператора: SSG-EG у YM2612, Detune 2 у YM2151. Нарисованных
+	// в ресурсах элементов для него нет, они создаются в OnInitDialog.
+	CStatic m_extraLabel[4];
+	CSliderCtrl m_extraSlider[4];
+	CButton m_randomButton;
+	bool m_isOPM = false;
+	void CreateExtraControls();
+	void Randomize();
 	// Нарисованные в ресурсах положения всех элементов редактора OPL.
 	std::vector<std::pair<HWND, CRect>> m_oplRects;
 
