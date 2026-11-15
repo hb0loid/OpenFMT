@@ -1516,6 +1516,21 @@ void CSoundFile::ProcessArpeggio(CHANNELINDEX nChn, int32 &period, Tuning::NOTEI
 		}
 	}
 
+	// Арпеджио Furnace считает свой ход сам (ProcessEffects), здесь только
+	// сдвиг высоты на текущую ступень.
+	if(m_furnaceSlides)
+	{
+		if(const int offset = chn.furnaceSlide.arpOffset; offset > 0 && offset < 16)
+		{
+			const uint32 ratio = LinearSlideUpTable[offset * 16];
+			if(PeriodsAreFrequencies())
+				period = Util::muldivr(period, ratio, 65536);
+			else
+				period = Util::muldivr(period, 65536, ratio);
+		}
+		return;
+	}
+
 	if(chn.nCommand == CMD_ARPEGGIO)
 	{
 		if(chn.HasCustomTuning())

@@ -1096,6 +1096,12 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 				} else if(chipCommand == CMD_PSG_NOISE)
 				{
 					chn.furnaceSlide.psgNoise = static_cast<int8>(chipParam & 3);
+				} else if(chipCommand == CMD_ARPEGGIO && m_furnaceSlides)
+				{
+					// Арпеджио Furnace держится в канале до `J00`: после старта
+					// с середины оно должно качать ноту так же, как при игре
+					// подряд.
+					chn.furnaceSlide.arp = chipParam;
 				}
 			}
 
@@ -4158,6 +4164,44 @@ bool CSoundFile::ProcessEffects()
 				{
 					chn.nCommand = CMD_ARPEGGIO;
 					chn.nArpeggio = chn.furnaceSlide.arp;
+				}
+
+				auto &fs = chn.furnaceSlide;
+				// Новая нота (не портаменто) звучит на своей высоте, ступень
+				// арпеджио при этом идёт дальше. С compatibleArpeggio ход на этом
+				// тике пропускается.
+				if(chn.rowCommand.IsNote() && !IsFurnaceTonePorta(chn, chn.rowCommand))
+				{
+					fs.arpOffset = 0;
+					if(fs.arp && (m_furnaceArpFlags & FurnaceArpYieldOnNote))
+						fs.arpYield = true;
+				}
+				if(m_furnaceArpFlags & FurnaceArpRowReset)
+					fs.arpStage = -1;
+				// `0000` останавливает арпеджио, а нота остаётся на той ступени,
+				// где её застало, — если не включён arp0Reset.
+				if(hasArpeggio && !arpeggioParam && (m_furnaceArpFlags & FurnaceArpZeroReset))
+					fs.arpOffset = 0;
+			}
+
+			// Ход арпеджио Furnace (playback.cpp, «arpeggio (actually)»): ступень
+			// держится m_furnaceArpSpeed тиков и считается непрерывно, сквозь
+			// строки, а не от начала каждой строки, как у нас. Пока идёт
+			// скольжение высоты, арпеджио стоит. Сдвиг применяет ProcessArpeggio.
+			{
+				auto &fs = chn.furnaceSlide;
+				if(fs.arp && !fs.arpYield && !(fs.speed && fs.mode != CMD_NONE))
+				{
+					if(--fs.arpTicks < 1)
+					{
+						fs.arpTicks = std::max<uint8>(m_furnaceArpSpeed, 1);
+						if(++fs.arpStage > 2)
+							fs.arpStage = 0;
+						fs.arpOffset = static_cast<int8>(fs.arpStage == 1 ? (fs.arp >> 4) : fs.arpStage == 2 ? (fs.arp & 0x0F) : 0);
+					}
+				} else
+				{
+					fs.arpYield = false;
 				}
 			}
 		}

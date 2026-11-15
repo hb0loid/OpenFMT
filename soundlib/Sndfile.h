@@ -511,6 +511,15 @@ public:
 		FurnaceOldOctaveBoundary = 1 << 15,
 	};
 	uint16 m_furnaceSlides = 0;
+	// Арпеджио Furnace: скорость (тиков на ступень) и флаги совместимости.
+	enum FurnaceArpFlag : uint8
+	{
+		FurnaceArpRowReset = 1 << 0,    // rowResetsArpPos
+		FurnaceArpZeroReset = 1 << 1,   // arp0Reset
+		FurnaceArpYieldOnNote = 1 << 2, // compatibleArpeggio
+	};
+	uint8 m_furnaceArpSpeed = 1;
+	uint8 m_furnaceArpFlags = 0;
 	// Громкость отдельных чипов, 8.8. Для YM2612 и YM2151 заполняется из песни
 	// Furnace при импорте. У PSG громкость микросхемы по-прежнему лежит в патче,
 	// потому что чип поддерживает до 32 экземпляров с разными уровнями, и старые

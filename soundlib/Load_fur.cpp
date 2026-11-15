@@ -10,6 +10,7 @@
 #ifdef MPT_WITH_ZLIB
 #include "../common/zlib_helper.h"
 #include <zlib.h>
+#include <map>
 #endif
 
 OPENMPT_NAMESPACE_BEGIN
@@ -476,17 +477,20 @@ bool ReadFurPattern(FileReader file, bool packed, std::vector<FurRow> &data, uin
 // продолжали гасить. Пятнадцать пропаж звука из сорока четырёх по корпусу были
 // отсюда.
 //
-// Так переводится только арпеджио. Всё остальное из непрерывных эффектов —
-// скольжения высоты (`01`, `02`, `03`), вибрато (`04`), тремоло (`07`) и
-// скольжение громкости (`0A`) — мы проигрываем по-фёрнейсовски сами, и движок
-// ждёт команду с нулём как сигнал остановки. Отдать ему «ничего» значит не
+// Теперь так не переводится ничего. Все непрерывные эффекты — арпеджио
+// (`00`), скольжения высоты (`01`, `02`, `03`), вибрато (`04`), тремоло
+// (`07`) и скольжение громкости (`0A`) — мы проигрываем по-фёрнейсовски сами,
+// и движок ждёт команду с нулём как сигнал остановки. Арпеджио долго
+// оставалось исключением: когда его сделали постоянным в канале, `0000` всё
+// ещё уходил в «ничего», и остановить его было нечем — арпеджио утекало на
+// все следующие ноты. Отдать ему «ничего» значит не
 // остановить ничего: вибрато качало бы дальше, а слайд уводил бы за собой все
 // следующие ноты.
 std::pair<EffectCommand, uint8> FurEffect(int code, uint8 value)
 {
 	switch(code)
 	{
-	case 0x00: return {value ? CMD_ARPEGGIO : CMD_NONE, value};
+	case 0x00: return {CMD_ARPEGGIO, value};
 	case 0x01: return {CMD_PORTAMENTOUP, value};
 	case 0x02: return {CMD_PORTAMENTODOWN, value};
 	case 0x03: return {CMD_TONEPORTAMENTO, value};
@@ -786,7 +790,8 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		return false;
 	const unsigned timeBase = info.ReadUint8() + 1u;
 	const unsigned firstSpeed = info.ReadUint8(), secondSpeed = info.ReadUint8();
-	info.Skip(1);
+	// Скорость арпеджио песни: столько тиков держится каждая ступень.
+	const uint8 arpLength = info.ReadUint8();
 	const double tickRate = info.ReadFloatLE();
 	const ROWINDEX rows = info.ReadUint16LE();
 	const ORDERINDEX orders = info.ReadUint16LE();
@@ -1024,6 +1029,9 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		// Furnace 0.6.7, по которому сделаны и эталоны, в «частичном» режиме
 		// двигает FM на `скорость` единиц F-number за тик, без множителя:
 		// в его выгрузке VGM `G20` даёт 110 → 113,3 → 116,5 Гц, ровно +32.
+		m_furnaceArpFlags = (extraCompat[2] ? FurnaceArpRowReset : 0)
+			| (compat[19] ? FurnaceArpZeroReset : 0)
+			| (compat[7] ? FurnaceArpYieldOnNote : 0);
 		if(compat[1] == 1)
 		{
 			m_furnaceSlides = 1 | FurnaceChipUnits;
@@ -1289,6 +1297,12 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		std::vector<uint8> volumeSlide(voices.size(), 0);
 		Order().resize(orders);
 		size_t phase = 0;
+		// Скорость арпеджио у этой версии Furnace общая на песню: `E0xx`
+		// меняет её всем каналам сразу (arpSpeedGlobal). Своей команды для
+		// этого у нас нет, поэтому смотрим, какая скорость действует там, где
+		// стоит арпеджио, проходя песню в порядке игры, и берём самую частую.
+		uint8 arpSpeedNow = std::max<uint8>(arpLength, 1);
+		std::map<uint8, unsigned> arpSpeedUse;
 		for(ORDERINDEX order = 0; order < orders; order++)
 		{
 			const auto pat = Patterns.InsertAny(rows);
@@ -1411,12 +1425,24 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 							bank[c] = value;
 							continue;
 						}
+						if(fx == 0xe0)
+						{
+							if(value)
+								arpSpeedNow = value;
+							continue;
+						}
+						if(fx == 0x00 && value)
+							arpSpeedUse[arpSpeedNow]++;
 						if(fx == 0x17 && dacChannel)
 						{
 							legacyDAC[c] = value != 0;
 							continue;
 						}
 						auto [command, argument] = FurEffect(fx, value);
+						// Без фёрнейсовских эффектов `J00` у OpenMPT значит «повторить
+						// прошлое арпеджио», а не «стоп»: там остановка — пустая ячейка.
+						if(command == CMD_ARPEGGIO && !argument && !m_furnaceSlides)
+							command = CMD_NONE;
 						if(fx == 0x20 && voice == FurVoice::Noise)
 						{
 							command = CMD_PSG_NOISE;
@@ -1490,11 +1516,11 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 								return 3;
 							}
 						};
-						// Остановка вибрато важнее почти всего: вибрато у Furnace держится
-						// до неё, и потерянная остановка значит вибрато до конца ноты.
+						// Остановка вибрато и арпеджио важнее почти всего: у Furnace они
+						// держатся до неё, и потерянная остановка тянет их на чужие ноты.
 						const auto weight = [&](std::pair<EffectCommand, uint8> effect) -> int
 						{
-							if(effect.first == CMD_VIBRATO && effect.second == 0)
+							if((effect.first == CMD_VIBRATO || effect.first == CMD_ARPEGGIO) && effect.second == 0)
 								return 5;
 							return priority(effect.first);
 						};
@@ -1651,6 +1677,16 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 					continue;
 				target = moved;
 				pattern.GetpModCommand(from, c)->Clear();
+			}
+		}
+		m_furnaceArpSpeed = std::max<uint8>(arpLength, 1);
+		unsigned bestUse = 0;
+		for(const auto &[speed, use] : arpSpeedUse)
+		{
+			if(use > bestUse)
+			{
+				bestUse = use;
+				m_furnaceArpSpeed = speed;
 			}
 		}
 	}
