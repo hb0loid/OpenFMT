@@ -490,10 +490,17 @@ std::pair<EffectCommand, uint8> FurEffect(int code, uint8 value)
 	case 0x01: return {CMD_PORTAMENTOUP, value};
 	case 0x02: return {CMD_PORTAMENTODOWN, value};
 	case 0x03: return {CMD_TONEPORTAMENTO, value};
-	case 0x04: return {CMD_VIBRATO, value};
+	// У Furnace 04xy буквальный: нулевая глубина или нулевая скорость значат
+	// «вибрато нет». У OpenMPT нулевая половинка параметра берёт прежнее
+	// значение из памяти, и H10 продолжал бы вибрато с прежней глубиной, а с
+	// автовибрато ещё и держал бы его включённым. Поэтому такое 04xy — это
+	// остановка, то есть H00.
+	case 0x04: return {CMD_VIBRATO, static_cast<uint8>(((value & 0x0F) && (value & 0xF0)) ? value : 0)};
 	// `05` и `06` это продолжение вибрато и порта со скольжением громкости:
 	// там ноль в параметре означает «без скольжения», а не остановку.
-	case 0x05: return {CMD_VIBRATOVOL, value};
+	// 0500 у Furnace останавливает вибрато вместе со спадом громкости. K00
+	// автовибрато не гасит, поэтому остановка переносится как H00.
+	case 0x05: return {value ? CMD_VIBRATOVOL : CMD_VIBRATO, value};
 	case 0x06: return {CMD_TONEPORTAVOL, value};
 	case 0x07: return {CMD_TREMOLO, value};
 	case 0x0a: return {CMD_VOLUMESLIDE, value};
@@ -1017,6 +1024,7 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 	m_playBehaviour = GetDefaultPlaybackBehaviour(MOD_TYPE_MPT);
 	// E5xx у Furnace — не разовая правка ноты, а подстройка канала.
 	m_playBehaviour.set(kFurnacePersistentFinetune);
+
 	Order().SetDefaultTempo(TEMPO(std::clamp(tickRate * 2.5 * (virtualNumerator && virtualDenominator ? double(virtualNumerator) / virtualDenominator : 1.0), 32.0, 512.0)));
 	Order().SetDefaultSpeed(std::clamp<unsigned>(speeds.front() * timeBase, 1, 255));
 	if(highlight1 && highlight2 >= highlight1)
@@ -1233,15 +1241,10 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		std::vector<int> currentInstrument(voices.size(), -1);
 		std::vector<unsigned> bank(voices.size(), 0);
 		std::vector<bool> legacyDAC(voices.size(), false);
-		// Вибрато у Furnace — состояние канала: 04xy включает его, и оно держится,
-		// пока не придёт 0400. У OpenMPT вибрато действует только на строке с H,
-		// а H00 значит «продолжай с прежними параметрами». Поэтому остановка
-		// переносилась как продолжение, и вибрато оставалось ровно там, где
-		// автор его выключил, а между включением и выключением, наоборот,
-		// пропадало. Здесь помним, включено ли оно, и пока нота звучит, ставим
-		// продолжение на каждую строку.
-		std::vector<uint8> vibrato(voices.size(), 0);
-		std::vector<bool> sounding(voices.size(), false);
+		// Текущая подстройка E5xx в канале: повтор того же значения ничего не
+		// меняет, и в узор его не пишем. У Furnace E580 («по центру») стоит в
+		// треках на каждой второй строке, и узор пестрел бессмысленными +80.
+		std::vector<uint8> finePitch(voices.size(), 0x80);
 		std::vector<int> lastInstrument(voices.size(), 0);
 		// Громкость канала в Furnace живёт сама по себе: note on её не трогает,
 		// нота звучит тем уровнем, что стоит на канале сейчас, а меняют его
@@ -1353,19 +1356,17 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 						currentVolume[c] = cell.vol * 4;
 						volumeFraction[c] = 0;
 					}
-					bool vibratoOnRow = false;
 					for(const auto &[fx, param] : sourceRow.effects)
 					{
 						if(fx < 0) continue;
 						const auto value = static_cast<uint8>(std::max<int16>(0, param));
-						if(fx == 0x04)
-						{
-							vibratoOnRow = true;
-							vibrato[c] = value;
-							// 0400 — это остановка, а не H00 «продолжай».
-							if(!value)
-								continue;
-						}
+						// Повтор той подстройки, что уже стоит в канале, ничего не меняет.
+						// Что стоит, считаем по самому узору (ниже, после строки): если
+						// запоминать сразу, а эффект потом проиграет борьбу за слот, то
+						// следующий такой же отбросился бы как повтор, и канал остался
+						// бы без подстройки вовсе.
+						if(fx == 0xe5 && value == finePitch[c])
+							continue;
 						if(fx == 0x08)
 						{
 							const unsigned l = value >> 4, r = value & 15;
@@ -1470,6 +1471,14 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 								return 3;
 							}
 						};
+						// Остановка вибрато важнее почти всего: вибрато у Furnace держится
+						// до неё, и потерянная остановка значит вибрато до конца ноты.
+						const auto weight = [&](std::pair<EffectCommand, uint8> effect) -> int
+						{
+							if(effect.first == CMD_VIBRATO && effect.second == 0)
+								return 5;
+							return priority(effect.first);
+						};
 						if(command == CMD_NONE)
 						{
 							if(fx != 0 || value)
@@ -1487,11 +1496,11 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 							uint8 weakest = 0;
 							for(uint8 i = 1; i < ModCommand::Effects(); i++)
 							{
-								if(priority(cell.GetEffect(i).first) < priority(cell.GetEffect(weakest).first))
+								if(weight(cell.GetEffect(i)) < weight(cell.GetEffect(weakest)))
 									weakest = i;
 							}
 							const auto [loserCommand, loserParam] = cell.GetEffect(weakest);
-							if(priority(command) > priority(loserCommand))
+							if(weight({command, argument}) > weight({loserCommand, loserParam}))
 							{
 								if(loserCommand == CMD_PANNING8 && cell.volcmd == VOLCMD_NONE)
 								{
@@ -1508,22 +1517,10 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 							}
 						}
 					}
-					if(cell.IsNote())
-						sounding[c] = true;
-					else if(cell.note == NOTE_KEYOFF || cell.note == NOTE_NOTECUT)
-						sounding[c] = false;
-					if(!vibratoOnRow && vibrato[c] && sounding[c])
+					for(uint8 i = 0; i < ModCommand::Effects(); i++)
 					{
-						bool hasVibrato = false;
-						for(uint8 i = 0; i < ModCommand::Effects(); i++)
-						{
-							const auto command = cell.GetEffect(i).first;
-							hasVibrato |= (command == CMD_VIBRATO || command == CMD_VIBRATOVOL);
-						}
-						// Свободного слота нет — эта строка останется без
-						// вибрато: заменять чужой эффект ради продолжения нельзя.
-						if(const uint8 slot = cell.FreeEffectSlot(); !hasVibrato && slot < ModCommand::Effects())
-							cell.SetEffect(slot, CMD_VIBRATO, 0);
+						if(const auto [command, param] = cell.GetEffect(i); command == CMD_FINETUNE)
+							finePitch[c] = param;
 					}
 					if(sourceRow.instrument >= 0 && furIns >= 0 && furInstruments[furIns].type == 4)
 						legacyDAC[c] = false;

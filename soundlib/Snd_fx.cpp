@@ -2186,7 +2186,12 @@ void CSoundFile::NoteChange(ModChannel &chn, int note, bool bPorta, bool bResetE
 			if(chn.nVibratoType < 4)
 			{
 				// IT Compatibilty: Slightly different waveform offsets (why does MPT have two different offsets here with IT old effects enabled and disabled?)
-				if(!m_playBehaviour[kITVibratoTremoloPanbrello] && (GetType() & (MOD_TYPE_IT | MOD_TYPE_MPT)) && !m_SongFlags[SONG_ITOLDEFFECTS])
+				// У Furnace нота начинает вибрато с нуля фазы (playback.cpp, doNote),
+				// а не с четверти периода, как MPTM: иначе каждая нота стартует с
+				// верхней точки качания и звучит выше.
+				if(m_furnaceSlides)
+					chn.nVibratoPos = 0;
+				else if(!m_playBehaviour[kITVibratoTremoloPanbrello] && (GetType() & (MOD_TYPE_IT | MOD_TYPE_MPT)) && !m_SongFlags[SONG_ITOLDEFFECTS])
 					chn.nVibratoPos = 0x10;
 				else if(GetType() == MOD_TYPE_MTM)
 					chn.nVibratoPos = 0x20;
