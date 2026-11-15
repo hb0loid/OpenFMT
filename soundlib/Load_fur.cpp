@@ -1009,6 +1009,8 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		if(extraCompat[4]) m_furnaceSlides |= FurnaceIgnoreSameNote;
 	}
 	m_playBehaviour = GetDefaultPlaybackBehaviour(MOD_TYPE_MPT);
+	// E5xx у Furnace — не разовая правка ноты, а подстройка канала.
+	m_playBehaviour.set(kFurnacePersistentFinetune);
 	Order().SetDefaultTempo(TEMPO(std::clamp(tickRate * 2.5 * (virtualNumerator && virtualDenominator ? double(virtualNumerator) / virtualDenominator : 1.0), 32.0, 512.0)));
 	Order().SetDefaultSpeed(std::clamp<unsigned>(speeds.front() * timeBase, 1, 255));
 	if(highlight1 && highlight2 >= highlight1)

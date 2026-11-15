@@ -622,6 +622,10 @@ enum PlayBehaviour
 	kITStoppedFilterEnvAtStart,     // Stopped filter envelope is still applied even when its first tick has not been processed yet
 	kITCompatGxxCarryPortaWithIns,  // Envelope Carry quirk in Compatible Gxx mode with portamento and instrument number
 
+	// Подстройка высоты у Furnace (E5xx) — состояние канала: она держится
+	// до следующего E5xx, а не до следующей ноты, как у IT.
+	kFurnacePersistentFinetune,
+
 	// Add new play behaviours here.
 
 	kMaxPlayBehaviours,

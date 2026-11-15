@@ -1561,7 +1561,11 @@ void CSoundFile::InstrumentChange(PlayState &playState, CHANNELINDEX channel, ui
 	const bool sampleChanged = (chn.pModSample != nullptr) && (pSmp != chn.pModSample);
 	const bool newTuning = (GetType() == MOD_TYPE_MPT && pIns && pIns->pTuning);
 
-	if(!bPorta || instrumentChanged || sampleChanged)
+	// У Furnace подстройка высоты живёт в канале и новую ноту переживает.
+	// Без этого расстроенный канал звучал расстроенным только на первой ноте,
+	// а дальше вставал на общую высоту — именно так терялся расстрой между
+	// двумя квадратами PSG, которым в чиптюне набирают толщину звука.
+	if((!bPorta || instrumentChanged || sampleChanged) && !m_playBehaviour[kFurnacePersistentFinetune])
 		chn.microTuning = 0;
 
 	// Playback behavior change for MPT: With portamento don't change sample if it is in
