@@ -4363,11 +4363,118 @@ void CSoundFile::ProcessFurnaceSlide(ModChannel &chn, ModCommand::COMMAND cmd, u
 	// Furnace linear pitch uses 128 units per semitone. Keep the fractional part across ticks.
 	if(std::lround(slide.precisePeriod) != chn.nPeriod)
 		slide.precisePeriod = chn.nPeriod;
-	const double octaves = slide.speed * (m_furnaceSlides & FurnaceSlideSpeedMask) / (128.0 * 12.0);
-	if(slide.precisePeriod < target)
-		slide.precisePeriod = std::min(target, slide.precisePeriod * std::exp2(octaves));
-	else
-		slide.precisePeriod = std::max(target, slide.precisePeriod * std::exp2(-octaves));
+	const ModSample *sample = chn.pModSample;
+	if((m_furnaceSlides & FurnaceChipUnits) && frequency && sample != nullptr && sample->isOPN2 && !sample->isOPM)
+	{
+		// Так Furnace двигает FM вне линейного режима (PLEASE_HELP_ME в
+		// fmshared_OPN.h). Частота — блок и F-number, F-number держится в
+		// пределах октавы [644, 1288), к нему прибавляется скорость. Вышел за
+		// край — с fbPortaPause скольжение замирает на тик и продолжает с
+		// другого края соседнего блока. Сверено по выгрузке VGM Furnace на
+		// `flying battery alt act 2 ft 4sythe`: 277 Гц → пауза → 251,75 →
+		// 242,0 → 233,07 Гц.
+		constexpr double clock = 7670454.0;
+		constexpr int32 bottom = 644, top = 1288;
+		const double middleC = GetPeriodFromNote(NOTE_MIDDLEC, chn.nFineTune, chn.nC5Speed);
+		const auto toChip = [&](double period)
+		{
+			const double hertz = 261.6256 * period / middleC;
+			double fnum = hertz * 144.0 * double(1 << 21) / clock;
+			int32 block = 0;
+			// Нота на самой границе (до) у Furnace лежит в начале верхнего
+			// блока: F-number 644, а не 1287 в нижнем.
+			while(fnum >= top - 1 && block < 7)
+			{
+				fnum *= 0.5;
+				block++;
+			}
+			return (block << 11) | std::clamp(static_cast<int32>(std::lround(fnum)), 0, 2047);
+		};
+		const auto toPeriod = [&](int32 value)
+		{
+			const double hertz = (value & 0x7FF) * clock / 144.0 / double(1 << (21 - (value >> 11)));
+			return hertz / 261.6256 * middleC;
+		};
+		// Пересчитываем из периода канала, только если его поменял кто-то
+		// кроме нас (новая нота). Сравнение пересчётом туда-обратно не годится:
+		// округление на каждом тике сбрасывало паузу на границе октавы, и
+		// скольжение вставало намертво.
+		if(slide.chipFreq < 0 || chn.nPeriod != slide.chipPeriod)
+		{
+			slide.chipFreq = toChip(chn.nPeriod);
+			slide.chipPause = false;
+			slide.chipPeriod = chn.nPeriod;
+		}
+		const int32 dest = toChip(target);
+		int32 value = slide.speed;
+		int32 base = slide.chipFreq;
+		if(slide.chipPause)
+		{
+			if(m_furnaceSlides & FurnaceOldOctaveBoundary)
+			{
+				if((slide.chipPauseFreq & 0xF800) > (base & 0xF800))
+					base = ((base & 0x7FF) >> 1) | (slide.chipPauseFreq & 0xF800);
+				else
+					base = ((base & 0x7FF) << 1) | (slide.chipPauseFreq & 0xF800);
+				value *= 2;
+			} else
+			{
+				base = slide.chipPauseFreq;
+			}
+		}
+		int32 next;
+		bool reached = false;
+		if(dest > base)
+		{
+			next = base + value;
+			if(next >= dest)
+				next = dest, reached = true;
+		} else
+		{
+			next = base - value;
+			if(next <= dest)
+				next = dest, reached = true;
+		}
+		if(!slide.chipPause)
+		{
+			const bool pause = (m_furnaceSlides & FurnacePortaPause) != 0;
+			if((next & 0x7FF) > top && (next & 0xF800) < 0x3800)
+			{
+				if(pause)
+				{
+					slide.chipPauseFreq = bottom | ((next + 0x800) & 0xF800);
+					slide.chipPause = true;
+					return;
+				}
+				next = ((next & 0x7FF) >> 1) | ((next + 0x800) & 0xF800);
+			}
+			if((next & 0x7FF) < bottom && (next & 0xF800) > 0)
+			{
+				if(pause)
+				{
+					slide.chipPauseFreq = (top - 1) | ((next - 0x800) & 0xF800);
+					slide.chipPause = true;
+					return;
+				}
+				next = ((next & 0x7FF) << 1) | ((next - 0x800) & 0xF800);
+			}
+		}
+		slide.chipPause = false;
+		slide.chipFreq = next;
+		slide.precisePeriod = toPeriod(next);
+		chn.nPeriod = static_cast<int32>(std::lround(slide.precisePeriod));
+		slide.chipPeriod = chn.nPeriod;
+		if(reached && (m_furnaceSlides & FurnaceStopAtTarget))
+			slide.mode = CMD_NONE;
+		return;
+	} else
+	{
+		const double octaves = slide.speed * (m_furnaceSlides & FurnaceSlideSpeedMask) / (128.0 * 12.0);
+		if(slide.precisePeriod < target)
+			slide.precisePeriod = std::min(target, slide.precisePeriod * std::exp2(octaves));
+		else
+			slide.precisePeriod = std::max(target, slide.precisePeriod * std::exp2(-octaves));
+	}
 	chn.nPeriod = static_cast<int32>(std::lround(slide.precisePeriod));
 	if(slide.precisePeriod == target && (m_furnaceSlides & FurnaceStopAtTarget))
 		slide.mode = CMD_NONE;

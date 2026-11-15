@@ -1011,10 +1011,29 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 	// совпадала с эталоном на +0,1 дБ в `the toilet lock` и +1,6 дБ в
 	// `mushroom hill alt`, а с ней уходила на −5,5 и −3,8 дБ соответственно.
 	// Уровни m_chipVolume остаются единичными и служат поправкой микшера.
-	// Legacy partial and hardware-period slides use chip-specific units.
-	if(compat[1] == 2)
+	// Скольжения по-фёрнейсовски — при линейной высоте. Старый «частичный»
+	// режим (1) Furnace давно удалил и при загрузке сам переводит в линейный
+	// (fur.cpp: «partial pitch linearity, which has been removed»), и его же
+	// выгрузка VGM скользит линейно. Раньше мы при 1 отдавали слайды обычному
+	// портаменто OpenMPT, а оно на строках в 1–2 тика прыгало по два полутона
+	// мимо нот: `flying battery alt act 2 ft 4sythe`, паттерн 10. Без
+	// линейности (0) у Furnace скольжения в единицах чипа — их не трогаем.
+	if(compat[1] >= 1)
 	{
 		m_furnaceSlides = extraCompat[13] ? extraCompat[13] : 4;
+		// Furnace 0.6.7, по которому сделаны и эталоны, в «частичном» режиме
+		// двигает FM на `скорость` единиц F-number за тик, без множителя:
+		// в его выгрузке VGM `G20` даёт 110 → 113,3 → 116,5 Гц, ровно +32.
+		if(compat[1] == 1)
+		{
+			m_furnaceSlides = 1 | FurnaceChipUnits;
+			// Флаги из того же блока совместимости: 10 — fbPortaPause,
+			// 14 — oldOctaveBoundary. У старых версий Furnace включает их сам.
+			if(extraCompat[10] || version < 85)
+				m_furnaceSlides |= FurnacePortaPause;
+			if(extraCompat[14] || version < 97)
+				m_furnaceSlides |= FurnaceOldOctaveBoundary;
+		}
 		if(compat[0]) m_furnaceSlides |= FurnaceLimitSlides;
 		if(compat[8]) m_furnaceSlides |= FurnaceStopOnNoteOff;
 		if(compat[9]) m_furnaceSlides |= FurnaceStopAtTarget;

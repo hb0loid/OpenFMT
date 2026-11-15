@@ -502,6 +502,13 @@ public:
 		FurnaceStopOnNoteOff = 1 << 10,
 		FurnaceLimitSlides = 1 << 11,
 		FurnaceIgnoreSameNote = 1 << 12,
+		// Старый «частичный» режим высоты Furnace (флаг 1): у FM скольжения
+		// идут не по полутонам, а по F-number чипа, на скорость за тик.
+		FurnaceChipUnits = 1 << 13,
+		// fbPortaPause и oldOctaveBoundary Furnace: как FM переходит границу
+		// октавы при скольжении (см. PLEASE_HELP_ME в fmshared_OPN.h).
+		FurnacePortaPause = 1 << 14,
+		FurnaceOldOctaveBoundary = 1 << 15,
 	};
 	uint16 m_furnaceSlides = 0;
 	// Громкость отдельных чипов, 8.8. Для YM2612 и YM2151 заполняется из песни
