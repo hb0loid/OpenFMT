@@ -90,12 +90,13 @@ public:
 		for(uint32 channel = 0; channel < Channels; channel++)
 		{
 			Lane &lane = m_lanes[channel];
-			if(m_touched[channel])
-			{
-				for(uint32 i = 0; i < m_blockLength; i++)
-					lane.samples[(lane.head + i) & (Size - 1)] = m_pending[channel][i];
-				lane.head += m_blockLength;
-			}
+			// Канал, который в этом блоке ничего не дал, звучит тишиной: пишем
+			// нули. Раньше его кольцо просто стояло, и осциллограф держал
+			// последнюю волну, хотя канал давно замолчал.
+			const bool touched = m_touched[channel];
+			for(uint32 i = 0; i < m_blockLength; i++)
+				lane.samples[(lane.head + i) & (Size - 1)] = touched ? m_pending[channel][i] : 0.0f;
+			lane.head += m_blockLength;
 			lane.written.store(lane.head, std::memory_order_release);
 		}
 		m_touched.fill(false);
