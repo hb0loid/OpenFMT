@@ -1348,10 +1348,15 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 							{
 								cell.volcmd = VOLCMD_PANNING;
 								cell.vol = (pan + 2) / 4;
-							} else if(cell.command == CMD_NONE)
+							} else if(const uint8 slot = cell.FreeEffectSlot(); slot < ModCommand::Effects())
 							{
-								cell.command = CMD_PANNING8;
-								cell.param = pan;
+								// Любой свободный слот, а не только первый: в этой
+								// сборке колонок эффектов две. Пока проверялась одна,
+								// панорама пропадала на строках, где заняты колонка
+								// громкости и первый эффект, — а вторая колонка при
+								// этом пустовала. Так в `death egg alt 2` терялось
+								// перекидывание голоса из уха в ухо.
+								cell.SetEffect(slot, CMD_PANNING8, pan);
 							} else unsupported++;
 							continue;
 						}
