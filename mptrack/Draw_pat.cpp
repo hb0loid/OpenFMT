@@ -619,111 +619,121 @@ void CViewPattern::OnDraw(CDC *pDC)
 	const auto &order = Order();
 	const ORDERINDEX ordCount = Order().GetLength();
 
-	if (m_nMidRow)
+	// Когда недействительна только шапка, тело узора не трогаем. Осциллографы
+	// в шапках каналов помечают её на каждое звуковое уведомление, десятки раз
+	// в секунду, и раньше заодно перерисовывались три узора целиком — чем
+	// больше каналов, тем тяжелее. Эта лишняя нагрузка на открытой вкладке
+	// и давала помехи в звуке.
+	const bool headerOnly = clipRect.bottom <= rcClient.top + m_szHeader.cy;
+	int xpaint = 0;
+	if(!headerOnly)
 	{
-		if (yofs >= m_nMidRow)
+		if (m_nMidRow)
 		{
-			yofs -= m_nMidRow;
-		} else
-		{
-			UINT nSkip = m_nMidRow - yofs;
-			PATTERNINDEX nPrevPat = PATTERNINDEX_INVALID;
-
-			// Display previous pattern
-			if(patternSetup[PatternSetup::ShowPrevNextPattern])
+			if (yofs >= m_nMidRow)
 			{
-				if(m_nOrder > 0 && m_nOrder < ordCount)
-				{
-					ORDERINDEX prevOrder = order.GetPreviousOrderIgnoringSkips(m_nOrder);
-					//Skip +++ items
-
-					if(m_nOrder < order.size() && order[m_nOrder] == m_nPattern)
-					{
-						nPrevPat = order[prevOrder];
-					}
-				}
-			}
-			if(sndFile.Patterns.IsValidPat(nPrevPat))
-			{
-				ROWINDEX nPrevRows = sndFile.Patterns[nPrevPat].GetNumRows();
-				ROWINDEX n = std::min(static_cast<ROWINDEX>(nSkip), nPrevRows);
-
-				ypaint += (nSkip - n) * m_szCell.cy;
-				rect.SetRect(0, m_szHeader.cy, nColumnWidth * numChannels + m_szHeader.cx, ypaint - 1);
-				m_Dib.SetBlendMode(true);
-				DrawPatternData(hdc, lineWidth, nPrevPat, false, false,
-						nPrevRows - n, nPrevRows, xofs, rcClient, &ypaint);
-				m_Dib.SetBlendMode(false);
+				yofs -= m_nMidRow;
 			} else
 			{
-				ypaint += nSkip * m_szCell.cy;
-				rect.SetRect(0, m_szHeader.cy, nColumnWidth * numChannels + m_szHeader.cx, ypaint - 1);
-			}
-			if ((rect.bottom > rect.top) && (rect.right > rect.left))
-			{
-				::SetDCBrushColor(hdc, faceColor);
-				::FillRect(hdc, &rect, dcBrush);
-				auto shadowRect = rect;
-				shadowRect.top = shadowRect.bottom++;
-				::SetDCBrushColor(hdc, shadowColor);
-				::FillRect(hdc, &shadowRect, dcBrush);
-			}
-			yofs = 0;
-		}
-	}
+				UINT nSkip = m_nMidRow - yofs;
+				PATTERNINDEX nPrevPat = PATTERNINDEX_INVALID;
 
-	UINT nrows = sndFile.Patterns.IsValidPat(m_nPattern) ? sndFile.Patterns[m_nPattern].GetNumRows() : 0;
-	int ypatternend = ypaint + (nrows-yofs)*m_szCell.cy;
-	DrawPatternData(hdc, lineWidth, m_nPattern, true, (pMainFrm->GetModPlaying() == pModDoc),
-					yofs, nrows, xofs, rcClient, &ypaint);
-	// Display next pattern
-	if(patternSetup[PatternSetup::ShowPrevNextPattern] && (ypaint < rcClient.bottom) && (ypaint == ypatternend))
-	{
-		int nVisRows = (rcClient.bottom - ypaint + m_szCell.cy - 1) / m_szCell.cy;
-		if(nVisRows > 0)
+				// Display previous pattern
+				if(patternSetup[PatternSetup::ShowPrevNextPattern])
+				{
+					if(m_nOrder > 0 && m_nOrder < ordCount)
+					{
+						ORDERINDEX prevOrder = order.GetPreviousOrderIgnoringSkips(m_nOrder);
+						//Skip +++ items
+
+						if(m_nOrder < order.size() && order[m_nOrder] == m_nPattern)
+						{
+							nPrevPat = order[prevOrder];
+						}
+					}
+				}
+				if(sndFile.Patterns.IsValidPat(nPrevPat))
+				{
+					ROWINDEX nPrevRows = sndFile.Patterns[nPrevPat].GetNumRows();
+					ROWINDEX n = std::min(static_cast<ROWINDEX>(nSkip), nPrevRows);
+
+					ypaint += (nSkip - n) * m_szCell.cy;
+					rect.SetRect(0, m_szHeader.cy, nColumnWidth * numChannels + m_szHeader.cx, ypaint - 1);
+					m_Dib.SetBlendMode(true);
+					DrawPatternData(hdc, lineWidth, nPrevPat, false, false,
+							nPrevRows - n, nPrevRows, xofs, rcClient, &ypaint);
+					m_Dib.SetBlendMode(false);
+				} else
+				{
+					ypaint += nSkip * m_szCell.cy;
+					rect.SetRect(0, m_szHeader.cy, nColumnWidth * numChannels + m_szHeader.cx, ypaint - 1);
+				}
+				if ((rect.bottom > rect.top) && (rect.right > rect.left))
+				{
+					::SetDCBrushColor(hdc, faceColor);
+					::FillRect(hdc, &rect, dcBrush);
+					auto shadowRect = rect;
+					shadowRect.top = shadowRect.bottom++;
+					::SetDCBrushColor(hdc, shadowColor);
+					::FillRect(hdc, &shadowRect, dcBrush);
+				}
+				yofs = 0;
+			}
+		}
+
+		UINT nrows = sndFile.Patterns.IsValidPat(m_nPattern) ? sndFile.Patterns[m_nPattern].GetNumRows() : 0;
+		int ypatternend = ypaint + (nrows-yofs)*m_szCell.cy;
+		DrawPatternData(hdc, lineWidth, m_nPattern, true, (pMainFrm->GetModPlaying() == pModDoc),
+						yofs, nrows, xofs, rcClient, &ypaint);
+		// Display next pattern
+		if(patternSetup[PatternSetup::ShowPrevNextPattern] && (ypaint < rcClient.bottom) && (ypaint == ypatternend))
 		{
-			PATTERNINDEX nNextPat = PATTERNINDEX_INVALID;
-			ORDERINDEX nNextOrder = order.GetNextOrderIgnoringSkips(m_nOrder);
-			if(nNextOrder == m_nOrder) nNextOrder = ORDERINDEX_INVALID;
-			//Ignore skip items(+++) from sequence.
-
-			if(m_nOrder < ordCount && nNextOrder < ordCount && order[m_nOrder] == m_nPattern)
+			int nVisRows = (rcClient.bottom - ypaint + m_szCell.cy - 1) / m_szCell.cy;
+			if(nVisRows > 0)
 			{
-				nNextPat = order[nNextOrder];
-			}
-			if(sndFile.Patterns.IsValidPat(nNextPat))
-			{
-				ROWINDEX nNextRows = sndFile.Patterns[nNextPat].GetNumRows();
-				ROWINDEX n = std::min(static_cast<ROWINDEX>(nVisRows), nNextRows);
+				PATTERNINDEX nNextPat = PATTERNINDEX_INVALID;
+				ORDERINDEX nNextOrder = order.GetNextOrderIgnoringSkips(m_nOrder);
+				if(nNextOrder == m_nOrder) nNextOrder = ORDERINDEX_INVALID;
+				//Ignore skip items(+++) from sequence.
 
-				m_Dib.SetBlendMode(true);
-				DrawPatternData(hdc, lineWidth, nNextPat, false, false,
-						0, n, xofs, rcClient, &ypaint);
-				m_Dib.SetBlendMode(false);
+				if(m_nOrder < ordCount && nNextOrder < ordCount && order[m_nOrder] == m_nPattern)
+				{
+					nNextPat = order[nNextOrder];
+				}
+				if(sndFile.Patterns.IsValidPat(nNextPat))
+				{
+					ROWINDEX nNextRows = sndFile.Patterns[nNextPat].GetNumRows();
+					ROWINDEX n = std::min(static_cast<ROWINDEX>(nVisRows), nNextRows);
+
+					m_Dib.SetBlendMode(true);
+					DrawPatternData(hdc, lineWidth, nNextPat, false, false,
+							0, n, xofs, rcClient, &ypaint);
+					m_Dib.SetBlendMode(false);
+				}
 			}
 		}
-	}
-	// Drawing outside pattern area
-	int xpaint = m_szHeader.cx + (numChannels - xofs) * nColumnWidth;
-	if ((xpaint < rcClient.right) && (ypaint > rcClient.top))
-	{
-		rc.SetRect(xpaint, rcClient.top, rcClient.right, ypaint);
-		::SetDCBrushColor(hdc, faceColor);
-		::FillRect(hdc, &rc, dcBrush);
-	}
-	if (ypaint < rcClient.bottom)
-	{
-		int width = HighDPISupport::ScalePixels(1, m_hWnd);
-		rc.SetRect(0, ypaint, rcClient.right + 1, rcClient.bottom + 1);
-		if(width == 1)
-			DrawButtonRect(hdc, lineWidth, rc, _T(""));
-		else
-			DrawEdge(hdc, rc, EDGE_RAISED, BF_TOPLEFT | BF_MIDDLE);  // Prevent lower edge from being drawn
-	}
-	// Drawing pattern selection
-	if(m_Status[psDragnDropping])
-	{
-		DrawDragSel(hdc);
+		// Drawing outside pattern area
+		xpaint = m_szHeader.cx + (numChannels - xofs) * nColumnWidth;
+		if ((xpaint < rcClient.right) && (ypaint > rcClient.top))
+		{
+			rc.SetRect(xpaint, rcClient.top, rcClient.right, ypaint);
+			::SetDCBrushColor(hdc, faceColor);
+			::FillRect(hdc, &rc, dcBrush);
+		}
+		if (ypaint < rcClient.bottom)
+		{
+			int width = HighDPISupport::ScalePixels(1, m_hWnd);
+			rc.SetRect(0, ypaint, rcClient.right + 1, rcClient.bottom + 1);
+			if(width == 1)
+				DrawButtonRect(hdc, lineWidth, rc, _T(""));
+			else
+				DrawEdge(hdc, rc, EDGE_RAISED, BF_TOPLEFT | BF_MIDDLE);  // Prevent lower edge from being drawn
+		}
+		// Drawing pattern selection
+		if(m_Status[psDragnDropping])
+		{
+			DrawDragSel(hdc);
+		}
 	}
 
 	const auto buttonBrush = GetSysColorBrush(COLOR_BTNFACE), blackBrush = GetStockBrush(BLACK_BRUSH);
