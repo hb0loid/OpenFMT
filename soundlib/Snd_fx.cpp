@@ -4764,6 +4764,26 @@ void CSoundFile::SetFinetune(PATTERNINDEX pattern, ROWINDEX row, CHANNELINDEX ch
 
 int16 CSoundFile::CalculateFinetuneTarget(PATTERNINDEX pattern, ROWINDEX row, CHANNELINDEX channel) const
 {
+	// Подстройка может стоять не в первой колонке эффектов: в этой сборке их
+	// две, и импорт Furnace кладёт её во вторую, когда первая занята.
+	// CalculateXParam смотрит только первую колонку, и если там другой
+	// эффект, отдаёт его параметр: на строке «E30 +80» подстройка считалась
+	// от 0x30, то есть почти на полутон вниз, и канал съезжал. Продолжение
+	// строками X бывает только у первой колонки, поэтому во второй значение
+	// всегда восьмибитное и разворачивается так же, как без продолжения.
+	if(Patterns.IsValidPat(pattern))
+	{
+		const ModCommand &m = *Patterns[pattern].GetpModCommand(row, channel);
+		if(m.command != CMD_FINETUNE && m.command != CMD_FINETUNE_SMOOTH)
+		{
+			for(uint8 i = 1; i < ModCommand::Effects(); i++)
+			{
+				const auto [command, param] = m.GetEffect(i);
+				if(command == CMD_FINETUNE || command == CMD_FINETUNE_SMOOTH)
+					return mpt::saturate_cast<int16>((static_cast<int32>(param) << 8) - 0x8000);
+			}
+		}
+	}
 	return mpt::saturate_cast<int16>(static_cast<int32>(CalculateXParam(pattern, row, channel, nullptr)) - 0x8000);
 }
 
