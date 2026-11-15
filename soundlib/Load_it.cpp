@@ -1050,6 +1050,10 @@ bool CSoundFile::ReadIT(FileReader &file, ModLoadingFlags loadFlags)
 	}
 	// Need to do this before reading the patterns because m_nChannels might be modified by LoadExtendedSongProperties. *sigh*
 	const bool hasExtendedSongProperties = LoadExtendedSongProperties(file, false, &interpretModPlugMade);
+	// Старые .fmt из импорта Furnace (FMP4) флага подстройки не хранили, а он
+	// там нужен всегда.
+	if(hasFurnaceHeader)
+		m_playBehaviour.set(kFurnacePersistentFinetune);
 
 	// Reading Channels Pan Positions
 	const CHANNELINDEX headerChannels = std::min(GetNumChannels(), CHANNELINDEX(64));
@@ -1212,7 +1216,7 @@ bool CSoundFile::ReadIT(FileReader &file, ModLoadingFlags loadFlags)
 			if(chnMask[ch] & 8)
 			{
 				const auto [command, param] = patternData.ReadArray<uint8, 2>();
-				if(hasPSGHeader && command >= 0x80 && command < 0x85)
+				if((hasPSGHeader || GetType() == MOD_TYPE_MPT) && command >= 0x80 && command < 0x85)
 				{
 					m.command = static_cast<ModCommand::COMMAND>(CMD_PSG_NOISE + command - 0x80);
 					m.param = param;
@@ -1588,7 +1592,13 @@ static uint32 SaveITEditHistory(const CSoundFile &sndFile, std::ostream *file)
 
 bool CSoundFile::SaveIT(std::ostream &f, const mpt::PathString &filename, bool compatibilityExport, bool fmt)
 {
-	if(fmt ? GetType() != MOD_TYPE_MPT || compatibilityExport : HasNativeChipSamples())
+	// Чипы (YM2612, YM2151, PSG) хранятся в обычном MPTM: патчи — в блоке
+	// расширений FCSP, эффекты — байтами 0x80+. Обычный OpenMPT и то и другое
+	// пропускает, сэмплы чипов у него просто пустые. Отдельный файл .fmt со
+	// своей сигнатурой больше не пишется, но по-прежнему читается.
+	MPT_UNREFERENCED_PARAMETER(fmt);
+	const bool chips = GetType() == MOD_TYPE_MPT && !compatibilityExport;
+	if(HasNativeChipSamples() && !chips)
 		return false;
 
 	const CModSpecifications &specs = (GetType() == MOD_TYPE_MPT ? ModSpecs::mptm : (compatibilityExport ? ModSpecs::it : ModSpecs::itEx));
@@ -1601,34 +1611,7 @@ bool CSoundFile::SaveIT(std::ostream &f, const mpt::PathString &filename, bool c
 	// Writing Header
 	MemsetZero(itHeader);
 	dwChnNamLen = 0;
-	const char *signature = fmt ? FmtSignature : "IMPM";
-	if(fmt)
-	{
-		for(SAMPLEINDEX smp = 1; smp <= GetNumSamples(); smp++)
-		{
-			if(Samples[smp].psg)
-			{
-				signature = FmtPSGSignature;
-				break;
-			}
-			if(Samples[smp].isOPM)
-				signature = FmtOPMSignature;
-		}
-		if(signature != FmtPSGSignature)
-		{
-			for(const auto &pat : Patterns)
-			{
-				if(pat.IsValid() && std::any_of(pat.begin(), pat.end(), [](const ModCommand &m)
-					{ return m.command >= CMD_PSG_NOISE && m.command <= CMD_FM_LEVEL4; }))
-				{
-					signature = FmtPSGSignature;
-					break;
-				}
-			}
-		}
-	}
-	if(fmt && m_furnaceSlides)
-		signature = FmtFurnaceSignature;
+	const char *signature = "IMPM";
 	memcpy(itHeader.id, signature, 4);
 	mpt::String::WriteBuf(mpt::String::nullTerminated, itHeader.songname) = m_songName;
 
@@ -2027,7 +2010,7 @@ bool CSoundFile::SaveIT(std::ostream &f, const mpt::PathString &filename, bool c
 					b |= 4;
 				} else if(m->command != CMD_NONE)
 				{
-					if((signature == FmtPSGSignature || signature == FmtFurnaceSignature) && m->command >= CMD_PSG_NOISE && m->command <= CMD_FM_LEVEL4)
+					if(chips && m->command >= CMD_PSG_NOISE && m->command <= CMD_FM_LEVEL4)
 					{
 						command = static_cast<uint8>(0x80 + m->command - CMD_PSG_NOISE);
 						param = m->param;
@@ -2168,10 +2151,15 @@ bool CSoundFile::SaveIT(std::ostream &f, const mpt::PathString &filename, bool c
 
 		mpt::String::WriteBuf(mpt::String::nullTerminated, itss.name) = m_szNames[smp];
 
-		if(fmt && sample.psg)
-			itss.cvt = FmtPSGSample;
-		else if(fmt && sample.isOPN2)
-			itss.cvt = sample.isOPM ? FmtOPMSample : FmtOPN2Sample;
+		const bool chipSample = chips && (sample.psg || sample.isOPN2);
+		if(chipSample)
+		{
+			// Для обычного OpenMPT — пустой сэмпл: имя видно, звука нет.
+			// Патч лежит в расширении FCSP.
+			itss.flags = 0;
+			itss.cvt = ITSample::cvtSignedSample;
+			itss.length = itss.loopbegin = itss.loopend = itss.susloopbegin = itss.susloopend = 0;
+		}
 		itss.samplepointer = static_cast<uint32>(dwPos);
 		if(dwPos > uint32_max)
 		{
@@ -2196,17 +2184,8 @@ bool CSoundFile::SaveIT(std::ostream &f, const mpt::PathString &filename, bool c
 				// Sample length does not fit into IT header!
 				AddToLog(LogWarning, MPT_UFORMAT("Truncating sample {}: Length exceeds exceeds 4 gigasamples.")(smp));
 			}
-			if(fmt && sample.psg)
-			{
-				dwPos += WritePSGPatch(f, *sample.psg);
-			} else if(fmt && sample.isOPN2)
-			{
-				mpt::IO::WriteRaw(f, sample.opn2.data(), sample.opn2.size());
-				dwPos += sample.opn2.size();
-			} else
-			{
+			if(!chipSample)
 				dwPos += itss.GetSampleFormat().WriteSample(f, sample, smpLength);
-			}
 		} else
 		{
 #ifdef MPT_EXTERNAL_SAMPLES
@@ -2571,6 +2550,41 @@ void CSoundFile::SaveExtendedSongProperties(std::ostream &f) const
 	WriteModular(f, MagicBE("VSTV"), m_nVSTiVolume);
 	if(m_furnaceSlides)
 		WriteModular(f, MagicLE("FPSL"), m_furnaceSlides);
+	// Подстройка высоты Furnace живёт в канале. Это флаг воспроизведения, но
+	// среди флагов совместимости OpenMPT (MSF.) его хранить нельзя: в новых
+	// версиях OpenMPT этот номер может занять их собственный флаг.
+	if(m_playBehaviour[kFurnacePersistentFinetune])
+		WriteModular(f, MagicLE("FPFT"), uint8(1));
+	// Арпеджио Furnace: скорость и флаги совместимости.
+	if(m_furnaceArpSpeed != 1 || m_furnaceArpFlags)
+		WriteModular(f, MagicLE("FARP"), static_cast<uint16>(m_furnaceArpSpeed | (m_furnaceArpFlags << 8)));
+	// Патчи чипов, по блоку на сэмпл: номер сэмпла, вид чипа (1 — YM2612,
+	// 2 — YM2151, 3 — PSG), затем сам патч.
+	if(GetType() == MOD_TYPE_MPT)
+	{
+		for(SAMPLEINDEX smp = 1; smp <= GetNumSamples(); smp++)
+		{
+			const ModSample &sample = Samples[smp];
+			if(!sample.psg && !sample.isOPN2)
+				continue;
+			std::ostringstream patch(std::ios::out | std::ios::binary);
+			uint8 kind = 3;
+			if(sample.psg)
+				WritePSGPatch(patch, *sample.psg);
+			else
+			{
+				kind = sample.isOPM ? 2 : 1;
+				mpt::IO::WriteRaw(patch, sample.opn2.data(), sample.opn2.size());
+			}
+			const std::string data = std::move(patch).str();
+			if(data.size() + 3 > uint16_max)
+				continue;
+			WriteModularHeader(f, MagicLE("FCSP"), static_cast<uint16>(data.size() + 3));
+			mpt::IO::WriteIntLE<uint16>(f, smp);
+			mpt::IO::WriteIntLE<uint8>(f, kind);
+			mpt::IO::WriteRaw(f, data.data(), data.size());
+		}
+	}
 	// Громкость чипов идёт именованным полем расширений песни, а не новой
 	// сигнатурой файла: читатель, который его не знает, просто его пропустит.
 	if(std::any_of(m_chipVolume.begin(), m_chipVolume.end(), [](uint16 volume) { return volume != ChipVolumeUnity; }))
@@ -2741,6 +2755,8 @@ void ReadFieldCast(FileReader &chunk, std::size_t size, T &field)
 
 bool CSoundFile::LoadExtendedSongProperties(FileReader &file, bool ignoreChannelCount, bool *pInterpretMptMade)
 {
+	// Применяется после всех блоков: MSF. сбрасывает флаги воспроизведения.
+	bool furnaceFinetune = false;
 	if(!file.ReadMagic("STPM"))	// 'MPTS'
 	{
 		return false;
@@ -2785,6 +2801,43 @@ bool CSoundFile::LoadExtendedSongProperties(FileReader &file, bool ignoreChannel
 			case MagicBE("SPA."): ReadField(chunk, size, m_nSamplePreAmp); break;
 			case MagicBE("VSTV"): ReadField(chunk, size, m_nVSTiVolume); break;
 			case MagicLE("FPSL"): ReadField(chunk, size, m_furnaceSlides); break;
+			case MagicLE("FPFT"): furnaceFinetune = true; break;
+			case MagicLE("FARP"):
+				{
+					uint16 arp = 0;
+					ReadField(chunk, size, arp);
+					m_furnaceArpSpeed = static_cast<uint8>(std::max(arp & 0xFF, 1));
+					m_furnaceArpFlags = static_cast<uint8>(arp >> 8);
+				}
+				break;
+			case MagicLE("FCSP"):
+				// Патч чипа для сэмпла: в заголовке сэмпла он пустой.
+				{
+					const SAMPLEINDEX smp = chunk.ReadUint16LE();
+					const uint8 kind = chunk.ReadUint8();
+					if(smp < 1 || smp > GetNumSamples())
+						break;
+					ModSample &sample = Samples[smp];
+					if(kind == 3)
+					{
+						if(auto patch = ReadPSGPatch(chunk))
+						{
+							sample.SetAdlib(true);
+							sample.psg = std::move(patch);
+						}
+					} else if(kind == 1 || kind == 2)
+					{
+						OPN2Patch patch;
+						if(chunk.ReadArray(patch))
+						{
+							sample.SetAdlib(true);
+							sample.opn2 = patch;
+							sample.isOPN2 = true;
+							sample.isOPM = (kind == 2);
+						}
+					}
+				}
+				break;
 			case MagicLE("FCHV"):
 				// Громкость чипов, по 16 бит на чип в порядке ChipKind.
 				{
@@ -2902,6 +2955,9 @@ bool CSoundFile::LoadExtendedSongProperties(FileReader &file, bool ignoreChannel
 				break;
 		}
 	}
+
+	if(furnaceFinetune)
+		m_playBehaviour.set(kFurnacePersistentFinetune);
 
 	// Validate read values.
 	Order().SetDefaultTempo(Clamp(Order().GetDefaultTempo(), GetModSpecifications().GetTempoMin(), GetModSpecifications().GetTempoMax()));

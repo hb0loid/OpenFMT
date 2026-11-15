@@ -69,8 +69,7 @@ const TCHAR FileFilterMOD[]	= _T("ProTracker Modules (*.mod)|*.mod||");
 const TCHAR FileFilterXM[]	= _T("FastTracker Modules (*.xm)|*.xm||");
 const TCHAR FileFilterS3M[] = _T("Scream Tracker Modules (*.s3m)|*.s3m||");
 const TCHAR FileFilterIT[]	= _T("Impulse Tracker Modules (*.it)|*.it||");
-const TCHAR FileFilterMPT[] = _T("OpenMPT Modules (*.mptm)|*.mptm|Native Chip Modules (*.fmt)|*.fmt||");
-const TCHAR FileFilterFMT[] = _T("Native Chip Modules (*.fmt)|*.fmt||");
+const TCHAR FileFilterMPT[] = _T("OpenMPT Modules (*.mptm)|*.mptm||");
 const TCHAR FileFilterNone[] = _T("");
 
 static bool IsFMTPath(const mpt::PathString &filename)
@@ -81,8 +80,6 @@ static bool IsFMTPath(const mpt::PathString &filename)
 
 const CString ModTypeToFilter(const CSoundFile& sndFile)
 {
-	if(sndFile.HasNativeChipSamples())
-		return FileFilterFMT;
 	const MODTYPE modtype = sndFile.GetType();
 	switch(modtype)
 	{
@@ -383,8 +380,9 @@ bool CModDoc::OnSaveDocument(const mpt::PathString &filename, const bool setPath
 
 bool CModDoc::SaveFile(const mpt::PathString &filename, bool allowRelativeSamplePaths)
 {
+	// Чипы живут только в MPTM (в любом файле, хоть .mptm, хоть старом .fmt).
 	const bool fmt = IsFMTPath(filename);
-	if((fmt && m_SndFile.GetType() != MOD_TYPE_MPT) || (!fmt && m_SndFile.HasNativeChipSamples()))
+	if(m_SndFile.HasNativeChipSamples() && m_SndFile.GetType() != MOD_TYPE_MPT)
 		return false;
 	try
 	{
@@ -501,7 +499,9 @@ BOOL CModDoc::DoSave(const mpt::PathString &filename, bool setPath)
 	const mpt::PathString docFileName = GetPathNameMpt();
 	const bool hasNativeChips = m_SndFile.HasNativeChipSamples();
 	const bool isMPT = m_SndFile.GetType() == MOD_TYPE_MPT;
-	const mpt::ustring defaultExtension = (hasNativeChips || (isMPT && IsFMTPath(docFileName))) ? U_("fmt") : m_SndFile.GetModSpecifications().GetFileExtension();
+	// Модули с чипами — обычный MPTM. Старый .fmt открывается, но сохраняется
+	// уже как .mptm: при сохранении такого документа спрашиваем имя.
+	const mpt::ustring defaultExtension = m_SndFile.GetModSpecifications().GetFileExtension();
 
 	switch(m_SndFile.GetBestSaveFormat())
 	{
@@ -527,7 +527,7 @@ BOOL CModDoc::DoSave(const mpt::PathString &filename, bool setPath)
 
 	mpt::PathString saveFileName;
 
-	if(filename.empty() || m_ShowSavedialog || (hasNativeChips && !IsFMTPath(filename)) || (!isMPT && IsFMTPath(filename)))
+	if(filename.empty() || m_ShowSavedialog || IsFMTPath(filename) || (hasNativeChips && !isMPT))
 	{
 		mpt::PathString drive = docFileName.GetDrive();
 		mpt::PathString dir = docFileName.GetDirectory();
@@ -553,9 +553,9 @@ BOOL CModDoc::DoSave(const mpt::PathString &filename, bool setPath)
 		saveFileName = filename;
 	}
 
-	if(hasNativeChips && !IsFMTPath(saveFileName))
+	if(hasNativeChips && !isMPT)
 	{
-		Reporting::Error(U_("Native chip instruments require a .fmt module."));
+		Reporting::Error(U_("Chip instruments (YM2612, YM2151, PSG) can only be saved in the OpenMPT MPTM format."));
 		return FALSE;
 	}
 

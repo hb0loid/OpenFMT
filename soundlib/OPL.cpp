@@ -10,6 +10,7 @@
 
 #include "stdafx.h"
 #include "OPL.h"
+#include "ChannelScopes.h"
 #include "OPN2.h"
 #include "SN76489.h"
 #include "ModSample.h"
@@ -72,13 +73,24 @@ void OPL::Mix(int32 *target, size_t count, uint32 volumeFactorQ16, const ModChan
 
 	// This factor causes a sample voice to be more or less as loud as an OPL voice
 	const int32 factor = Util::muldiv_unsigned(volumeFactorQ16, 6169 * chipVolume[ChipOPL] / ChipVolumeUnity, (1 << 16));
-	while(count--)
+	for(size_t i = 0; i < count; i++)
 	{
 		int16 l, r;
 		m_opl->Sample(&l, &r);
 		target[0] += l * factor;
 		target[1] += r * factor;
 		target += 2;
+		if(scopes != nullptr)
+		{
+			// Голос OPL — канал трекера, которому он сейчас отдан. Единицы те
+			// же, что у остальных осциллографов: вклад в выход, к единице.
+			for(uint8 oplCh = 0; oplCh < OPL_CHANNELS; oplCh++)
+			{
+				const CHANNELINDEX chn = m_OPLtoChan[oplCh];
+				if(chn != CHANNELINDEX_INVALID)
+					scopes->Add(chn, i, static_cast<float>(m_opl->ChannelScope(oplCh) * static_cast<double>(factor) / 134217728.0));
+			}
+		}
 	}
 }
 

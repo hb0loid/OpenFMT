@@ -178,6 +178,9 @@ class Opal {
         void                SetSampleRate(int sample_rate);
         void                Port(uint16_t reg_num, uint8_t val);
         void                Sample(int16_t *left, int16_t *right);
+        // Последний отсчёт каждого канала, для осциллографов по каналам.
+        // В звук не идёт: сумма считается как раньше.
+        int16_t             ChannelScope(int ch) const { return (ch >= 0 && ch < NumChannels) ? ChanScope[ch] : 0; }
 
     protected:
         void                Init(int sample_rate);
@@ -186,6 +189,7 @@ class Opal {
         int32_t             SampleRate;
         int32_t             SampleAccum;
         int16_t             LastOutput[2], CurrOutput[2];
+        int16_t             ChanScope[NumChannels] = {};
         Channel             Chan[NumChannels];
         Operator            Op[NumOperators];
 //      uint16_t            ExpTable[256];
@@ -596,6 +600,9 @@ void Opal::Output(int16_t &left, int16_t &right) {
 
         int16_t chanleft, chanright;
         Chan[i].Output(chanleft, chanright);
+        // Для осциллографа берём сторону погромче: канал, уведённый
+        // панорамой в одно ухо, иначе показывался бы вполовину.
+        ChanScope[i] = (std::abs(chanleft) >= std::abs(chanright)) ? chanleft : chanright;
 
         leftmix += chanleft;
         rightmix += chanright;
