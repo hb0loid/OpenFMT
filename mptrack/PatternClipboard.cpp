@@ -325,13 +325,26 @@ std::string PatternClipboard::CreateClipboardString(const CSoundFile &sndFile, P
 			}
 
 			// Второй эффект строки. Дописывается тремя символами сразу за первым
-			// и только когда он есть, поэтому ячейки без него выглядят точно так
-			// же, как в обычном OpenMPT, и вставляются в него без правок.
-			cursor.Move(0, 0, 1);
-			if(const auto [command2, param2] = m->GetEffect(1); command2 != CMD_NONE && !m->IsPcNote() && selection.ContainsHorizontal(cursor))
+			// и только когда его колонка выделена, поэтому ячейки без неё выглядят
+			// точно так же, как в обычном OpenMPT, и вставляются в него без правок.
+			// Курсор стоял на колонке эффекта: через параметр — на второй эффект.
+			// Раньше сдвигались на одну колонку, попадали на параметр первого, и
+			// выделение одной второй колонки ничего не копировало.
+			cursor.Move(0, 0, 2);
+			const bool secondSelected = selection.ContainsHorizontal(cursor)
+				|| selection.ContainsHorizontal(PatternCursor(cursor.GetRow(), cursor.GetChannel(), PatternCursor::paramColumn2));
+			if(secondSelected && !m->IsPcNote())
 			{
-				data += sndFile.GetModSpecifications().GetEffectLetter(command2);
-				data += mpt::afmt::HEX0<2>(param2);
+				// Пустой второй эффект тоже пишется («...»): иначе вырезать и
+				// вставить не переносили бы пустоту, и в цели оставался бы старый.
+				if(const auto [command2, param2] = m->GetEffect(1); command2 != CMD_NONE)
+				{
+					data += sndFile.GetModSpecifications().GetEffectLetter(command2);
+					data += mpt::afmt::HEX0<2>(param2);
+				} else
+				{
+					data += "...";
+				}
 			}
 		}
 
@@ -957,7 +970,8 @@ bool PatternClipboard::HandlePaste(CSoundFile &sndFile, PatternEditPos &pastePos
 			// там уже начало следующей ячейки или конец строки, его просто нет.
 			if(pos + 2 < eol && data[pos] != '|' && data[pos] != 13 && data[pos] != 10)
 			{
-				if(!skipPaste && !m.IsPcNote())
+				const auto original2 = m.GetEffect(1);
+				if(!skipPaste && !m.IsPcNote() && (!doMixPaste || original2.first == CMD_NONE))
 				{
 					EffectCommand command2 = CMD_NONE;
 					uint8 param2 = 0;
@@ -978,8 +992,16 @@ bool PatternClipboard::HandlePaste(CSoundFile &sndFile, PatternEditPos &pastePos
 						if(data[pos + 1] == szHexChar[i]) param2 |= static_cast<uint8>(i << 4);
 						if(data[pos + 2] == szHexChar[i]) param2 |= i;
 					}
-					if(command2 != CMD_NONE)
-						m.SetEffect(1, command2, param2);
+					// «...» очищает второй эффект: так вставка переносит и пустоту.
+					m.SetEffect(1, command2, command2 != CMD_NONE ? param2 : uint8(0));
+					if(col < sndFile.GetNumChannels())
+					{
+						if(col == startChan && startPoint.CompareColumn(PatternCursor(0, col, PatternCursor::effectColumn2)) > 0)
+							startPoint.SetColumn(startChan, PatternCursor::effectColumn2);
+						if(endPoint.CompareColumn(PatternCursor(0, col, PatternCursor::paramColumn2)) < 0)
+							endPoint.SetColumn(col, PatternCursor::paramColumn2);
+						pasteRect = PatternRect(startPoint, endPoint);
+					}
 				}
 				pos += 3;
 			}

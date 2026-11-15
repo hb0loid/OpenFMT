@@ -3093,6 +3093,30 @@ bool CViewPattern::DataEntry(bool up, bool coarse)
 				m.param = static_cast<ModCommand::PARAM>(Clamp(param, minValue, maxValue));
 			}
 		}
+		if((column == PatternCursor::effectColumn2 || column == PatternCursor::paramColumn2)
+			&& (m_Selection.ContainsHorizontal(PatternCursor(0, chn, PatternCursor::effectColumn2)) || m_Selection.ContainsHorizontal(PatternCursor(0, chn, PatternCursor::paramColumn2)))
+			&& !m.IsPcNote())
+		{
+			// Второй эффект: то же, что для первого, но в его слоте. Раньше
+			// Ctrl+колёсико и клавиши значения его просто пропускали.
+			auto [command2, param2] = m.GetEffect(1);
+			if(command2 != CMD_NONE)
+			{
+				int param = param2 + offset * (coarse ? 16 : 1);
+				ModCommand::PARAM minValue = 0x00, maxValue = 0xFF;
+				ModCommand probe;
+				probe.command = command2;
+				probe.param = param2;
+				if(!probe.IsSlideUpDownCommand())
+				{
+					const auto effectIndex = effectInfo.GetIndexFromEffect(command2, param2);
+					effectInfo.GetEffectInfo(effectIndex, nullptr, false, &minValue, &maxValue);
+					minValue = static_cast<ModCommand::PARAM>(effectInfo.MapPosToValue(effectIndex, minValue));
+					maxValue = static_cast<ModCommand::PARAM>(effectInfo.MapPosToValue(effectIndex, maxValue));
+				}
+				m.SetEffect(1, command2, static_cast<ModCommand::PARAM>(Clamp(param, minValue, maxValue)));
+			}
+		}
 	});
 
 	SetModified(false);
