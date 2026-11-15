@@ -48,12 +48,6 @@ OPL::~OPL()
 
 void OPL::Initialize(uint32 sampleRate)
 {
-	// Редактор зовёт это при каждом запуске игры — уже после того, как
-	// перемотка восстановила голоса чипов (патчи, уровни операторов, режим
-	// шума). Сброс здесь стирал всё восстановленное, и старт с курсора звучал
-	// не так, как то же место при игре подряд. Сбрасываем только новый чип или
-	// при смене частоты; от висящих нот и так чистят остановка и перемотка.
-	const bool fresh = m_opl == nullptr || m_sampleRate != sampleRate;
 	m_sampleRate = sampleRate;
 	if(m_psg)
 		m_psg->SetSampleRate(sampleRate);
@@ -63,8 +57,7 @@ void OPL::Initialize(uint32 sampleRate)
 		m_opl = std::make_unique<Opal>(sampleRate);
 	else
 		m_opl->SetSampleRate(sampleRate);
-	if(fresh)
-		Reset();
+	Reset();
 }
 
 

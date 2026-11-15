@@ -104,6 +104,10 @@ void CSoundFile::InitPlayer(bool bReset)
 	if(m_opl)
 	{
 		m_opl->Initialize(m_MixerSettings.gdwMixingFreq);
+		// Initialize сбрасывает чип, как в исходном OpenMPT. Голоса каналов,
+		// восстановленные перемоткой, ставим обратно.
+		if(bReset)
+			RestoreChipVoices();
 	}
 }
 

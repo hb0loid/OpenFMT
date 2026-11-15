@@ -1542,33 +1542,13 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 			m_PlayState.m_nFrameDelay = m_PlayState.m_nPatternDelay = 0;
 			m_PlayState.m_nTickCount = TICKS_ROW_FINISHED;
 			m_PlayState.m_flags.set(SONG_POSITIONCHANGED);
-			if(m_opl != nullptr)
-				m_opl->Reset();
+			RestoreChipVoices();
 			for(CHANNELINDEX n = 0; n < GetNumChannels(); n++)
 			{
 				auto &chn = m_PlayState.Chn[n];
 				if(memory.chnSettings[n].vol != 0xFF && !adjustSamplePos)
 				{
 					chn.nVolume = std::min(memory.chnSettings[n].vol, uint8(64)) * 4;
-				}
-				if(!chn.dwFlags[CHN_MUTE | CHN_SYNCMUTE] && chn.pModSample != nullptr && chn.pModSample->uFlags[CHN_ADLIB] && m_opl)
-				{
-					m_opl->Patch(n, *chn.pModSample);
-					m_opl->NoteCut(n);
-					// Голос создан заново, а с ним пропали правки уровней
-					// операторов и режим шума: вернуть то, что насчитала
-					// перемотка. Голос того же канала их потом сохранит.
-					const auto &state = chn.furnaceSlide;
-					if(state.opLevelsOwner == chn.pModSample)
-					{
-						for(uint8 op = 0; op < 4; op++)
-						{
-							if(state.opLevels[op] >= 0)
-								m_opl->FMOperatorLevel(n, op, static_cast<uint8>(state.opLevels[op]));
-						}
-					}
-					if(state.psgNoise >= 0)
-						m_opl->PSGNoiseMode(n, static_cast<uint8>(state.psgNoise));
 				}
 				chn.pCurrentSample = nullptr;
 			}
@@ -4307,6 +4287,38 @@ bool CSoundFile::IsFurnaceTonePorta(const ModChannel &chn, const ModCommand &m) 
 		return false;
 	default:
 		return chn.furnaceSlide.mode == CMD_TONEPORTAMENTO;
+	}
+}
+
+
+// Голоса чипов заново: сброс чипа, затем каждому каналу его патч (голос
+// молчит до следующей ноты) и то, что эффекты поменяли в голосе мимо
+// состояния канала, — уровни операторов FM и режим шума PSG. Зовётся в конце
+// перемотки и при запуске игры: редактор при каждом запуске сбрасывает чипы
+// (InitPlayer), и без этого всё, что восстановила перемотка, терялось.
+void CSoundFile::RestoreChipVoices()
+{
+	if(m_opl == nullptr)
+		return;
+	m_opl->Reset();
+	for(CHANNELINDEX n = 0; n < GetNumChannels(); n++)
+	{
+		const ModChannel &chn = m_PlayState.Chn[n];
+		if(chn.dwFlags[CHN_MUTE | CHN_SYNCMUTE] || chn.pModSample == nullptr || !chn.pModSample->uFlags[CHN_ADLIB])
+			continue;
+		m_opl->Patch(n, *chn.pModSample);
+		m_opl->NoteCut(n);
+		const auto &state = chn.furnaceSlide;
+		if(state.opLevelsOwner == chn.pModSample)
+		{
+			for(uint8 op = 0; op < 4; op++)
+			{
+				if(state.opLevels[op] >= 0)
+					m_opl->FMOperatorLevel(n, op, static_cast<uint8>(state.opLevels[op]));
+			}
+		}
+		if(state.psgNoise >= 0)
+			m_opl->PSGNoiseMode(n, static_cast<uint8>(state.psgNoise));
 	}
 }
 

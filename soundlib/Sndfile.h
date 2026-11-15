@@ -807,6 +807,7 @@ public:
 	void InitAmigaResampler();
 
 	void InitOPL();
+	void RestoreChipVoices();
 	static constexpr bool SupportsOPL(MODTYPE type) noexcept { return type & (MOD_TYPE_S3M | MOD_TYPE_MPT); }
 	bool SupportsOPL() const noexcept { return SupportsOPL(m_nType); }
 
