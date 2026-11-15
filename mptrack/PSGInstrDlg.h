@@ -58,6 +58,7 @@ public:
 	{
 		return m_minimumHeight > 0 ? CSize(m_windowSize.cx, m_minimumHeight) : m_windowSize;
 	}
+	CSize GetPreferredSize() const { return m_windowSize; }
 
 protected:
 	// Размеры, с которыми диалог нарисован в ресурсах: от них считается

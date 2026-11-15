@@ -11,6 +11,7 @@
 
 #include "openmpt/all/BuildSettings.hpp"
 #include "DialogBase.h"
+#include <vector>
 #include "../soundlib/Snd_defs.h"
 
 OPENMPT_NAMESPACE_BEGIN
@@ -38,6 +39,9 @@ class OPLInstrDlg : public DialogBase
 
 	void OPN2ParamsChanged();
 	void LayoutOPN2();
+	void LayoutOPL();
+	// Нарисованные в ресурсах положения всех элементов редактора OPL.
+	std::vector<std::pair<HWND, CRect>> m_oplRects;
 
 public:
 	OPLInstrDlg(CWnd &parent, const CSoundFile &sndFile, bool opn2);
@@ -50,6 +54,8 @@ public:
 	{
 		return m_minimumHeight > 0 ? CSize(m_windowSize.cx, m_minimumHeight) : m_windowSize;
 	}
+	// Размер при масштабе 100%: компактный, как нарисован редактор OPL.
+	CSize GetPreferredSize() const;
 
 protected:
 	void ParamsChanged();

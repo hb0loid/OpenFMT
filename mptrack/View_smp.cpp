@@ -224,15 +224,11 @@ void CViewSample::UpdateScrollSize(int newZoom, bool forceRefresh, SmpLength cen
 	GetClientRect(&m_rcClient);
 
 	if(m_psgEditor && m_psgEditor->IsWindowVisible())
-	{
-		const auto size = m_psgEditor->GetMinimumSize();
-		m_psgEditor->SetWindowPos(nullptr, -m_nScrollPosX, -m_nScrollPosY, std::max(size.cx, m_rcClient.right), std::max(size.cy, m_rcClient.bottom), SWP_NOZORDER | SWP_NOACTIVATE);
-	}
+		LayoutChipEditor();
 	if(m_oplEditor && IsOPLInstrument())
 	{
-		const auto size = m_oplEditor->GetMinimumSize();
-		m_oplEditor->SetWindowPos(nullptr, -m_nScrollPosX, -m_nScrollPosY, std::max(size.cx, m_rcClient.right), std::max(size.cy, m_rcClient.bottom), SWP_NOZORDER | SWP_NOACTIVATE);
-		SetScrollSizes(MM_TEXT, size);
+		LayoutChipEditor();
+		SetScrollSizes(MM_TEXT, m_oplEditor->GetMinimumSize());
 		return;
 	}
 
@@ -454,11 +450,8 @@ void CViewSample::UpdateOPLEditor()
 			}
 		}
 		m_psgEditor->SetPatch(sample.psg);
-		const auto psgSize = m_psgEditor->GetMinimumSize();
-		m_psgEditor->SetWindowPos(nullptr, -m_nScrollPosX, -m_nScrollPosY,
-			std::max(psgSize.cx, m_rcClient.right), std::max(psgSize.cy, m_rcClient.bottom),
-			SWP_NOZORDER | SWP_NOACTIVATE);
 		m_psgEditor->SetEnabled(true);
+		LayoutChipEditor();
 		return;
 	}
 	if(m_psgEditor)
@@ -480,9 +473,49 @@ void CViewSample::UpdateOPLEditor()
 		m_oplEditor->SetPatch(sample.opn2, sample.isOPM);
 	else
 		m_oplEditor->SetPatch(sample.adlib);
-	auto size = m_oplEditor->GetMinimumSize();
-	m_oplEditor->SetWindowPos(nullptr, -m_nScrollPosX, -m_nScrollPosY, std::max(size.cx, m_rcClient.right), std::max(size.cy, m_rcClient.bottom), SWP_NOZORDER | SWP_NOACTIVATE);
 	m_oplEditor->SetEnabled(true);
+	LayoutChipEditor();
+}
+
+
+// Ступени масштаба редакторов чипов; 0 — «на всё окно».
+static constexpr double ChipEditorZoomLevels[] = {0.8, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 0.0};
+
+
+bool CViewSample::IsChipEditorShown() const
+{
+	return (m_psgEditor && m_psgEditor->IsWindowVisible()) || (m_oplEditor && IsOPLInstrument());
+}
+
+
+CSize CViewSample::ChipEditorSize(CSize minimum, CSize preferred) const
+{
+	const int level = std::clamp<int>(TrackerSettings::Instance().chipEditorZoom, 0, static_cast<int>(std::size(ChipEditorZoomLevels)) - 1);
+	const double scale = ChipEditorZoomLevels[level];
+	CSize size(m_rcClient.right, m_rcClient.bottom);
+	if(scale > 0.0)
+	{
+		size.cx = std::min<LONG>(size.cx, mpt::saturate_round<LONG>(preferred.cx * scale));
+		size.cy = std::min<LONG>(size.cy, mpt::saturate_round<LONG>(preferred.cy * scale));
+	}
+	return CSize(std::max(size.cx, minimum.cx), std::max(size.cy, minimum.cy));
+}
+
+
+void CViewSample::LayoutChipEditor()
+{
+	GetClientRect(&m_rcClient);
+	if(m_psgEditor && m_psgEditor->IsWindowVisible())
+	{
+		const CSize size = ChipEditorSize(m_psgEditor->GetMinimumSize(), m_psgEditor->GetPreferredSize());
+		m_psgEditor->SetWindowPos(nullptr, -m_nScrollPosX, -m_nScrollPosY, size.cx, size.cy, SWP_NOZORDER | SWP_NOACTIVATE);
+	} else if(m_oplEditor && IsOPLInstrument())
+	{
+		const CSize size = ChipEditorSize(m_oplEditor->GetMinimumSize(), m_oplEditor->GetPreferredSize());
+		m_oplEditor->SetWindowPos(nullptr, -m_nScrollPosX, -m_nScrollPosY, size.cx, size.cy, SWP_NOZORDER | SWP_NOACTIVATE);
+	}
+	// Место вокруг редактора закрашивается фоном вида.
+	Invalidate(TRUE);
 }
 
 
@@ -1809,6 +1842,8 @@ void CViewSample::UpdateNcButtonState()
 				break;
 			case ID_SAMPLE_ZOOMUP:
 			case ID_SAMPLE_ZOOMDOWN:
+				// У инструментов чипов лупы меняют размер их редактора.
+				break;
 			case ID_SAMPLE_GRID:
 				if(IsOPLInstrument()) dwStyle |= NCBTNS_DISABLED;
 				break;
@@ -4318,6 +4353,14 @@ int CViewSample::GetZoomLevel(SmpLength length) const
 
 void CViewSample::DoZoom(int direction, const CPoint &zoomPoint)
 {
+	// У инструментов чипов волны нет: лупы меняют размер их редактора.
+	if(IsChipEditorShown())
+	{
+		const int levels = static_cast<int>(std::size(ChipEditorZoomLevels));
+		TrackerSettings::Instance().chipEditorZoom = std::clamp<int>(TrackerSettings::Instance().chipEditorZoom + (direction > 0 ? 1 : -1), 0, levels - 1);
+		LayoutChipEditor();
+		return;
+	}
 	const CSoundFile &sndFile = GetDocument()->GetSoundFile();
 	// zoomOrder: Biggest to smallest zoom order.
 	std::array<int, (-MIN_ZOOM - 1) + (MAX_ZOOM + 1)> zoomOrder;

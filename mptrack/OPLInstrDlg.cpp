@@ -181,6 +181,74 @@ void OPLInstrDlg::OnSize(UINT type, int cx, int cy)
 	DialogBase::OnSize(type, cx, cy);
 	if(m_isOPN2)
 		LayoutOPN2();
+	else
+		LayoutOPL();
+}
+
+
+CSize OPLInstrDlg::GetPreferredSize() const
+{
+	if(!m_isOPN2 || m_designedRects.empty())
+		return m_windowSize;
+	// YM2612 при 100%: ползунок ~110 диалоговых единиц, ряд ~12 — рядом с
+	// редактором OPL он выглядит соразмерно, а Total Level ещё различим.
+	CRect unit(0, 0, 110, 12);
+	const_cast<OPLInstrDlg *>(this)->MapDialogRect(unit);
+	const CRect &group = m_designedRects.at(IDC_OPN2_GROUP1);
+	const CRect &label = m_designedRects.at(IDC_OPN2_LABEL1);
+	const int column = 5 + label.Width() + unit.Width() + 9;
+	const int rowTop = label.top - group.top;
+	return CSize(group.left * 2 + column * 4, group.top + rowTop + OPN2Rows * std::max<int>(unit.Height(), OPN2MinRow) + 20);
+}
+
+
+// Редактор OPL нарисован в ресурсах фиксированным. Чтобы его можно было
+// увеличить лупами, все элементы растягиваются пропорционально окну:
+// положения и ширины — по горизонтали, положения — по вертикали (по центру
+// элемента, высота та же), рамки групп — целиком.
+void OPLInstrDlg::LayoutOPL()
+{
+	if(!::IsWindow(m_hWnd) || m_windowSize.cx <= 0 || m_windowSize.cy <= 0)
+		return;
+	if(m_oplRects.empty())
+	{
+		for(CWnd *child = GetWindow(GW_CHILD); child != nullptr; child = child->GetWindow(GW_HWNDNEXT))
+		{
+			CRect rect;
+			child->GetWindowRect(rect);
+			ScreenToClient(rect);
+			m_oplRects.emplace_back(child->m_hWnd, rect);
+		}
+	}
+	CRect client;
+	GetClientRect(client);
+	const double sx = std::max(1.0, static_cast<double>(client.Width()) / m_windowSize.cx);
+	const double sy = std::max(1.0, static_cast<double>(client.Height()) / m_windowSize.cy);
+	for(const auto &[hwnd, rect] : m_oplRects)
+	{
+		if(!::IsWindow(hwnd))
+			continue;
+		const bool groupBox = (::GetWindowLong(hwnd, GWL_STYLE) & BS_TYPEMASK) == BS_GROUPBOX && [&]
+		{
+			TCHAR cls[16]{};
+			::GetClassName(hwnd, cls, 16);
+			return !lstrcmpi(cls, _T("Button"));
+		}();
+		const int left = mpt::saturate_round<int>(rect.left * sx);
+		const int width = mpt::saturate_round<int>(rect.Width() * sx);
+		int top, height;
+		if(groupBox)
+		{
+			top = mpt::saturate_round<int>(rect.top * sy);
+			height = mpt::saturate_round<int>(rect.Height() * sy);
+		} else
+		{
+			height = rect.Height();
+			top = mpt::saturate_round<int>((rect.top + rect.Height() / 2.0) * sy - height / 2.0);
+		}
+		::SetWindowPos(hwnd, nullptr, left, top, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+	}
+	Invalidate(TRUE);
 }
 
 
@@ -205,21 +273,24 @@ void OPLInstrDlg::LayoutOPN2()
 	const CRect &group = m_designedRects[IDC_OPN2_GROUP1];
 	const CRect &label = m_designedRects[IDC_OPN2_LABEL1];
 	const int margin = group.left;
-	const int columnWidth = (client.Width() - margin * 2) / 4;
-	const int groupTop = group.top;
 	const int labelWidth = label.Width();
+	// Редактор заполняет своё окно, а размер окна задаёт вид сэмпла по
+	// масштабу (лупы на панели): так и на полном экране размер выбирается.
+	const int columnWidth = (client.Width() - margin * 2) / 4;
+	const int usedWidth = columnWidth * 4;
+	const int groupTop = group.top;
 	const int rowTop = label.top - groupTop;
 	const int available = client.Height() - groupTop - 6 - rowTop - 8;
-	const int rowHeight = std::clamp(available / OPN2Rows, OPN2MinRow, OPN2MaxRow);
+	const int rowHeight = std::max(available / OPN2Rows, OPN2MinRow);
 	// Рамка кончается сразу под последним рядом, а не тянется до низа окна.
 	const int groupHeight = rowTop + OPN2Rows * rowHeight + 8;
 
 	// Верхний ряд: алгоритм и обратная связь делят ширину пополам.
-	const int topSlider = (client.Width() - margin * 2) / 2 - m_designedRects[IDC_OPN2_ALGLABEL].Width() - 12;
+	const int topSlider = usedWidth / 2 - m_designedRects[IDC_OPN2_ALGLABEL].Width() - 12;
 	const CRect &algSlider = m_designedRects[IDC_OPN2_FIRST];
 	place(IDC_OPN2_FIRST, m_designedRects[IDC_OPN2_ALGLABEL].right + 6, algSlider.top,
 		std::max(topSlider, 40), algSlider.Height());
-	const int fbLabel = margin + (client.Width() - margin * 2) / 2 + 6;
+	const int fbLabel = margin + usedWidth / 2 + 6;
 	place(IDC_OPN2_FBLABEL, fbLabel, m_designedRects[IDC_OPN2_FBLABEL].top,
 		m_designedRects[IDC_OPN2_FBLABEL].Width(), m_designedRects[IDC_OPN2_FBLABEL].Height());
 	place(IDC_OPN2_FIRST + 1, fbLabel + m_designedRects[IDC_OPN2_FBLABEL].Width() + 6, algSlider.top,

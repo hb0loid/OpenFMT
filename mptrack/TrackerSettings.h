@@ -880,6 +880,8 @@ public:
 	CachedSetting<int32> patternChannelScopeHeight;
 	// Видна ли сетка осциллографов на вкладке Chips.
 	CachedSetting<bool> chipsShowScopes;
+	// Масштаб редакторов инструментов чипов на вкладке сэмплов: номер ступени.
+	CachedSetting<int32> chipEditorZoom;
 	CachedSetting<bool> gbPatternPluginNames;
 	CachedSetting<bool> gbPatternRecord;
 	CachedSetting<bool> patternNoEditPopup;

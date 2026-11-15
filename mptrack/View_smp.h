@@ -123,6 +123,10 @@ protected:
 	void UpdateOPLEditor();
 	void SetCurrentSample(SAMPLEINDEX nSmp);
 	bool IsOPLInstrument() const;
+	// Редакторы инструментов чипов: масштаб по лупам и раскладка окна.
+	bool IsChipEditorShown() const;
+	CSize ChipEditorSize(CSize minimum, CSize preferred) const;
+	void LayoutChipEditor();
 	void SetZoom(int nZoom, SmpLength centeredSample = SmpLength(-1));
 	int32 SampleToScreen(SmpLength pos, bool ignoreScrollPos = false) const;
 	SmpLength ScreenToSample(int32 x, bool ignoreSampleLength = false) const;
