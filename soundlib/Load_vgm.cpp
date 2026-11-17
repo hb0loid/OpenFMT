@@ -127,6 +127,10 @@ struct VgmEvent
 	// E5xx: 0x80 ровно, шаг 1/128 полутона.
 	bool legato = false;
 	int fine = -1;
+	// Уровни (TL) модуляторов, которые голос должен держать, -1 — не важно.
+	// Перед записью в паттерн отсюда остаются только отличия от того, что
+	// канал уже держит: они становятся эффектами 12xx–15xx.
+	std::array<int8, 4> level{-1, -1, -1, -1};
 };
 
 // Голоса микросхем в этой сборке живут по нотной шкале Furnace, где до первой
@@ -374,11 +378,33 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		bool operator==(const FMVoice &other) const { return patch == other.patch && lfo == other.lfo && opm == other.opm; }
 	};
 	std::vector<FMVoice> patches;
+	// Тембры, которые отличаются только уровнем модуляторов, — один
+	// инструмент: это тот же звук, у которого макрос или эффект подкрутил
+	// яркость. Уровни модуляторов ноты уходят в эффекты 12xx–15xx. Без этого
+	// из Death Egg Act 1 выходило 75 инструментов при 28 в самом .fur.
+	std::array<int8, 4> noteLevels{-1, -1, -1, -1};
 	const auto findPatch = [&](const FMVoice &voice) -> int
 	{
+		const uint8 carriers = CarrierMask[voice.patch[0] & 7];
+		for(uint8 op = 0; op < 4; op++)
+			noteLevels[op] = (carriers & (1u << op)) ? int8(-1) : static_cast<int8>(voice.patch[1 + op * 7 + 1] & 0x7F);
+		const auto sameButModulators = [carriers](const FMVoice &a, const FMVoice &b)
+		{
+			if(a.opm != b.opm || a.lfo != b.lfo || a.patch[0] != b.patch[0])
+				return false;
+			for(size_t i = 1; i < a.patch.size(); i++)
+			{
+				const size_t op = (i - 1) / 7;
+				if((i - 1) % 7 == 1 && !(carriers & (1u << op)))
+					continue;
+				if(a.patch[i] != b.patch[i])
+					return false;
+			}
+			return true;
+		};
 		for(size_t i = 0; i < patches.size(); i++)
 		{
-			if(patches[i] == voice)
+			if(sameButModulators(patches[i], voice))
 				return static_cast<int>(i);
 		}
 		patches.push_back(voice);
@@ -606,7 +632,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 					{
 						const auto [patch, volume] = patchAndVolume(channel);
 						const int fine = FineFromOffset(ExactNote(hertz) - note);
-						events.push_back({sample, channel, note, volume, patch, -1, false, fine != fmFine[channel] ? fine : -1});
+						events.push_back({sample, channel, note, volume, patch, -1, false, fine != fmFine[channel] ? fine : -1, noteLevels});
 						fmFine[channel] = fine;
 						fmSounding[channel] = note;
 						fmPitchNote[channel] = note;
@@ -643,6 +669,9 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 					const uint8 channel = static_cast<uint8>((port ? 3 : 0) + slot);
 					if(fmSounding[channel] != NOTE_NONE && !(channel == 5 && dacEnabled))
 					{
+						// Уровень модулятора посреди ноты (яркость) не переносим:
+						// пробовал эффектами 12xx–15xx — на слух и по огибающей
+						// выходило хуже, чем без них (Mushroom Hill 1: 0.91 -> 0.88).
 						const uint8 volume = volumeFromBase(carrierBase(channel));
 						if(volume != fmLastVolume[channel])
 						{
@@ -918,7 +947,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 					const auto note = static_cast<ModCommand::NOTE>(std::lround(exact));
 					const auto [patch, volume] = opmPatchAndVolume(channel);
 					const int fine = FineFromOffset(exact - note);
-					events.push_back({sample, voiceIndex, note, volume, patch, -1, false, fine != opmFine[channel] ? fine : -1});
+					events.push_back({sample, voiceIndex, note, volume, patch, -1, false, fine != opmFine[channel] ? fine : -1, noteLevels});
 					opmFine[channel] = fine;
 					opmSounding[channel] = note;
 					opmPitchNote[channel] = note;
@@ -1430,6 +1459,50 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	if(!(loadFlags & loadPatternData))
 		return true;
 
+	// Уровни модуляторов: оставить только отличия от того, что держит канал.
+	// Движок (как Furnace) держит уровни, пока играет тот же инструмент, и
+	// сбрасывает их к тембру при смене инструмента.
+	{
+		std::array<int, VgmChannels> channelPatch;
+		channelPatch.fill(-1);
+		std::array<std::array<int8, 4>, VgmChannels> held{};
+		for(auto &event : events)
+		{
+			if(event.channel >= OPMBase + OPMChannels || (event.channel >= FMChannels && event.channel < OPMBase))
+			{
+				event.level.fill(-1);
+				continue;
+			}
+			auto &levels = held[event.channel];
+			// Удар ЦАПа на шестом канале — другой инструмент: уровни сброшены.
+			if(event.patch >= 0 && static_cast<size_t>(event.patch) >= patches.size())
+				channelPatch[event.channel] = -1;
+			if(event.patch >= 0 && static_cast<size_t>(event.patch) < patches.size() && ModCommand::IsNote(event.note))
+			{
+				if(event.patch != channelPatch[event.channel])
+				{
+					channelPatch[event.channel] = event.patch;
+					for(uint8 op = 0; op < 4; op++)
+						levels[op] = static_cast<int8>(patches[event.patch].patch[1 + op * 7 + 1] & 0x7F);
+				}
+			}
+			if(channelPatch[event.channel] < 0)
+			{
+				event.level.fill(-1);
+				continue;
+			}
+			for(uint8 op = 0; op < 4; op++)
+			{
+				if(event.level[op] < 0)
+					continue;
+				if(event.level[op] == levels[op])
+					event.level[op] = -1;
+				else
+					levels[op] = event.level[op];
+			}
+		}
+	}
+
 	// Сколько кадров в строке. Кадр на строку точен, но паттерны выходят в 2–3
 	// раза длиннее исходных. Компактный режим (по умолчанию) ищет шаг строки
 	// по моментам нажатий: самый крупный шаг, на сетку которого ложится
@@ -1556,6 +1629,11 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			}
 			if(event.fine >= 0)
 				setEffect(cell, CMD_FINETUNE, static_cast<uint8>(event.fine));
+			for(uint8 op = 0; op < 4; op++)
+			{
+				if(event.level[op] >= 0)
+					setEffect(cell, static_cast<EffectCommand>(CMD_FM_LEVEL1 + op), static_cast<uint8>(event.level[op]));
+			}
 			if(event.volume != 255)
 			{
 				cell.volcmd = VOLCMD_VOLUME;
@@ -1583,6 +1661,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			// Громкость по ходу строки (тик, значение): в ячейку идёт начало и
 			// плавный спад или подъём Dxy к концу строки.
 			std::vector<std::pair<uint32, int>> volumes;
+			std::array<int8, 4> level{-1, -1, -1, -1};
 			std::vector<VgmEvent> carry;  // что переезжает в следующую строку
 		};
 		std::array<RowState, VgmChannels> rows;
@@ -1648,6 +1727,11 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 					setEffect(cell, state.fineSmooth ? CMD_FINETUNE_SMOOTH : CMD_FINETUNE, static_cast<uint8>(state.fine));
 				if(state.pan >= 0)
 					setEffect(cell, CMD_PANNING8, static_cast<uint8>(state.pan));
+				for(uint8 op = 0; op < 4; op++)
+				{
+					if(state.level[op] >= 0)
+						setEffect(cell, static_cast<EffectCommand>(CMD_FM_LEVEL1 + op), static_cast<uint8>(state.level[op]));
+				}
 			}
 			std::vector<VgmEvent> carry = std::move(state.carry);
 			const uint32 nextRow = state.row + 1;
@@ -1682,6 +1766,11 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 					}
 					if(event.pan >= 0)
 						state.pan = event.pan;
+					for(uint8 op = 0; op < 4; op++)
+					{
+						if(event.level[op] >= 0)
+							state.level[op] = event.level[op];
+					}
 				}
 			}
 		};
@@ -1718,7 +1807,8 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 				state.volumes.emplace_back(tick, event.volume);
 				continue;
 			}
-			if(hasRealNote && tick > state.noteTick && (event.note != NOTE_NONE || event.volume != 255 || event.fine >= 0))
+			const bool hasLevel = std::any_of(event.level.begin(), event.level.end(), [](int8 l) { return l >= 0; });
+			if(hasRealNote && tick > state.noteTick && (event.note != NOTE_NONE || event.volume != 255 || event.fine >= 0 || hasLevel))
 			{
 				state.carry.push_back(event);
 				continue;
@@ -1748,6 +1838,11 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			}
 			if(event.pan >= 0)
 				state.pan = event.pan;
+			for(uint8 op = 0; op < 4; op++)
+			{
+				if(event.level[op] >= 0)
+					state.level[op] = event.level[op];
+			}
 		}
 		for(uint8 voice = 0; voice < VgmChannels; voice++)
 		{
