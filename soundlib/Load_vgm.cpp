@@ -36,8 +36,17 @@ namespace
 
 constexpr uint32 VgmRate = 44100;             // Время в VGM считается отсчётами 44100
 constexpr size_t MaxVgmBytes = 64u * 1024u * 1024u;
-constexpr uint8 FMChannels = 6, PSGChannels = 4;
-constexpr uint8 VgmChannels = FMChannels + PSGChannels;
+constexpr uint8 FMChannels = 6, PSGChannels = 4, OPMChannels = 8;
+// Голоса в событиях нумеруются по всем чипам сразу: YM2612 0-5, PSG 6-9,
+// YM2151 10-17. Каналы модуля заводятся только под те чипы, что есть в файле.
+constexpr uint8 OPMBase = FMChannels + PSGChannels;
+// YMZ280B — восемь голосов сэмплов, идут после YM2151.
+constexpr uint8 YMZChannels = 8;
+constexpr uint8 YMZBase = OPMBase + OPMChannels;
+constexpr uint8 VgmChannels = YMZBase + YMZChannels;
+// Коды нот YM2151 (младшие 4 бита KC) идут от до-диеза, каждый четвёртый
+// пропущен. -1 — кода нет.
+constexpr int8 OPMKeyCode[16] = {0, 1, 2, -1, 3, 4, 5, -1, 6, 7, 8, -1, 9, 10, 11, -1};
 constexpr double MiddleC = 261.6255;
 
 // Смещения регистров операторов внутри патча: патч перечисляет операторы в
@@ -59,6 +68,7 @@ struct VgmHeader
 	uint32 psgClock = 0;
 	uint32 opn2Clock = 0;
 	uint32 opmClock = 0;
+	uint32 ymzClock = 0;
 	bool foreignChip = false;
 };
 
@@ -88,10 +98,11 @@ bool ParseHeader(const std::vector<uint8> &data, VgmHeader &header)
 	header.psgClock = ReadLE32(data, 0x0C) & 0x3FFFFFFF;
 	header.opn2Clock = (0x2C + 4 <= headerEnd) ? (ReadLE32(data, 0x2C) & 0x3FFFFFFF) : 0;
 	header.opmClock = (0x30 + 4 <= headerEnd) ? (ReadLE32(data, 0x30) & 0x3FFFFFFF) : 0;
+	header.ymzClock = (0x68 + 4 <= headerEnd) ? (ReadLE32(data, 0x68) & 0x3FFFFFFF) : 0;
 	for(uint16 offset : ForeignClockOffset)
 	{
-		if(offset == 0x30)
-			continue;  // YM2151 у нас есть
+		if(offset == 0x30 || offset == 0x68)
+			continue;  // YM2151 и YMZ280B у нас есть
 		if(offset + 4u <= headerEnd && (ReadLE32(data, offset) & 0x3FFFFFFF))
 			header.foreignChip = true;
 	}
@@ -238,7 +249,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	VgmHeader header;
 	if(!ParseHeader(data, header))
 		return false;
-	if(header.foreignChip || !header.opn2Clock)
+	if(header.foreignChip || (!header.opn2Clock && !header.opmClock))
 		return false;  // Не Mega Drive: чужие микросхемы мы не изображаем
 	if(loadFlags == onlyVerifyHeader)
 		return true;
@@ -351,7 +362,56 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// децибел тише того же голоса по центру. Пока мы её не переносили, тихие
 	// крайние голоса выходили заметно громче, чем на приставке.
 	std::array<uint8, FMChannels> fmPan{3, 3, 3, 3, 3, 3};
-	std::vector<OPN2Patch> patches;
+	struct FMVoice
+	{
+		OPN2Patch patch{};
+		FMLfo lfo = DefaultFMLfo;
+		bool opm = false;
+		bool operator==(const FMVoice &other) const { return patch == other.patch && lfo == other.lfo && opm == other.opm; }
+	};
+	std::vector<FMVoice> patches;
+	const auto findPatch = [&](const FMVoice &voice) -> int
+	{
+		for(size_t i = 0; i < patches.size(); i++)
+		{
+			if(patches[i] == voice)
+				return static_cast<int>(i);
+		}
+		patches.push_back(voice);
+		return static_cast<int>(patches.size() - 1);
+	};
+	// YM2151: регистры, высота, что звучит.
+	std::array<uint8, 256> opm{};
+	uint8 opmAMD = 0, opmPMD = 0;
+	std::array<ModCommand::NOTE, OPMChannels> opmSounding{}, opmPitchNote{};
+	std::array<uint8, OPMChannels> opmLastVolume{};
+	std::array<int, OPMChannels> opmFine;
+	opmFine.fill(0x80);
+	std::array<uint8, OPMChannels> opmPan{3, 3, 3, 3, 3, 3, 3, 3};
+	// YMZ280B: образ памяти сэмплов (блок данных 0x86), регистры и то, что
+	// происходило с голосами. Ноты из этого собираются после чтения, когда
+	// известны все сэмплы и их обычные частоты.
+	std::vector<uint8> ymzRom;
+	std::array<uint8, 256> ymz{};
+	struct YMZSound
+	{
+		uint32 start = 0, end = 0, loopStart = 0, loopEnd = 0;
+		uint8 mode = 0;
+		bool loop = false;
+		bool operator==(const YMZSound &o) const { return start == o.start && end == o.end && loopStart == o.loopStart && loopEnd == o.loopEnd && mode == o.mode && loop == o.loop; }
+	};
+	enum class YMZWhat : uint8 { KeyOn, Pitch, KeyOff, Level, Pan };
+	struct YMZEvent { uint32 sample = 0; uint8 channel = 0; YMZWhat what = YMZWhat::KeyOn; YMZSound sound; double rate = 0.0; uint8 value = 0; };
+	std::vector<YMZEvent> ymzEvents;
+	const auto ymzAddress = [&](uint8 base, uint8 channel) -> uint32
+	{
+		return (ymz[base + channel * 4] << 16) | (ymz[base + 0x20 + channel * 4] << 8) | ymz[base + 0x40 + channel * 4];
+	};
+	const auto ymzRate = [&](uint8 channel) -> double
+	{
+		const uint32 fnum = ((ymz[0x01 + channel * 4] & 1) << 8) | ymz[0x00 + channel * 4];
+		return (fnum + 1) * static_cast<double>(header.ymzClock) / (384.0 * 256.0);
+	};
 	std::vector<VgmEvent> events;
 	uint32 sample = 0;
 	size_t pos = header.dataOffset;
@@ -405,13 +465,104 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 				patch[1 + op * 7 + 1] = static_cast<uint8>(patch[1 + op * 7 + 1] - std::min(patch[1 + op * 7 + 1], base));
 		}
 		const uint8 volume = volumeFromBase(base);
-		for(size_t i = 0; i < patches.size(); i++)
+		FMVoice voice;
+		voice.patch = patch;
+		// LFO канала: чувствительность AMS/FMS в B4, общий LFO в 0x22.
+		const uint8 b4 = registers[port][0xB4 + slot];
+		voice.lfo[FMLfoAMS] = (b4 >> 4) & 3;
+		voice.lfo[FMLfoFMS] = b4 & 7;
+		if((registers[0][0x22] & 0x08) && (b4 & 0x37))
 		{
-			if(patches[i] == patch)
-				return {static_cast<int>(i), volume};
+			voice.lfo[FMLfoFlags] = FMLfoSetChip;
+			voice.lfo[FMLfoRate] = registers[0][0x22] & 7;
 		}
-		patches.push_back(patch);
-		return {static_cast<int>(patches.size() - 1), volume};
+		return {findPatch(voice), volume};
+	};
+
+	// То же для YM2151: регистры оператора идут через 0x20, операторы
+	// M1, C1, M2, C2 лежат со сдвигом 0, 16, 8, 24.
+	static constexpr uint8 OPMOperatorOffset[] = {0, 16, 8, 24};
+	static constexpr uint8 OPMRegisterMask[] = {0x7F, 0x7F, 0xDF, 0x9F, 0xDF, 0xFF};
+	const auto opmCarrierBase = [&](uint8 channel) -> uint8
+	{
+		const uint8 carriers = CarrierMask[opm[0x20 + channel] & 7];
+		uint8 base = 127;
+		for(uint8 op = 0; op < 4; op++)
+		{
+			if(carriers & (1u << op))
+				base = std::min<uint8>(base, opm[0x60 + OPMOperatorOffset[op] + channel] & 0x7F);
+		}
+		return std::min<uint8>(base, 63);
+	};
+	const auto opmPatchAndVolume = [&](uint8 channel) -> std::pair<int, uint8>
+	{
+		FMVoice voice;
+		voice.opm = true;
+		voice.patch[0] = opm[0x20 + channel] & 0x3F;
+		for(uint8 op = 0; op < 4; op++)
+		{
+			for(uint8 r = 0; r < 6; r++)
+				voice.patch[1 + op * 7 + r] = opm[0x40 + r * 0x20 + OPMOperatorOffset[op] + channel] & OPMRegisterMask[r];
+		}
+		const uint8 carriers = CarrierMask[voice.patch[0] & 7];
+		const uint8 base = opmCarrierBase(channel);
+		for(uint8 op = 0; op < 4; op++)
+		{
+			if(carriers & (1u << op))
+				voice.patch[1 + op * 7 + 1] = static_cast<uint8>(voice.patch[1 + op * 7 + 1] - std::min(voice.patch[1 + op * 7 + 1], base));
+		}
+		const uint8 pmsAms = opm[0x38 + channel];
+		voice.lfo[FMLfoAMS] = pmsAms & 3;
+		voice.lfo[FMLfoFMS] = (pmsAms >> 4) & 7;
+		if(pmsAms & 0x73)
+		{
+			voice.lfo[FMLfoFlags] = FMLfoSetChip;
+			voice.lfo[FMLfoRate] = opm[0x18];
+			voice.lfo[FMLfoAMD] = opmAMD;
+			voice.lfo[FMLfoPMD] = opmPMD;
+			voice.lfo[FMLfoWave] = opm[0x1B] & 3;
+		}
+		return {findPatch(voice), volumeFromBase(base)};
+	};
+	// Высота YM2151 из KC и KF: нота с дробью в шкале FM.
+	const auto opmExactNote = [&](uint8 channel) -> double
+	{
+		const uint8 kc = opm[0x28 + channel];
+		const int code = OPMKeyCode[kc & 15];
+		if(code < 0)
+			return -1.0;
+		const double key = (kc >> 4) * 12 + code + (opm[0x30 + channel] >> 2) / 64.0;
+		// Ключ 56 — ля первой октавы, 440 Гц при штатной частоте 3,579545 МГц.
+		const double hertz = 440.0 * std::pow(2.0, (key - 56.0) / 12.0) * header.opmClock / 3579545.0;
+		// Голоса YM2151 в движке звучат на октаву ниже YM2612 при той же ноте
+		// (сверено по кадрам с логом), поэтому сдвиг шкалы у них нулевой.
+		return ExactNote(hertz, 0);
+	};
+	const auto opmPitchChanged = [&](uint8 channel)
+	{
+		const uint8 voiceIndex = static_cast<uint8>(OPMBase + channel);
+		if(opmPitchNote[channel] == NOTE_NONE)
+			return;
+		const double exact = opmExactNote(channel);
+		if(exact < static_cast<int>(NOTE_MIN) || exact > static_cast<int>(NOTE_MAX))
+			return;
+		const bool keyed = opmSounding[channel] != NOTE_NONE;
+		VgmEvent event{sample, voiceIndex, NOTE_NONE, 255, -1};
+		if(std::abs(exact - opmPitchNote[channel]) > 127.0 / 128.0 && keyed)
+		{
+			event.note = static_cast<ModCommand::NOTE>(std::lround(exact));
+			event.legato = true;
+			opmSounding[channel] = event.note;
+			opmPitchNote[channel] = event.note;
+		}
+		const int fine = FineFromOffset(exact - opmPitchNote[channel]);
+		if(fine != opmFine[channel])
+		{
+			event.fine = fine;
+			opmFine[channel] = fine;
+		}
+		if(event.legato || event.fine >= 0)
+			events.push_back(event);
 	};
 
 	while(pos < data.size())
@@ -683,6 +834,17 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 				// указатель потока считает их как один непрерывный кусок.
 				dataBlocks.push_back({static_cast<uint32>(pcm.size()), size});
 				pcm.insert(pcm.end(), data.begin() + pos + 6, data.begin() + pos + 6 + size);
+			} else if(blockType == 0x86 && size > 8 && pos + 6 + size <= data.size())
+			{
+				// Образ памяти YMZ280B: полный размер, адрес куска, сам кусок.
+				const uint32 offset = ReadLE32(data, pos + 10);
+				const uint32 length = size - 8;
+				if(offset < (16u << 20) && length <= (16u << 20) - offset)
+				{
+					if(ymzRom.size() < offset + length)
+						ymzRom.resize(offset + length);
+					std::copy(data.begin() + pos + 14, data.begin() + pos + 14 + length, ymzRom.begin() + offset);
+				}
 			}
 			pos += 6 + size;
 		} else if(code == 0xE0)
@@ -722,9 +884,125 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 					blockStarts.push_back({sample, 0, 0, false, true});
 			}
 			pos += size;
-		} else if(code == 0x4F || code == 0x54 || (code >= 0x30 && code <= 0x3F))
+		} else if(code == 0x54)
 		{
-			pos += (code == 0x54) ? 2 : 1;
+			if(pos + 2 > data.size())
+				break;
+			const uint8 reg = data[pos], value = data[pos + 1];
+			pos += 2;
+			if(reg == 0x19)
+			{
+				// Один адрес на две глубины: старший бит выбирает PMD или AMD.
+				if(value & 0x80)
+					opmPMD = value & 0x7F;
+				else
+					opmAMD = value & 0x7F;
+				continue;
+			}
+			opm[reg] = value;
+			if(reg == 0x08)
+			{
+				const uint8 channel = value & 7;
+				const uint8 voiceIndex = static_cast<uint8>(OPMBase + channel);
+				if(value & 0x78)
+				{
+					if(opmSounding[channel] != NOTE_NONE)
+						continue;  // Догоняющее нажатие других операторов той же ноты
+					const double exact = opmExactNote(channel);
+					if(exact < static_cast<int>(NOTE_MIN) || exact > static_cast<int>(NOTE_MAX))
+						continue;
+					const auto note = static_cast<ModCommand::NOTE>(std::lround(exact));
+					const auto [patch, volume] = opmPatchAndVolume(channel);
+					const int fine = FineFromOffset(exact - note);
+					events.push_back({sample, voiceIndex, note, volume, patch, -1, false, fine != opmFine[channel] ? fine : -1});
+					opmFine[channel] = fine;
+					opmSounding[channel] = note;
+					opmPitchNote[channel] = note;
+					opmLastVolume[channel] = volume;
+				} else if(opmSounding[channel] != NOTE_NONE)
+				{
+					events.push_back({sample, voiceIndex, NOTE_KEYOFF, 255, -1});
+					opmSounding[channel] = NOTE_NONE;
+				}
+			} else if(reg >= 0x20 && reg <= 0x27)
+			{
+				const uint8 channel = reg & 7;
+				// RL: бит 6 — левый выход, бит 7 — правый.
+				const uint8 sides = (value >> 6) & 3;
+				if(sides && sides != opmPan[channel])
+				{
+					opmPan[channel] = sides;
+					const int pan = (sides == 1) ? 0 : ((sides == 2) ? 255 : 128);
+					events.push_back({sample, static_cast<uint8>(OPMBase + channel), NOTE_NONE, 255, -1, pan});
+				}
+			} else if(reg >= 0x28 && reg <= 0x37)
+			{
+				opmPitchChanged(reg & 7);
+			} else if(reg >= 0x60 && reg <= 0x7F)
+			{
+				const uint8 channel = reg & 7;
+				if(opmSounding[channel] != NOTE_NONE)
+				{
+					const uint8 volume = volumeFromBase(opmCarrierBase(channel));
+					if(volume != opmLastVolume[channel])
+					{
+						events.push_back({sample, static_cast<uint8>(OPMBase + channel), NOTE_NONE, volume, -1});
+						opmLastVolume[channel] = volume;
+					}
+				}
+			}
+		} else if(code == 0x5D)
+		{
+			if(pos + 2 > data.size())
+				break;
+			const uint8 reg = data[pos], value = data[pos + 1];
+			pos += 2;
+			const uint8 old = ymz[reg];
+			ymz[reg] = value;
+			if(reg < 0x20)
+			{
+				const uint8 channel = reg >> 2;
+				const bool playing = (ymz[0x01 + channel * 4] & 0x80) != 0;
+				switch(reg & 3)
+				{
+				case 0:
+					if(playing)
+						ymzEvents.push_back({sample, channel, YMZWhat::Pitch, {}, ymzRate(channel)});
+					break;
+				case 1:
+					if((value & 0x80) && !(old & 0x80) && (value & 0x60))
+					{
+						YMZSound sound;
+						sound.start = ymzAddress(0x20, channel);
+						sound.loopStart = ymzAddress(0x21, channel);
+						sound.loopEnd = ymzAddress(0x22, channel);
+						sound.end = ymzAddress(0x23, channel);
+						sound.mode = (value >> 5) & 3;
+						sound.loop = (value & 0x10) != 0;
+						if(!sound.loop)
+							sound.loopStart = sound.loopEnd = 0;
+						ymzEvents.push_back({sample, channel, YMZWhat::KeyOn, sound, ymzRate(channel), ymz[0x02 + channel * 4]});
+					} else if(!(value & 0x80) && (old & 0x80))
+					{
+						ymzEvents.push_back({sample, channel, YMZWhat::KeyOff});
+					} else if(playing && ((value ^ old) & 1))
+					{
+						ymzEvents.push_back({sample, channel, YMZWhat::Pitch, {}, ymzRate(channel)});
+					}
+					break;
+				case 2:
+					if(playing && value != old)
+						ymzEvents.push_back({sample, channel, YMZWhat::Level, {}, 0.0, value});
+					break;
+				case 3:
+					if(value != old)
+						ymzEvents.push_back({sample, channel, YMZWhat::Pan, {}, 0.0, static_cast<uint8>(value & 15)});
+					break;
+				}
+			}
+		} else if(code == 0x4F || (code >= 0x30 && code <= 0x3F))
+		{
+			pos += 1;
 		} else if((code >= 0x40 && code <= 0x4E) || (code >= 0x55 && code <= 0x5F) || (code >= 0xA0 && code <= 0xBF))
 		{
 			pos += 2;
@@ -744,7 +1022,27 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	if(events.empty())
 		return false;
 
-	InitializeGlobals(MOD_TYPE_MPT, VgmChannels);
+	// Голосов YMZ280B заводим столько, сколько их реально нажималось.
+	uint8 ymzVoicesUsed = 0;
+	for(const auto &e : ymzEvents)
+	{
+		if(e.what == YMZWhat::KeyOn)
+			ymzVoicesUsed = std::max<uint8>(ymzVoicesUsed, static_cast<uint8>(e.channel + 1));
+	}
+	// Каналы модуля — только под чипы из файла, в порядке YM2612, PSG, YM2151, YMZ280B.
+	std::array<int, VgmChannels> moduleChannel;
+	moduleChannel.fill(-1);
+	CHANNELINDEX usedChannels = 0;
+	for(uint8 voice = 0; voice < VgmChannels; voice++)
+	{
+		const bool present = (voice < FMChannels) ? (header.opn2Clock != 0)
+			: (voice < OPMBase) ? (header.psgClock != 0 && header.opn2Clock != 0)
+			: (voice < YMZBase) ? (header.opmClock != 0)
+			: (header.ymzClock != 0 && !ymzRom.empty() && voice - YMZBase < ymzVoicesUsed);
+		if(present)
+			moduleChannel[voice] = usedChannels++;
+	}
+	InitializeGlobals(MOD_TYPE_MPT, usedChannels);
 	m_nSamplePreAmp = m_nVSTiVolume = 48;
 	Order().SetDefaultSpeed(1);
 	// Строка равна кадру: при скорости 1 темп задаёт число тиков в секунду.
@@ -773,10 +1071,12 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		smpl.Initialize(MOD_TYPE_MPT);
 		smpl.SetAdlib(true);
 		smpl.isOPN2 = true;
+		smpl.isOPM = patches[i].opm;
 		// Громкость ноты здесь живёт в строке, а не в канале, поэтому
 		// SMP_NODEFAULTVOLUME не нужен: пустая строка должна звучать полно.
-		smpl.opn2 = patches[i];
-		m_szNames[smp] = "FM " + std::to_string(i + 1);
+		smpl.opn2 = patches[i].patch;
+		smpl.fmLfo = patches[i].lfo;
+		m_szNames[smp] = (patches[i].opm ? "OPM " : "FM ") + std::to_string(i + 1);
 		const INSTRUMENTINDEX ins = ++m_nInstruments;
 		if(auto *instrument = AllocateInstrument(ins, smp); instrument != nullptr)
 		{
@@ -913,6 +1213,164 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			events.push_back({start.sample, 5, static_cast<ModCommand::NOTE>(note), 64, blockInstrument[start.block]});
 		}
 	}
+	// YMZ280B: сэмпл на каждый разный кусок памяти, нота по частоте нажатия
+	// относительно обычной для этого сэмпла, подстройка и легато — как у FM.
+	if(!ymzEvents.empty() && !ymzRom.empty())
+	{
+		std::vector<YMZSound> sounds;
+		std::vector<std::map<int64, int>> rates;
+		for(const auto &e : ymzEvents)
+		{
+			if(e.what != YMZWhat::KeyOn)
+				continue;
+			auto found = std::find(sounds.begin(), sounds.end(), e.sound);
+			if(found == sounds.end())
+			{
+				sounds.push_back(e.sound);
+				rates.emplace_back();
+				found = sounds.end() - 1;
+			}
+			rates[std::distance(sounds.begin(), found)][std::llround(e.rate)]++;
+		}
+		std::vector<int> soundInstrument(sounds.size(), -1);
+		std::vector<double> soundRate(sounds.size(), 0.0);
+		for(size_t i = 0; i < sounds.size(); i++)
+		{
+			if(m_nSamples >= MAX_SAMPLES - 1 || m_nInstruments >= MAX_INSTRUMENTS - 1)
+				break;
+			const YMZSound &sound = sounds[i];
+			// Длина в кадрах по режиму: ADPCM — полбайта, 8 бит — байт, 16 бит — два.
+			const auto frames = [&](uint32 from, uint32 to) -> uint32
+			{
+				if(to <= from)
+					return 0;
+				return (sound.mode == 1) ? (to - from) * 2 : (sound.mode == 2) ? (to - from) : (to - from) / 2;
+			};
+			const uint32 length = std::min<uint32>(frames(sound.start, sound.end), MAX_SAMPLE_LENGTH);
+			if(!length || sound.start >= ymzRom.size())
+				continue;
+			const SAMPLEINDEX smp = ++m_nSamples;
+			ModSample &smpl = Samples[smp];
+			smpl.Initialize(MOD_TYPE_MPT);
+			smpl.nLength = length;
+			smpl.uFlags.set(CHN_16BIT);
+			const auto best = std::max_element(rates[i].begin(), rates[i].end(), [](const auto &a, const auto &b) { return a.second < b.second; });
+			soundRate[i] = static_cast<double>(best->first);
+			smpl.nC5Speed = std::clamp<uint32>(static_cast<uint32>(best->first), 1000, 192000);
+			if(sound.loop && sound.loopEnd > sound.loopStart && sound.loopStart >= sound.start)
+			{
+				smpl.nLoopStart = std::min(frames(sound.start, sound.loopStart), length);
+				smpl.nLoopEnd = std::min(frames(sound.start, sound.loopEnd), length);
+				if(smpl.nLoopEnd > smpl.nLoopStart)
+					smpl.uFlags.set(CHN_LOOP);
+			}
+			if(smpl.AllocateSample())
+			{
+				int16 *target = smpl.sample16();
+				const auto romByte = [&](uint32 address) -> uint8 { return address < ymzRom.size() ? ymzRom[address] : uint8(0); };
+				if(sound.mode == 1)
+				{
+					// ADPCM YMZ280B (как в эмуляторе MAME): старший полубайт первый.
+					static constexpr int Diff[16] = {1, 3, 5, 7, 9, 11, 13, 15, -1, -3, -5, -7, -9, -11, -13, -15};
+					static constexpr int Scale[8] = {0x0E6, 0x0E6, 0x0E6, 0x0E6, 0x133, 0x199, 0x200, 0x266};
+					int signal = 0, step = 0x7F;
+					for(uint32 n = 0; n < length; n++)
+					{
+						const uint8 byte = romByte(sound.start + n / 2);
+						const int nibble = (n & 1) ? (byte & 15) : (byte >> 4);
+						signal = std::clamp(signal + step * Diff[nibble] / 8, -32768, 32767);
+						step = std::clamp((step * Scale[nibble & 7]) >> 8, 0x7F, 0x6000);
+						target[n] = static_cast<int16>(signal);
+					}
+				} else if(sound.mode == 2)
+				{
+					for(uint32 n = 0; n < length; n++)
+						target[n] = static_cast<int16>(static_cast<int8>(romByte(sound.start + n)) * 256);
+				} else
+				{
+					// 16 бит, старший байт первым (так их раскладывает Furnace).
+					for(uint32 n = 0; n < length; n++)
+						target[n] = static_cast<int16>((romByte(sound.start + n * 2) << 8) | romByte(sound.start + n * 2 + 1));
+				}
+				smpl.PrecomputeLoops(*this, false);
+			}
+			m_szNames[smp] = "YMZ " + std::to_string(i + 1);
+			const INSTRUMENTINDEX ins = ++m_nInstruments;
+			if(auto *instrument = AllocateInstrument(ins, smp); instrument != nullptr)
+			{
+				instrument->name = m_szNames[smp];
+				instrument->midiPWD = 1;
+			}
+			soundInstrument[i] = static_cast<int>(m_nInstruments) - 1;
+		}
+		std::array<ModCommand::NOTE, YMZChannels> sounding{}, pitchNote{};
+		std::array<int, YMZChannels> fineNow;
+		fineNow.fill(0x80);
+		std::array<double, YMZChannels> baseRate{};
+		const auto levelToVolume = [](uint8 level) { return static_cast<uint8>((level * 64 + 127) / 255); };
+		for(const auto &e : ymzEvents)
+		{
+			const uint8 voice = static_cast<uint8>(YMZBase + e.channel);
+			const uint8 ch = e.channel;
+			switch(e.what)
+			{
+			case YMZWhat::KeyOn:
+			{
+				const auto found = std::find(sounds.begin(), sounds.end(), e.sound);
+				const size_t index = std::distance(sounds.begin(), found);
+				if(found == sounds.end() || soundInstrument[index] < 0 || !(e.rate > 0.0))
+					break;
+				baseRate[ch] = soundRate[index];
+				const double exact = static_cast<int>(NOTE_MIDDLEC) + 12.0 * std::log2(e.rate / baseRate[ch]);
+				const auto note = static_cast<ModCommand::NOTE>(std::clamp(static_cast<int>(std::lround(exact)), int(NOTE_MIN), int(NOTE_MAX)));
+				const int fine = FineFromOffset(exact - note);
+				events.push_back({e.sample, voice, note, levelToVolume(e.value), soundInstrument[index], -1, false, fine != fineNow[ch] ? fine : -1});
+				fineNow[ch] = fine;
+				sounding[ch] = note;
+				pitchNote[ch] = note;
+				break;
+			}
+			case YMZWhat::Pitch:
+			{
+				if(sounding[ch] == NOTE_NONE || !(baseRate[ch] > 0.0) || !(e.rate > 0.0))
+					break;
+				const double exact = static_cast<int>(NOTE_MIDDLEC) + 12.0 * std::log2(e.rate / baseRate[ch]);
+				VgmEvent event{e.sample, voice, NOTE_NONE, 255, -1};
+				if(std::abs(exact - pitchNote[ch]) > 127.0 / 128.0)
+				{
+					event.note = static_cast<ModCommand::NOTE>(std::clamp(static_cast<int>(std::lround(exact)), int(NOTE_MIN), int(NOTE_MAX)));
+					event.legato = true;
+					pitchNote[ch] = event.note;
+				}
+				const int fine = FineFromOffset(exact - pitchNote[ch]);
+				if(fine != fineNow[ch])
+				{
+					event.fine = fine;
+					fineNow[ch] = fine;
+				}
+				if(event.legato || event.fine >= 0)
+					events.push_back(event);
+				break;
+			}
+			case YMZWhat::KeyOff:
+				if(sounding[ch] != NOTE_NONE)
+					events.push_back({e.sample, voice, NOTE_NOTECUT, 255, -1});
+				sounding[ch] = NOTE_NONE;
+				break;
+			case YMZWhat::Level:
+				if(sounding[ch] != NOTE_NONE)
+					events.push_back({e.sample, voice, NOTE_NONE, levelToVolume(e.value), -1});
+				break;
+			case YMZWhat::Pan:
+			{
+				// 8 — центр, 1 — крайний левый, 15 — крайний правый.
+				const int pan = (e.value == 8) ? 128 : (e.value < 8) ? std::max(0, (e.value - 1) * 128 / 7) : std::min(255, 128 + (e.value - 8) * 127 / 7);
+				events.push_back({e.sample, voice, NOTE_NONE, 255, -1, pan});
+				break;
+			}
+			}
+		}
+	}
 	std::stable_sort(events.begin(), events.end(),
 		[](const VgmEvent &a, const VgmEvent &b) { return a.sample < b.sample; });
 
@@ -951,13 +1409,17 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		}
 	}
 
-	for(CHANNELINDEX chn = 0; chn < VgmChannels; chn++)
+	for(uint8 voice = 0; voice < VgmChannels; voice++)
 	{
-		ChnSettings[chn].szName = (chn < FMChannels)
-			? "YM2612 " + std::to_string(chn + 1)
-			: ((chn == VgmChannels - 1) ? "PSG Noise" : "PSG " + std::to_string(chn - FMChannels + 1));
+		if(moduleChannel[voice] < 0)
+			continue;
+		const CHANNELINDEX chn = static_cast<CHANNELINDEX>(moduleChannel[voice]);
+		ChnSettings[chn].szName = (voice < FMChannels) ? "YM2612 " + std::to_string(voice + 1)
+			: (voice >= YMZBase) ? "YMZ280B " + std::to_string(voice - YMZBase + 1)
+			: (voice >= OPMBase) ? "YM2151 " + std::to_string(voice - OPMBase + 1)
+			: (voice == OPMBase - 1) ? "PSG Noise" : "PSG " + std::to_string(voice - FMChannels + 1);
 #ifdef MODPLUG_TRACKER
-		ChnSettings[chn].color = (chn < FMChannels) ? 0x5A6AE0u : 0x7AC86Au;
+		ChnSettings[chn].color = (voice < FMChannels) ? 0x5A6AE0u : (voice >= YMZBase) ? 0xB070C0u : (voice >= OPMBase) ? 0xC0806Au : 0x7AC86Au;
 #endif
 	}
 
@@ -994,13 +1456,15 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		const PATTERNINDEX pat = static_cast<PATTERNINDEX>(row / RowsPerPattern);
 		if(pat >= patternCount)
 			break;
-		ModCommand &cell = *Patterns[Order()[pat]].GetpModCommand(static_cast<ROWINDEX>(row % RowsPerPattern), event.channel);
+		if(moduleChannel[event.channel] < 0)
+			continue;
+		ModCommand &cell = *Patterns[Order()[pat]].GetpModCommand(static_cast<ROWINDEX>(row % RowsPerPattern), static_cast<CHANNELINDEX>(moduleChannel[event.channel]));
 		if(event.note != NOTE_NONE)
 		{
 			cell.note = event.note;
 			if(event.patch >= 0)
 				cell.instr = static_cast<ModCommand::INSTR>(event.patch + 1);
-			else if(event.channel >= FMChannels && !event.legato)
+			else if(event.channel >= FMChannels && event.channel < OPMBase && !event.legato)
 				cell.instr = static_cast<ModCommand::INSTR>(firstPSG + event.channel - FMChannels + 1);
 			// В одной строке-кадре легато может смениться настоящим ударом:
 			// тогда портаменто от него убираем, иначе удар потеряется.
@@ -1035,7 +1499,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	m_modFormat.madeWithTracker = UL_("Mega Drive sound driver");
 	m_modFormat.charset = mpt::Charset::UTF8;
 #ifdef MODPLUG_TRACKER
-	AddToLog(LogWarning, MPT_UFORMAT("VGM import is approximate: {} voices and {} FM patches were reconstructed from register writes. Slides and vibrato are not imported yet.")(events.size(), patches.size()));
+	AddToLog(LogWarning, MPT_UFORMAT("VGM import is approximate: {} voices and {} FM patches were reconstructed from register writes. Rows are single frames.")(events.size(), patches.size()));
 #endif
 	return true;
 }
