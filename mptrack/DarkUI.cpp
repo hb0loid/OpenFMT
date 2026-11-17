@@ -468,6 +468,46 @@ LRESULT DrawButton(HWND button, NMCUSTOMDRAW &draw)
 	return CDRF_SKIPDEFAULT;
 }
 
+// Окно сообщения (MessageBox): полосу с кнопками внизу Windows рисует
+// светлой изнутри себя, мимо GetSysColor. Узнаём его по тексту с номером
+// 0xFFFF и закрашиваем полосу после обычной отрисовки.
+bool IsMessageBox(HWND window)
+{
+	if(GetWindowLongPtrW(window, GWL_STYLE) & WS_CHILD)
+		return false;
+	const HWND text = GetDlgItem(window, 0xFFFF);
+	return text && ClassIs(text, L"Static");
+}
+
+void PaintMessageBoxFooter(HWND window)
+{
+	RECT client{};
+	GetClientRect(window, &client);
+	LONG top = client.bottom, bottom = client.top;
+	for(HWND child = GetWindow(window, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT))
+	{
+		if(!ClassIs(child, L"Button") || !(GetWindowLongPtrW(child, GWL_STYLE) & WS_VISIBLE))
+			continue;
+		RECT rect{};
+		GetWindowRect(child, &rect);
+		MapWindowPoints(HWND_DESKTOP, window, reinterpret_cast<POINT *>(&rect), 2);
+		top = std::min(top, rect.top);
+		bottom = std::max(bottom, rect.bottom);
+	}
+	if(top >= bottom)
+		return;
+	RECT footer = client;
+	footer.top = std::max(client.top, top - (client.bottom - bottom));
+	const HDC dc = GetDC(window);
+	const int saved = SaveDC(dc);
+	for(HWND child = GetWindow(window, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT))
+		if(GetWindowLongPtrW(child, GWL_STYLE) & WS_VISIBLE)
+			ExcludeWindow(dc, window, child);
+	Fill(dc, footer, COLOR_BTNFACE);
+	RestoreDC(dc, saved);
+	ReleaseDC(window, dc);
+}
+
 LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR id, DWORD_PTR kind)
 {
 	switch(msg)
@@ -544,6 +584,12 @@ LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, U
 		break;
 	case WM_PRINTCLIENT:
 	case WM_PAINT:
+		if(msg == WM_PAINT && kind == 4 && IsMessageBox(window))
+		{
+			const LRESULT result = DefSubclassProc(window, msg, wParam, lParam);
+			PaintMessageBoxFooter(window);
+			return result;
+		}
 		if(kind == 2 || kind == 3 || kind == 5 || kind == 6)
 		{
 			PAINTSTRUCT paint{};
