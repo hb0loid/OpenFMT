@@ -509,6 +509,7 @@ protected:
 	afx_msg void OnToggleMainBarShowMiscIcons();
 	afx_msg void OnToggleMainBarItem(MainToolBarItem item, UINT menuID);
 	afx_msg void OnToggleTreeViewOnLeft();
+	afx_msg void OnToggleLockMainToolBar();
 
 	afx_msg void OnCreateMixerDump();
 	afx_msg void OnVerifyMixerDump();

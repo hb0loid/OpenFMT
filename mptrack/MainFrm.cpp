@@ -155,6 +155,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CMDIFrameWnd)
 	ON_COMMAND(ID_MAINBAR_SHOW_MISC_ICONS,   &CMainFrame::OnToggleMainBarShowMiscIcons)
 
 	ON_COMMAND(ID_TREEVIEW_ON_LEFT,          &CMainFrame::OnToggleTreeViewOnLeft)
+	ON_COMMAND(ID_MAINBAR_LOCK,              &CMainFrame::OnToggleLockMainToolBar)
 
 #ifdef MPT_ENABLE_PLAYBACK_TEST_MENU
 	ON_COMMAND(ID_CREATE_MIXERDUMP,  &CMainFrame::OnCreateMixerDump)
@@ -326,6 +327,7 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 	m_wndTree.EnableDocking(0); //To prevent a crash when there's "Docking=1" for treebar in ini-settings.
 	// Restore toobar positions
 	LoadBarState(_T("Toolbars"));
+	m_wndToolBar.ApplyLock();
 
 	AddControlBar(&m_wndStatusBar); //Restore statusbar to mainframe.
 
@@ -2746,6 +2748,7 @@ void CMainFrame::AddToolBarMenuEntries(CMenu &menu) const
 	menu.AppendMenu(MF_STRING, ID_VIEW_TOOLBAR, m_InputHandler->GetMenuText(ID_VIEW_TOOLBAR));
 	menu.AppendMenu(MF_STRING, IDD_TREEVIEW, m_InputHandler->GetMenuText(IDD_TREEVIEW));
 	menu.AppendMenu(MF_STRING | (TrackerSettings::Instance().treeViewOnLeft ? MF_CHECKED : 0), ID_TREEVIEW_ON_LEFT, _T("Tree View on &Left"));
+	menu.AppendMenu(MF_STRING | (TrackerSettings::Instance().lockMainToolBar ? MF_CHECKED : 0), ID_MAINBAR_LOCK, _T("Loc&k Toolbar"));
 
 	const FlagSet<MainToolBarItem> visibleItems = TrackerSettings::Instance().mainToolBarVisibleItems.Get();
 
@@ -2792,6 +2795,15 @@ void CMainFrame::OnToggleMainBarItem(MainToolBarItem item, UINT menuID)
 {
 	const bool visible = m_wndToolBar.ToggleVisibility(item);
 	GetMenu()->CheckMenuItem(menuID, MF_BYCOMMAND | (visible ? MF_CHECKED : 0));
+}
+
+
+void CMainFrame::OnToggleLockMainToolBar()
+{
+	const bool lock = !TrackerSettings::Instance().lockMainToolBar;
+	TrackerSettings::Instance().lockMainToolBar = lock;
+	m_wndToolBar.ApplyLock();
+	GetMenu()->CheckMenuItem(ID_MAINBAR_LOCK, MF_BYCOMMAND | (lock ? MF_CHECKED : 0));
 }
 
 

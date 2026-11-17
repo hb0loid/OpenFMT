@@ -389,7 +389,12 @@ LRESULT DrawTrackbar(HWND trackbar, NMCUSTOMDRAW &draw)
 		const auto maximum = static_cast<int>(SendMessageW(trackbar, TBM_GETRANGEMAX, 0, 0));
 		std::vector<int> positions{start, end};
 		const auto count = static_cast<int>(SendMessageW(trackbar, TBM_GETNUMTICS, 0, 0));
-		if(maximum > minimum)
+		if((style & TBS_AUTOTICKS) && count > 2)
+		{
+			// Автоделения всегда равномерные, а их значения Windows не отдаёт.
+			for(int i = 1; i + 1 < count; i++)
+				positions.push_back(start + MulDiv(i, end - start, count - 1));
+		} else if(maximum > minimum)
 		{
 			for(int i = 0; i + 2 < count; i++)
 			{

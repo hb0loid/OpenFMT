@@ -1224,7 +1224,8 @@
 #define ID_MAINBAR_SHOW_EDIT_ICONS      36044
 #define ID_MAINBAR_SHOW_PLAY_ICONS      36045
 #define ID_MAINBAR_SHOW_MISC_ICONS      36046
-#define ID_MAINBAR_SHOW_SCOPE           36047
+#define ID_MAINBAR_SHOW_SCOPE           44670
+#define ID_MAINBAR_LOCK                 44671
 #define ID_TREEVIEW_ON_LEFT             36047
 #define ID_KEYPRESET_MPT                36048
 #define ID_KEYPRESET_IT                 36049
@@ -1374,7 +1375,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_3D_CONTROLS                     1
 #define _APS_NEXT_RESOURCE_VALUE        546
-#define _APS_NEXT_COMMAND_VALUE         44670
+#define _APS_NEXT_COMMAND_VALUE         44672
 #define _APS_NEXT_CONTROL_VALUE         2655
 #define _APS_NEXT_SYMED_VALUE           901
 #endif

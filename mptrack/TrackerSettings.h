@@ -772,6 +772,7 @@ public:
 
 	CachedSetting<MainToolBarItem> mainToolBarVisibleItems;
 	Setting<bool> treeViewOnLeft;
+	Setting<bool> lockMainToolBar;
 	Setting<bool> showOscilloscope;
 	// Настройки осциллографа, они же в меню по правой кнопке на нём самом.
 	// Окно в миллисекундах; ноль значит «по ширине», как было раньше.

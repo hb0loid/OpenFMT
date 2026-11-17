@@ -279,6 +279,8 @@ enum { MAX_MIDI_DEVICES = 256 };
 BEGIN_MESSAGE_MAP(CMainToolBar, CToolBarEx)
 	//{{AFX_MSG_MAP(CMainToolBar)
 	ON_WM_VSCROLL()
+	ON_WM_LBUTTONDOWN()
+	ON_WM_LBUTTONDBLCLK()
 	ON_NOTIFY_EX_RANGE(TTN_NEEDTEXT, 0, 0xFFFF, &CMainToolBar::OnToolTipText)
 	ON_NOTIFY_REFLECT(TBN_DROPDOWN, &CMainToolBar::OnTbnDropDownToolBar)
 	ON_COMMAND_RANGE(ID_SELECT_MIDI_DEVICE, ID_SELECT_MIDI_DEVICE + MAX_MIDI_DEVICES, &CMainToolBar::OnSelectMIDIDevice)
@@ -455,6 +457,39 @@ void CMainToolBar::UpdateSizes()
 	m_SpinSpeed.SetWindowPos(nullptr, 0, 0, spinnerWidth, spinnerHeight, SWP_NOMOVE | SWP_NOZORDER | SWP_NOREPOSITION | SWP_NOACTIVATE);
 	m_SpinRowsPerBeat.SetWindowPos(nullptr, 0, 0, spinnerWidth, spinnerHeight, SWP_NOMOVE | SWP_NOZORDER | SWP_NOREPOSITION | SWP_NOACTIVATE);
 	m_SpinGlobalVolume.SetWindowPos(nullptr, 0, 0, spinnerWidth, spinnerHeight, SWP_NOMOVE | SWP_NOZORDER | SWP_NOREPOSITION | SWP_NOACTIVATE);
+}
+
+
+// Перетаскивание с пустого места тулбара и двойной щелчок по нему MFC
+// превращает в «плавающую» панель. Закреплённому тулбару это не нужно:
+// щелчки мимо кнопок просто ничего не делают.
+void CMainToolBar::OnLButtonDown(UINT flags, CPoint point)
+{
+	CPoint hit = point;
+	if(TrackerSettings::Instance().lockMainToolBar && GetToolBarCtrl().HitTest(&hit) < 0)
+		return;
+	CToolBarEx::OnLButtonDown(flags, point);
+}
+
+
+void CMainToolBar::OnLButtonDblClk(UINT flags, CPoint point)
+{
+	CPoint hit = point;
+	if(TrackerSettings::Instance().lockMainToolBar && GetToolBarCtrl().HitTest(&hit) < 0)
+		return;
+	CToolBarEx::OnLButtonDblClk(flags, point);
+}
+
+
+void CMainToolBar::ApplyLock()
+{
+	CMainFrame *mainFrm = CMainFrame::GetMainFrame();
+	if(TrackerSettings::Instance().lockMainToolBar && IsFloating() && mainFrm)
+	{
+		SetHorizontal();
+		mainFrm->DockControlBar(this, AFX_IDW_DOCKBAR_TOP);
+		mainFrm->RecalcLayout();
+	}
 }
 
 

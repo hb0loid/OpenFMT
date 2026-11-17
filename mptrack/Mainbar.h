@@ -112,6 +112,12 @@ public:
 
 public:
 	CMainToolBar() : m_EditOctave{*this} { }
+	// Закреплённый тулбар нельзя случайно оторвать от окна мышью.
+	void ApplyLock();
+
+protected:
+	afx_msg void OnLButtonDown(UINT flags, CPoint point);
+	afx_msg void OnLButtonDblClk(UINT flags, CPoint point);
 
 protected:
 	void SetRowsPerBeat(ROWINDEX nNewRPB);
