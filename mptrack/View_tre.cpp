@@ -2003,7 +2003,9 @@ void CModTree::FillInstrumentLibrary(const TCHAR *selectedItem)
 		{
 
 			static constexpr auto instrExts = {"xi", "iti", "sfz", "sf2", "sf3", "sf4", "sbk", "dls", "mss", "pat"};
-			static constexpr auto sampleExts = {"wav", "flac", "ogg", "opus", "mp1", "mp2", "mp3", "smp", "raw", "s3i", "its", "aif", "aiff", "au", "snd", "svx", "voc", "8sv", "8svx", "16sv", "16svx", "w64", "caf", "sb0", "sb2", "sbi", "brr"};
+			// fui, dmp, tfi, opni — инструменты чипов (Furnace, DefleMask и др.):
+			// у нас это сэмплы с патчем YM2612/YM2151 или PSG.
+			static constexpr auto sampleExts = {"fui", "dmp", "tfi", "opni", "wav", "flac", "ogg", "opus", "mp1", "mp2", "mp3", "smp", "raw", "s3i", "its", "aif", "aiff", "au", "snd", "svx", "voc", "8sv", "8svx", "16sv", "16svx", "w64", "caf", "sb0", "sb2", "sbi", "brr"};
 			// These are hidden even when "show all files" is enabled, as it would be extremely unlikely that they contain any sample data
 			static constexpr auto hideFileExts = {"txt", "diz", "nfo", "doc", "ini", "pdf", "zip", "rar", "lha", "exe", "dll", "lnk", "url"};
 

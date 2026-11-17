@@ -640,6 +640,92 @@ YM2612PresetFormat GetYM2612PresetFormat(std::string_view extension)
 }
 
 
+// Инструмент чипа как сэмпл — для дерева инструментов, предпросмотра и
+// перетаскивания. Формат узнаётся по содержимому: имени файла у общей
+// загрузки сэмплов нет. Поэтому стоит в самом конце цепочки загрузчиков.
+bool CSoundFile::ReadChipPresetSample(SAMPLEINDEX smp, FileReader &file)
+{
+	if(!smp || smp >= MAX_SAMPLES)
+		return false;
+	std::optional<YM2612Preset> fm;
+	std::shared_ptr<PSGPatch> psg;
+	bool opm = false;
+	std::string name;
+
+	{
+		FileReader furFile = file;
+		furFile.Rewind();
+		std::string id;
+		bool isFurnace = false;
+		if(furFile.ReadMagic("FINS") || furFile.ReadMagic("FINB"))
+		{
+			id = "INS2";
+			isFurnace = true;
+		} else if(furFile.ReadMagic("-Furnace instr.-") && furFile.Skip(4) && furFile.CanRead(4))
+		{
+			const auto offset = furFile.ReadUint32LE();
+			furFile = FurBlock(furFile, offset, id, true);
+			isFurnace = furFile.IsValid();
+		}
+		if(isFurnace)
+		{
+			FurInstrument ins;
+			size_t unsupported = 0;
+			if(!ReadFurInstrument(furFile, id, ins, unsupported))
+				return false;
+			if((ins.type == 1 || ins.type == 33) && ins.hasFMPatch)
+			{
+				fm = YM2612Preset{ins.patch, ins.name, ins.lfo};
+				opm = ins.type == 33;
+			} else if(ins.type == 0)
+			{
+				// PSG: макросы громкости, высоты, шума — как при импорте .fur.
+				psg = std::make_shared<PSGPatch>(ins.psg);
+				psg->furnacePitch = true;
+			} else
+			{
+				return false;
+			}
+			name = ins.name;
+		}
+	}
+	if(!fm && !psg)
+	{
+		for(const auto format : {YM2612PresetFormat::OPNI, YM2612PresetFormat::DMP, YM2612PresetFormat::TFI})
+		{
+			FileReader presetFile = file;
+			presetFile.Rewind();
+			if(auto preset = ReadYM2612Preset(presetFile, format))
+			{
+				fm = std::move(preset);
+				name = fm->name;
+				opm = fm->opm;
+				break;
+			}
+		}
+	}
+	if(!fm && !psg)
+		return false;
+
+	DestroySampleThreadsafe(smp);
+	ModSample &sample = Samples[smp];
+	sample.Initialize(MOD_TYPE_MPT);
+	sample.SetAdlib(true);
+	if(fm)
+	{
+		sample.isOPN2 = true;
+		sample.isOPM = opm;
+		sample.opn2 = fm->patch;
+		sample.fmLfo = fm->lfo;
+	} else
+	{
+		sample.psg = std::move(psg);
+	}
+	m_szNames[smp] = name;
+	return true;
+}
+
+
 std::optional<YM2612Preset> ReadYM2612Preset(FileReader file, YM2612PresetFormat format)
 {
 	YM2612Preset preset{};
@@ -664,10 +750,11 @@ std::optional<YM2612Preset> ReadYM2612Preset(FileReader file, YM2612PresetFormat
 			}
 			FurInstrument instrument;
 			size_t unsupported = 0;
-			if(!ReadFurInstrument(file, id, instrument, unsupported, true) || instrument.type != 1 || !instrument.hasFMPatch)
+			if(!ReadFurInstrument(file, id, instrument, unsupported, true) || (instrument.type != 1 && instrument.type != 33) || !instrument.hasFMPatch)
 				return std::nullopt;
 			preset.patch = instrument.patch;
 			preset.lfo = instrument.lfo;
+			preset.opm = instrument.type == 33;
 			preset.name = std::move(instrument.name);
 		}
 		break;
@@ -676,9 +763,11 @@ std::optional<YM2612Preset> ReadYM2612Preset(FileReader file, YM2612PresetFormat
 		{
 			if(file.GetLength() != 51 || file.ReadUint8() != 11)
 				return std::nullopt;
+			// Система 2 и 9 — Mega Drive (YM2612), 8 — Arcade (YM2151).
 			const auto system = file.ReadUint8();
-			if((system != 2 && system != 9) || file.ReadUint8() != 1)
+			if((system != 2 && system != 9 && system != 8) || file.ReadUint8() != 1)
 				return std::nullopt;
+			preset.opm = system == 8;
 			preset.lfo[FMLfoFMS] = static_cast<uint8>(file.ReadUint8() & 7);
 			const auto feedback = file.ReadUint8(), algorithm = file.ReadUint8();
 			preset.patch[0] = static_cast<uint8>(((feedback & 7) << 3) | (algorithm & 7));
@@ -691,9 +780,11 @@ std::optional<YM2612Preset> ReadYM2612Preset(FileReader file, YM2612PresetFormat
 				preset.patch[i + 1] = reg[1] & 127;
 				preset.patch[i + 2] = static_cast<uint8>(((reg[7] & 3) << 6) | (reg[2] & 31));
 				preset.patch[i + 3] = static_cast<uint8>(((reg[6] & 1) << 7) | (reg[3] & 31));
-				preset.patch[i + 4] = reg[9] & 31;
+				// У YM2151 в старшей половине байта Detune лежит Detune 2, а
+				// SSG-EG у этого чипа нет (как читает .dmp Furnace).
+				preset.patch[i + 4] = static_cast<uint8>((reg[9] & 31) | (preset.opm ? ((reg[8] >> 4) & 3) << 6 : 0));
 				preset.patch[i + 5] = static_cast<uint8>(((reg[4] & 15) << 4) | (reg[5] & 15));
-				preset.patch[i + 6] = reg[10] & 15;
+				preset.patch[i + 6] = preset.opm ? 0 : (reg[10] & 15);
 			}
 		}
 		break;

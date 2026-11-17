@@ -17,6 +17,7 @@ struct YM2612Preset
 	OPN2Patch patch;
 	std::string name;
 	FMLfo lfo = DefaultFMLfo;
+	bool opm = false;  // инструмент YM2151, а не YM2612
 };
 
 YM2612PresetFormat GetYM2612PresetFormat(std::string_view extension);

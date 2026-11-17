@@ -1266,6 +1266,9 @@ protected:
 	bool ReadITISample(SAMPLEINDEX nSample, FileReader &file);
 	bool ReadIFFSample(SAMPLEINDEX sample, FileReader &file, bool allowLittleEndian = true, uint8 octave = uint8_max);
 	bool ReadBRRSample(SAMPLEINDEX sample, FileReader &file);
+	// Инструменты чипов из других программ: Furnace (.fui: YM2612, YM2151,
+	// PSG), DefleMask (.dmp), TFM Music Maker (.tfi), OPNI (.opni).
+	bool ReadChipPresetSample(SAMPLEINDEX sample, FileReader &file);
 	bool ReadFLACSample(SAMPLEINDEX sample, FileReader &file);
 	bool ReadOpusSample(SAMPLEINDEX sample, FileReader &file);
 	bool ReadVorbisSample(SAMPLEINDEX sample, FileReader &file);

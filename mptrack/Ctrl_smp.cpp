@@ -994,11 +994,10 @@ bool CCtrlSamples::OpenSample(const mpt::PathString &fileName, FlagSet<OpenSampl
 	{
 		if(m_sndFile.GetType() == MOD_TYPE_MPT)
 			preset = ReadYM2612Preset(file, presetFormat);
+		// Не FM-пресет (например, PSG-инструмент Furnace) — пусть читает общая
+		// загрузка сэмплов, она знает и такие.
 		if(!preset)
-		{
-			EndWaitCursor();
-			return false;
-		}
+			file.Rewind();
 	}
 
 	PrepareUndo(preset ? "Import YM2612 Preset" : "Replace", sundo_replace);
@@ -1012,6 +1011,7 @@ bool CCtrlSamples::OpenSample(const mpt::PathString &fileName, FlagSet<OpenSampl
 		sample.Initialize(MOD_TYPE_MPT);
 		sample.SetAdlib(true);
 		sample.isOPN2 = true;
+		sample.isOPM = preset->opm;
 		sample.opn2 = preset->patch;
 		sample.fmLfo = preset->lfo;
 		m_sndFile.m_szNames[m_nSample] = preset->name;

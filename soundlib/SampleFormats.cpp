@@ -71,6 +71,9 @@ bool CSoundFile::ReadSampleFromFile(SAMPLEINDEX nSample, FileReader &file, bool 
 		&& !ReadVorbisSample(nSample, file)
 		&& !ReadMP3Sample(nSample, file, false)
 		&& !ReadMediaFoundationSample(nSample, file)
+#ifdef MODPLUG_TRACKER
+		&& !ReadChipPresetSample(nSample, file)
+#endif
 		)
 	{
 		return false;
