@@ -27,6 +27,15 @@ constexpr COLORREF Border = RGB(68, 72, 79);
 constexpr COLORREF Text = RGB(229, 232, 237);
 constexpr COLORREF Muted = RGB(118, 124, 134);
 constexpr COLORREF Selection = RGB(46, 76, 105);
+// Ползунки и кнопки: у темы Windows для них нет тёмного варианта — белая
+// дорожка, ярко-синий бегунок, светлые рамки. Рисуем сами, спокойнее.
+constexpr COLORREF Track = RGB(58, 62, 69);
+constexpr COLORREF Thumb = RGB(92, 128, 164);
+constexpr COLORREF ThumbHot = RGB(112, 150, 188);
+constexpr COLORREF Tick = RGB(84, 89, 98);
+constexpr COLORREF ButtonFace = RGB(44, 47, 53);
+constexpr COLORREF ButtonHot = RGB(54, 58, 65);
+constexpr COLORREF ButtonBorder = RGB(78, 83, 92);
 
 using GetSysColorFn = DWORD (WINAPI *)(int);
 using GetSysColorBrushFn = HBRUSH (WINAPI *)(int);
@@ -311,6 +320,139 @@ void PaintFrame(HWND window)
 	ReleaseDC(window, dc);
 }
 
+void FillColor(HDC dc, const RECT &rect, COLORREF color)
+{
+	SetDCBrushColor(dc, color);
+	FillRect(dc, &rect, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+}
+
+void FrameColor(HDC dc, const RECT &rect, COLORREF color)
+{
+	SetDCBrushColor(dc, color);
+	FrameRect(dc, &rect, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+}
+
+LRESULT DrawTrackbar(HWND trackbar, NMCUSTOMDRAW &draw)
+{
+	if(draw.dwDrawStage == CDDS_PREPAINT)
+		return CDRF_NOTIFYITEMDRAW;
+	if(draw.dwDrawStage != CDDS_ITEMPREPAINT)
+		return CDRF_DODEFAULT;
+	const LONG_PTR style = GetWindowLongPtrW(trackbar, GWL_STYLE);
+	const bool vertical = (style & TBS_VERT) != 0;
+	const HDC dc = draw.hdc;
+	switch(draw.dwItemSpec)
+	{
+	case TBCD_CHANNEL:
+	{
+		// Дорожка тоньше системной: 3 пикселя по центру её прямоугольника.
+		RECT rect = draw.rc;
+		if(vertical)
+		{
+			const LONG mid = (rect.left + rect.right) / 2;
+			rect.left = mid - 1;
+			rect.right = mid + 2;
+		} else
+		{
+			const LONG mid = (rect.top + rect.bottom) / 2;
+			rect.top = mid - 1;
+			rect.bottom = mid + 2;
+		}
+		FillColor(dc, rect, IsWindowEnabled(trackbar) ? Track : Border);
+		return CDRF_SKIPDEFAULT;
+	}
+	case TBCD_THUMB:
+	{
+		const bool hot = (draw.uItemState & (CDIS_HOT | CDIS_SELECTED)) != 0;
+		FillColor(dc, draw.rc, !IsWindowEnabled(trackbar) ? Border : hot ? ThumbHot : Thumb);
+		return CDRF_SKIPDEFAULT;
+	}
+	case TBCD_TICS:
+	{
+		if(style & TBS_NOTICKS)
+			return CDRF_SKIPDEFAULT;
+		RECT channel{}, thumb{};
+		SendMessageW(trackbar, TBM_GETCHANNELRECT, 0, reinterpret_cast<LPARAM>(&channel));
+		SendMessageW(trackbar, TBM_GETTHUMBRECT, 0, reinterpret_cast<LPARAM>(&thumb));
+		if(vertical)
+		{
+			// У вертикального ползунка прямоугольник дорожки приходит повёрнутым.
+			std::swap(channel.left, channel.top);
+			std::swap(channel.right, channel.bottom);
+		}
+		const int half = vertical ? (thumb.bottom - thumb.top) / 2 : (thumb.right - thumb.left) / 2;
+		std::vector<int> positions;
+		positions.push_back(vertical ? channel.top + half : channel.left + half);
+		const auto count = static_cast<int>(SendMessageW(trackbar, TBM_GETNUMTICS, 0, 0));
+		for(int i = 0; i + 2 < count; i++)
+			positions.push_back(static_cast<int>(SendMessageW(trackbar, TBM_GETTICPOS, i, 0)));
+		positions.push_back(vertical ? channel.bottom - half : channel.right - half);
+		const bool before = (style & (TBS_BOTH | TBS_TOP)) != 0;
+		const bool after = (style & TBS_BOTH) || !(style & TBS_TOP);
+		for(const int pos : positions)
+		{
+			if(vertical)
+			{
+				if(before)
+					FillColor(dc, RECT{thumb.left - 4, pos, thumb.left - 1, pos + 1}, Tick);
+				if(after)
+					FillColor(dc, RECT{thumb.right + 1, pos, thumb.right + 4, pos + 1}, Tick);
+			} else
+			{
+				if(before)
+					FillColor(dc, RECT{pos, thumb.top - 4, pos + 1, thumb.top - 1}, Tick);
+				if(after)
+					FillColor(dc, RECT{pos, thumb.bottom + 1, pos + 1, thumb.bottom + 4}, Tick);
+			}
+		}
+		return CDRF_SKIPDEFAULT;
+	}
+	}
+	return CDRF_DODEFAULT;
+}
+
+// Обычные кнопки и кнопки-переключатели (Mute, Surround). Кнопки с картинкой
+// и самодельные (BS_OWNERDRAW) не трогаем.
+LRESULT DrawButton(HWND button, NMCUSTOMDRAW &draw)
+{
+	if(draw.dwDrawStage != CDDS_PREPAINT)
+		return CDRF_DODEFAULT;
+	const LONG_PTR style = GetWindowLongPtrW(button, GWL_STYLE);
+	const LONG_PTR type = style & BS_TYPEMASK;
+	const bool push = type == BS_PUSHBUTTON || type == BS_DEFPUSHBUTTON;
+	const bool pushLike = (style & BS_PUSHLIKE) && (type == BS_CHECKBOX || type == BS_AUTOCHECKBOX || type == BS_RADIOBUTTON || type == BS_AUTORADIOBUTTON || type == BS_3STATE || type == BS_AUTO3STATE);
+	if((!push && !pushLike) || (style & (BS_BITMAP | BS_ICON)) || SendMessageW(button, BM_GETIMAGE, IMAGE_BITMAP, 0) || SendMessageW(button, BM_GETIMAGE, IMAGE_ICON, 0))
+		return CDRF_DODEFAULT;
+	const HDC dc = draw.hdc;
+	const bool enabled = IsWindowEnabled(button) != FALSE;
+	const bool pressed = (draw.uItemState & CDIS_SELECTED) || (pushLike && SendMessageW(button, BM_GETCHECK, 0, 0) == BST_CHECKED);
+	const bool hot = (draw.uItemState & CDIS_HOT) != 0;
+	RECT rect = draw.rc;
+	FillColor(dc, rect, pressed ? Selection : hot ? ButtonHot : ButtonFace);
+	FrameColor(dc, rect, type == BS_DEFPUSHBUTTON ? Thumb : ButtonBorder);
+	wchar_t label[256]{};
+	GetWindowTextW(button, label, static_cast<int>(std::size(label)));
+	const int saved = SaveDC(dc);
+	if(const auto font = reinterpret_cast<HFONT>(SendMessageW(button, WM_GETFONT, 0, 0)))
+		SelectObject(dc, font);
+	SetBkMode(dc, TRANSPARENT);
+	SetTextColor(dc, enabled ? Text : Muted);
+	UINT format = DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS;
+	format |= (style & BS_LEFT) == BS_LEFT && !(style & BS_CENTER) ? DT_LEFT : (style & BS_RIGHT) == BS_RIGHT && !(style & BS_CENTER) ? DT_RIGHT : DT_CENTER;
+	if(SendMessageW(button, WM_QUERYUISTATE, 0, 0) & UISF_HIDEACCEL)
+		format |= DT_HIDEPREFIX;
+	InflateRect(&rect, -3, 0);
+	DrawTextW(dc, label, -1, &rect, format);
+	if((draw.uItemState & CDIS_FOCUS) && !(SendMessageW(button, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS))
+	{
+		RECT focus = draw.rc;
+		InflateRect(&focus, -2, -2);
+		FrameColor(dc, focus, Thumb);
+	}
+	RestoreDC(dc, saved);
+	return CDRF_SKIPDEFAULT;
+}
+
 LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR id, DWORD_PTR kind)
 {
 	switch(msg)
@@ -435,6 +577,14 @@ LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, U
 			// Заголовки групп приходят, только если список попросили сообщать о каждом элементе.
 			if(draw.nmcd.dwDrawStage == CDDS_PREPAINT && draw.dwItemType != LVCDI_GROUP)
 				return DefSubclassProc(window, msg, wParam, lParam) | CDRF_NOTIFYITEMDRAW;
+		}
+		if(notification.code == NM_CUSTOMDRAW && ClassIs(notification.hwndFrom, TRACKBAR_CLASSW))
+			return DrawTrackbar(notification.hwndFrom, *reinterpret_cast<NMCUSTOMDRAW *>(lParam));
+		if(notification.code == NM_CUSTOMDRAW && ClassIs(notification.hwndFrom, L"Button"))
+		{
+			const LRESULT drawn = DrawButton(notification.hwndFrom, *reinterpret_cast<NMCUSTOMDRAW *>(lParam));
+			if(drawn != CDRF_DODEFAULT)
+				return drawn;
 		}
 		if(notification.code == NM_CUSTOMDRAW && ClassIs(notification.hwndFrom, L"ToolbarWindow32"))
 		{
