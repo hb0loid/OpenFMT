@@ -9,6 +9,7 @@
 
 
 #include "stdafx.h"
+#include "DarkUI.h"
 #include "Mainfrm.h"
 #include "AdvancedConfigDlg.h"
 #include "AutoSaver.h"
@@ -298,9 +299,9 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 
 	RecreateImageLists();
 
-	penDarkGray = ::CreatePen(PS_SOLID, 0, GetSysColor(COLOR_BTNSHADOW));
+	penDarkGray = ::CreatePen(PS_SOLID, 0, DarkUI::Color(COLOR_BTNSHADOW));
 	penGray99 = ::CreatePen(PS_SOLID, 0, RGB(0x99, 0x99, 0x99));
-	penHalfDarkGray = ::CreatePen(PS_DOT, 0, GetSysColor(COLOR_BTNSHADOW));
+	penHalfDarkGray = ::CreatePen(PS_DOT, 0, DarkUI::Color(COLOR_BTNSHADOW));
 
 	// Cursors
 	curDragging = theApp.LoadCursor(IDC_DRAGGING);

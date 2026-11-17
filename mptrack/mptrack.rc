@@ -1025,6 +1025,7 @@ BEGIN
     CONTROL         "&Rainbow",IDC_RADIO4,"Button",BS_AUTORADIOBUTTON,174,85,60,12
     CONTROL         "Ran&dom",IDC_RADIO5,"Button",BS_AUTORADIOBUTTON,234,85,48,12
     CONTROL         "&Enable effect highlighting",IDC_CHECK2,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,18,103,114,10
+    CONTROL         "Dark interface (restart required)",IDC_DARK_INTERFACE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,168,103,144,10
     CONTROL         "Remember each song's &window positions",IDC_CHECK5,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,18,121,168,10
     PUSHBUTTON      "Clear Song Cac&he",IDC_BUTTON11,186,119,78,12

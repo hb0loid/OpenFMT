@@ -100,7 +100,11 @@ protected:
 
 // Attributes
 protected:
-	CSplitterWnd m_wndSplitter;
+	class Splitter : public CSplitterWnd
+	{
+		void OnDrawSplitter(CDC *dc, ESplitType type, const CRect &rect) override;
+	};
+	Splitter m_wndSplitter;
 	HWND m_hWndCtrl = nullptr, m_hWndView = nullptr;
 	GeneralViewState m_ViewGeneral;
 	PatternViewState m_ViewPatterns;

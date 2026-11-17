@@ -16,6 +16,7 @@
 #include "Globals.h"
 #include "HighDPISupport.h"
 #include "Mainfrm.h"
+#include "DarkUI.h"
 #include "Moddoc.h"
 #include "Mptrack.h"
 #include "../soundlib/tuning.h"
@@ -606,9 +607,9 @@ void CViewPattern::OnDraw(CDC *pDC)
 	HBITMAP oldBitmap = SelectBitmap(m_offScreenDC, m_offScreenBitmap);
 
 	const auto dcBrush = GetStockBrush(DC_BRUSH);
-	const auto faceColor = GetSysColor(COLOR_BTNFACE);
-	const auto shadowColor = GetSysColor(COLOR_BTNSHADOW);
-	const auto textColor = GetSysColor(COLOR_BTNTEXT);
+	const auto faceColor = DarkUI::Color(COLOR_BTNFACE);
+	const auto shadowColor = DarkUI::Color(COLOR_BTNSHADOW);
+	const auto textColor = DarkUI::Color(COLOR_BTNTEXT);
 
 	CHANNELINDEX xofs = static_cast<CHANNELINDEX>(GetXScrollPos());
 	ROWINDEX yofs = static_cast<ROWINDEX>(GetYScrollPos());
@@ -736,7 +737,7 @@ void CViewPattern::OnDraw(CDC *pDC)
 		}
 	}
 
-	const auto buttonBrush = GetSysColorBrush(COLOR_BTNFACE), blackBrush = GetStockBrush(BLACK_BRUSH);
+	const auto buttonBrush = DarkUI::Brush(COLOR_BTNFACE), blackBrush = GetStockBrush(BLACK_BRUSH);
 	rect.SetRect(0, rcClient.top, rcClient.right, rcClient.top + m_szHeader.cy);
 	if(pDC->RectVisible(rect))
 	{
@@ -2167,10 +2168,10 @@ void CViewPattern::CreateVUMeterBitmap()
 
 	m_vuMeterBitmap.CreateCompatibleBitmap(dc, bmpWidth, bmpHeight);
 	const auto oldBitmap = m_vuMeterDC.SelectObject(m_vuMeterBitmap);
-	m_vuMeterDC.FillSolidRect(0, 0, bmpWidth, bmpHeight, GetSysColor(COLOR_BTNFACE));
+	m_vuMeterDC.FillSolidRect(0, 0, bmpWidth, bmpHeight, DarkUI::Color(COLOR_BTNFACE));
 
 	const auto &Colors = TrackerSettings::Instance().rgbCustomColors;
-	const COLORREF shadowColor = (m_ledWidth > 2) ? RGB(0, 0, 0) : GetSysColor(COLOR_BTNSHADOW);
+	const COLORREF shadowColor = (m_ledWidth > 2) ? RGB(0, 0, 0) : DarkUI::Color(COLOR_BTNSHADOW);
 
 	// 0: sample-based, 1: synthesized / plugin
 	for(int colorScheme = 0; colorScheme < 2; colorScheme++)

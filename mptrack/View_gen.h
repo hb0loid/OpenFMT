@@ -101,6 +101,7 @@ private:
 
 protected:
 	//{{AFX_MSG(CViewGlobals)
+	afx_msg BOOL OnEraseBkgnd(CDC *dc);
 	afx_msg void OnEditUndo();
 	afx_msg void OnEditRedo();
 	afx_msg void OnUpdateUndo(CCmdUI *pCmdUI);

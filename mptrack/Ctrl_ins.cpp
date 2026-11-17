@@ -10,6 +10,7 @@
 
 
 #include "stdafx.h"
+#include "DarkUI.h"
 #include "Ctrl_ins.h"
 #include "Childfrm.h"
 #include "dlg_misc.h"
@@ -171,9 +172,9 @@ void CNoteMapWnd::OnPaint()
 
 	CRect rcClient;
 	GetClientRect(&rcClient);
-	const auto highlightBrush = GetSysColorBrush(COLOR_HIGHLIGHT), windowBrush = GetSysColorBrush(COLOR_WINDOW);
-	const auto colorText = GetSysColor(COLOR_WINDOWTEXT);
-	const auto colorTextSel = GetSysColor(COLOR_HIGHLIGHTTEXT);
+	const auto highlightBrush = DarkUI::Brush(COLOR_HIGHLIGHT), windowBrush = DarkUI::Brush(COLOR_WINDOW);
+	const auto colorText = DarkUI::Color(COLOR_WINDOWTEXT);
+	const auto colorTextSel = DarkUI::Color(COLOR_HIGHLIGHTTEXT);
 	const int lineWidth = HighDPISupport::ScalePixels(1, *this);
 	auto oldFont = dc.SelectObject(CMainFrame::GetGUIFont());
 	dc.SetBkMode(TRANSPARENT);
@@ -268,7 +269,7 @@ void CNoteMapWnd::OnPaint()
 		if (ypaint < rcClient.bottom)
 		{
 			rect.SetRect(rcClient.left, ypaint, rcClient.right, rcClient.bottom);
-			FillRect(dc, &rect, GetSysColorBrush(COLOR_BTNFACE));
+			FillRect(dc, &rect, DarkUI::Brush(COLOR_BTNFACE));
 		}
 	}
 	dc.SelectObject(oldFont);

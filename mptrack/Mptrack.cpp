@@ -9,6 +9,7 @@
 
 
 #include "stdafx.h"
+#include "DarkUI.h"
 #include "Mptrack.h"
 #include "AboutDialog.h"
 #include "AutoSaver.h"
@@ -1425,6 +1426,7 @@ BOOL CTrackApp::InitInstanceImpl(CMPTCommandLineInfo &cmdInfo)
 	m_pDebugSettings = std::make_unique<DebugSettings>(*m_pSettings);
 
 	m_pTrackerSettings = std::make_unique<TrackerSettings>(*m_pSettings);
+	DarkUI::Initialize(m_pSettings->Read<bool>(UL_("Display"), UL_("DarkInterface"), true));
 
 	MPT_LOG_GLOBAL(LogInformation, "", U_("OpenMPT settings initialized."));
 
@@ -1486,6 +1488,10 @@ BOOL CTrackApp::InitInstanceImpl(CMPTCommandLineInfo &cmdInfo)
 		return FALSE;
 	}
 	m_pMainWnd = pMainFrame;
+	// MFC запомнила системные цвета ещё до тёмной темы (рамки тулбаров и
+	// панелей) — пусть перечитает: у главного окна это делает WM_SYSCOLORCHANGE.
+	if(DarkUI::Enabled())
+		pMainFrame->SendMessage(WM_SYSCOLORCHANGE);
 
 	// Show splash screen
 	if(cmdInfo.m_bShowSplash && TrackerSettings::Instance().m_ShowSplashScreen)
@@ -2179,10 +2185,10 @@ static void DrawButtonRectImpl(HDC hdc, int lineWidth, HFONT font, CRect rect, c
 		DrawFrameControl(hdc, rect, DFC_BUTTON, pushed ? (DFCS_PUSHED | DFCS_BUTTONPUSH) : DFCS_BUTTONPUSH);
 	} else
 	{
-		const auto colorHighlight = GetSysColor(COLOR_BTNHIGHLIGHT), colorShadow = GetSysColor(COLOR_BTNSHADOW);
+		const auto colorHighlight = DarkUI::Color(COLOR_BTNHIGHLIGHT), colorShadow = DarkUI::Color(COLOR_BTNSHADOW);
 		auto oldpen = SelectPen(hdc, GetStockObject(DC_PEN));
 		::SetDCPenColor(hdc, pushed ? colorShadow : colorHighlight);
-		::FillRect(hdc, rect, GetSysColorBrush(COLOR_BTNFACE));
+		::FillRect(hdc, rect, DarkUI::Brush(COLOR_BTNFACE));
 		::MoveToEx(hdc, rect.left, rect.bottom - 1, nullptr);
 		::LineTo(hdc, rect.left, rect.top);
 		::LineTo(hdc, rect.right - 1, rect.top);
@@ -2200,7 +2206,7 @@ static void DrawButtonRectImpl(HDC hdc, int lineWidth, HFONT font, CRect rect, c
 			rect.top += lineWidth;
 			rect.left += lineWidth;
 		}
-		::SetTextColor(hdc, GetSysColor(disabled ? COLOR_GRAYTEXT : COLOR_BTNTEXT));
+		::SetTextColor(hdc, DarkUI::Color(disabled ? COLOR_GRAYTEXT : COLOR_BTNTEXT));
 		::SetBkMode(hdc, TRANSPARENT);
 		rect.top += topMargin;
 		auto oldFont = SelectFont(hdc, font);

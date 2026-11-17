@@ -1727,6 +1727,7 @@
     <ClInclude Include="..\..\mptrack\CListCtrl.h" />
     <ClInclude Include="..\..\mptrack\ChannelManagerDlg.h" />
     <ClInclude Include="..\..\mptrack\Childfrm.h" />
+    <ClInclude Include="..\..\mptrack\DarkUI.h" />
     <ClInclude Include="..\..\mptrack\CleanupSong.h" />
     <ClInclude Include="..\..\mptrack\Clipboard.h" />
     <ClInclude Include="..\..\mptrack\CloseMainDialog.h" />
@@ -2192,6 +2193,7 @@
     <ClCompile Include="..\..\mptrack\CImageListEx.cpp" />
     <ClCompile Include="..\..\mptrack\ChannelManagerDlg.cpp" />
     <ClCompile Include="..\..\mptrack\Childfrm.cpp" />
+    <ClCompile Include="..\..\mptrack\DarkUI.cpp" />
     <ClCompile Include="..\..\mptrack\CleanupSong.cpp" />
     <ClCompile Include="..\..\mptrack\CloseMainDialog.cpp" />
     <ClCompile Include="..\..\mptrack\ColorConfigDlg.cpp" />

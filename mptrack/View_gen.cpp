@@ -31,6 +31,7 @@
 // This is used for retrieving the correct background colour for the
 // frames on the general tab when using WinXP Luna or Vista/Win7 Aero.
 #include <uxtheme.h>
+#include "DarkUI.h"
 
 
 OPENMPT_NAMESPACE_BEGIN
@@ -39,6 +40,7 @@ OPENMPT_NAMESPACE_BEGIN
 IMPLEMENT_SERIAL(CViewGlobals, CFormView, 0)
 
 BEGIN_MESSAGE_MAP(CViewGlobals, CFormView)
+	ON_WM_ERASEBKGND()
 	//{{AFX_MSG_MAP(CViewGlobals)
 	ON_WM_SIZE()
 	ON_WM_HSCROLL()
@@ -128,6 +130,17 @@ BEGIN_MESSAGE_MAP(CViewGlobals, CFormView)
 	ON_NOTIFY_EX_RANGE(TTN_NEEDTEXT, 0, 0xFFFF, &CViewGlobals::OnToolTipText)
 	//}}AFX_MSG_MAP
 END_MESSAGE_MAP()
+
+
+BOOL CViewGlobals::OnEraseBkgnd(CDC *dc)
+{
+	if(!DarkUI::Enabled())
+		return CFormView::OnEraseBkgnd(dc);
+	CRect rect;
+	GetClientRect(&rect);
+	dc->FillSolidRect(rect, DarkUI::Color(COLOR_BTNFACE));
+	return TRUE;
+}
 
 
 void CViewGlobals::DoDataExchange(CDataExchange* pDX)

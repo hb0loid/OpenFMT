@@ -9,6 +9,7 @@
 
 
 #include "stdafx.h"
+#include "DarkUI.h"
 #include "ChannelManagerDlg.h"
 #include "HighDPISupport.h"
 #include "Mainfrm.h"
@@ -624,18 +625,18 @@ void CChannelManagerDlg::OnPaint()
 	// Draw background
 	{
 		const auto bgIntersected = client & pDC.rcPaint;  // In case of partial redraws, FillRect may still draw into areas that are not part of the redraw area and thus make some buttons disappear
-		::FillRect(dc, &pDC.rcPaint, GetSysColorBrush(COLOR_BTNFACE));
-		::FillRect(dc, &bgIntersected, GetSysColorBrush(COLOR_HIGHLIGHT));
+		::FillRect(dc, &pDC.rcPaint, DarkUI::Brush(COLOR_BTNFACE));
+		::FillRect(dc, &bgIntersected, DarkUI::Brush(COLOR_HIGHLIGHT));
 		::SetDCBrushColor(dc, RGB(20, 20, 20));
 		::FrameRect(dc, &client, dcBrush);
 	}
 
 	client.SetRect(client.left + 8,client.top + 6,client.right - 6,client.bottom - 6);
 
-	const COLORREF highlight = GetSysColor(COLOR_HIGHLIGHT), red = RGB(192, 96, 96), green = RGB(96, 192, 96), redBright = RGB(218, 163, 163), greenBright = RGB(163, 218, 163);
+	const COLORREF highlight = DarkUI::Color(COLOR_HIGHLIGHT), red = RGB(192, 96, 96), green = RGB(96, 192, 96), redBright = RGB(218, 163, 163), greenBright = RGB(163, 218, 163);
 	const COLORREF brushColors[] = { highlight, green, red };
 	const COLORREF brushColorsBright[] = { highlight, greenBright, redBright };
-	const auto buttonFaceColor = GetSysColor(COLOR_BTNFACE), windowColor = GetSysColor(COLOR_WINDOW);
+	const auto buttonFaceColor = DarkUI::Color(COLOR_BTNFACE), windowColor = DarkUI::Color(COLOR_WINDOW);
 
 	uint32 col = 0, row = 0;
 	const CSoundFile &sndFile = m_ModDoc->GetSoundFile();
@@ -672,7 +673,7 @@ void CChannelManagerDlg::OnPaint()
 		auto btnAdjusted = btn;  // Without border
 		::DrawEdge(dc, btnAdjusted, enable ? EDGE_RAISED : EDGE_SUNKEN, BF_RECT | BF_MIDDLE | BF_ADJUST);
 		if(activate)
-			::FillRect(dc, btnAdjusted, GetSysColorBrush(COLOR_WINDOW));
+			::FillRect(dc, btnAdjusted, DarkUI::Brush(COLOR_WINDOW));
 
 		if(chnSettings.color != ModChannelSettings::INVALID_COLOR)
 		{
@@ -703,7 +704,7 @@ void CChannelManagerDlg::OnPaint()
 			rect.right -= HighDPISupport::ScalePixels(3, m_hWnd);
 
 			::SetBkMode(dc, TRANSPARENT);
-			::SetTextColor(dc, GetSysColor(enable || activate ? COLOR_BTNTEXT : COLOR_GRAYTEXT));
+			::SetTextColor(dc, DarkUI::Color(enable || activate ? COLOR_BTNTEXT : COLOR_GRAYTEXT));
 			::DrawText(dc, s, -1, &rect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 		}
 

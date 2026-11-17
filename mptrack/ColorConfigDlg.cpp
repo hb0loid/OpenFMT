@@ -9,6 +9,7 @@
 
 
 #include "stdafx.h"
+#include "DarkUI.h"
 #include "ColorConfigDlg.h"
 #include "ColorSchemes.h"
 #include "FileDialog.h"
@@ -152,6 +153,7 @@ static CString FormatFontName(const FontSetting &font)
 BOOL COptionsColors::OnInitDialog()
 {
 	CPropertyPage::OnInitDialog();
+	CheckDlgButton(IDC_DARK_INTERFACE, theApp.GetSettings().Read<bool>(UL_("Display"), UL_("DarkInterface"), true) ? BST_CHECKED : BST_UNCHECKED);
 	
 	m_pPreviewDib = LoadDib(MAKEINTRESOURCE(IDB_COLORSETUP));
 	
@@ -263,6 +265,7 @@ BOOL COptionsColors::OnKillActive()
 
 void COptionsColors::OnOK()
 {
+	theApp.GetSettings().Write<bool>(UL_("Display"), UL_("DarkInterface"), IsDlgButtonChecked(IDC_DARK_INTERFACE) == BST_CHECKED);
 	if(m_ComboDPIAwareness.GetCurSel() >= 0)
 	{
 		const DPIAwarenessMode currentDPIMode = TrackerSettings::Instance().dpiAwareness;
@@ -455,8 +458,8 @@ void COptionsColors::OnDrawItem(int nIdCtl, LPDRAWITEMSTRUCT lpdis)
 	case 9:
 	case 10:
 		p[0] = rgb2quad(CustomColors[MODCOLOR_BACKSAMPLE]);
-		p[7] = rgb2quad(GetSysColor(COLOR_BTNFACE));
-		p[8] = rgb2quad(GetSysColor(COLOR_BTNSHADOW));
+		p[7] = rgb2quad(DarkUI::Color(COLOR_BTNFACE));
+		p[8] = rgb2quad(DarkUI::Color(COLOR_BTNSHADOW));
 		p[10] = rgb2quad(CustomColors[MODCOLOR_SAMPLE_LOOPMARKER]);
 		p[11] = rgb2quad(CustomColors[MODCOLOR_SAMPLE_CUEPOINT]);
 		p[14] = rgb2quad(CustomColors[MODCOLOR_SAMPLE_SUSTAINMARKER]);

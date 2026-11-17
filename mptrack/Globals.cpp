@@ -10,6 +10,7 @@
 
 
 #include "stdafx.h"
+#include "DarkUI.h"
 #include "Globals.h"
 #include "Childfrm.h"
 #include "Ctrl_com.h"
@@ -210,6 +211,7 @@ void CModTabCtrl::OnDPIChanged()
 IMPLEMENT_DYNCREATE(CModControlView, CView)
 
 BEGIN_MESSAGE_MAP(CModControlView, CView)
+	ON_WM_ERASEBKGND()
 	//{{AFX_MSG_MAP(CModControlView)
 	ON_WM_SIZE()
 	ON_WM_DESTROY()
@@ -233,6 +235,8 @@ CModDoc *CModControlView::GetDocument() const noexcept { return static_cast<CMod
 void CModControlView::OnInitialUpdate() // called first time after construct
 {
 	CView::OnInitialUpdate();
+	if(DarkUI::Enabled())
+		ModifyStyle(0, WS_CLIPCHILDREN);
 	CRect rect;
 
 	CChildFrame *pParentFrame = (CChildFrame *)GetParentFrame();
@@ -271,23 +275,42 @@ LRESULT CModControlView::OnDPIChangedAfterParent(WPARAM, LPARAM)
 }
 
 
+BOOL CModControlView::OnEraseBkgnd(CDC *dc)
+{
+	if(!DarkUI::Enabled())
+		return CView::OnEraseBkgnd(dc);
+	CRect rect;
+	GetClientRect(&rect);
+	dc->FillSolidRect(rect, DarkUI::Color(COLOR_BTNFACE));
+	return TRUE;
+}
+
+
 void CModControlView::RecalcLayout()
 {
-	CRect rcClient;
-
-	if (m_TabCtrl.m_hWnd == NULL) return;
-	GetClientRect(&rcClient);
-	if(CWnd *pDlg = GetCurrentControlDlg())
+	if(!m_TabCtrl.m_hWnd)
+		return;
+	CRect client;
+	GetClientRect(&client);
+	CRect panel = client;
+	m_TabCtrl.AdjustRect(FALSE, &panel);
+	CRect tabs = client;
+	const bool dark = DarkUI::Enabled();
+	if(dark)
 	{
-		CRect rect = rcClient;
-		m_TabCtrl.AdjustRect(FALSE, &rect);
-		HDWP hdwp = BeginDeferWindowPos(2);
-		DeferWindowPos(hdwp, m_TabCtrl.m_hWnd, NULL, rcClient.left, rcClient.top, rcClient.Width(), rcClient.Height(), SWP_NOZORDER);
-		DeferWindowPos(hdwp, pDlg->m_hWnd, NULL, rect.left, rect.top, rect.Width(), rect.Height(), SWP_NOZORDER);
-		EndDeferWindowPos(hdwp);
+		// Keep the tab HWND above the page instead of painting behind it.
+		// MFC swaps page HWNDs while the tab control remains visible.
+		tabs.bottom = std::clamp(panel.top, client.top, client.bottom);
+	}
+	if(CWnd *page = GetCurrentControlDlg())
+	{
+		HDWP layout = BeginDeferWindowPos(2);
+		layout = DeferWindowPos(layout, m_TabCtrl.m_hWnd, nullptr, tabs.left, tabs.top, tabs.Width(), tabs.Height(), SWP_NOZORDER | SWP_NOACTIVATE);
+		layout = DeferWindowPos(layout, page->m_hWnd, HWND_TOP, panel.left, panel.top, panel.Width(), panel.Height(), dark ? SWP_NOACTIVATE : SWP_NOZORDER | SWP_NOACTIVATE);
+		EndDeferWindowPos(layout);
 	} else
 	{
-		m_TabCtrl.MoveWindow(&rcClient);
+		m_TabCtrl.MoveWindow(tabs);
 	}
 }
 
@@ -555,7 +578,10 @@ LRESULT CModControlView::OnModCtrlMsg(WPARAM wParam, LPARAM lParam)
 		}
 		break;
 	}
-	return pActiveDlg->OnModCtrlMsg(wParam, lParam);
+	const auto result = pActiveDlg->OnModCtrlMsg(wParam, lParam);
+	if(wParam == CTRLMSG_ACTIVATEPAGE && DarkUI::Enabled())
+		GetParent()->RedrawWindow(nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+	return result;
 }
 
 

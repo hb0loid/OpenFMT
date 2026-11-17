@@ -9,6 +9,7 @@
 
 
 #include "stdafx.h"
+#include "DarkUI.h"
 #include "Mainbar.h"
 #include "HighDPISupport.h"
 #include "ImageLists.h"
@@ -1480,7 +1481,7 @@ void CModTreeBar::OnNcPaint()
 	{
 		CDC *pDC = GetWindowDC();
 		HDC hdc = pDC->m_hDC;
-		FillRect(hdc, &rect, GetSysColorBrush(COLOR_BTNFACE));
+		FillRect(hdc, &rect, DarkUI::Brush(COLOR_BTNFACE));
 		ReleaseDC(pDC);
 	}
 }

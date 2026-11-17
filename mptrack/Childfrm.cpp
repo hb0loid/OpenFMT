@@ -9,6 +9,7 @@
 
 
 #include "stdafx.h"
+#include "DarkUI.h"
 #include "Childfrm.h"
 #include "ChannelManagerDlg.h"
 #include "Ctrl_ins.h"
@@ -35,6 +36,20 @@
 
 
 OPENMPT_NAMESPACE_BEGIN
+
+void CChildFrame::Splitter::OnDrawSplitter(CDC *dc, ESplitType type, const CRect &rect)
+{
+	if(!DarkUI::Enabled() || !dc)
+	{
+		CSplitterWnd::OnDrawSplitter(dc, type, rect);
+		return;
+	}
+	if(type == splitBorder)
+		dc->Draw3dRect(rect, DarkUI::Color(COLOR_BTNSHADOW), DarkUI::Color(COLOR_BTNSHADOW));
+	else
+		dc->FillSolidRect(rect, DarkUI::Color(COLOR_BTNFACE));
+}
+
 
 
 /////////////////////////////////////////////////////////////////////////////

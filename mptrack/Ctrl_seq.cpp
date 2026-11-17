@@ -10,6 +10,7 @@
 
 
 #include "stdafx.h"
+#include "DarkUI.h"
 #include "Ctrl_pat.h"
 #include "Globals.h"
 #include "HighDPISupport.h"
@@ -782,9 +783,9 @@ void COrderList::OnPaint()
 	CPaintDC dc(this);
 	HGDIOBJ oldFont = dc.SelectObject(m_hFont);
 	HGDIOBJ oldPen = dc.SelectStockObject(DC_PEN);
-	const auto separatorColor = GetSysColor(COLOR_WINDOW) ^ 0x808080;
-	const auto colorText = GetSysColor(COLOR_WINDOWTEXT), colorInvalid = GetSysColor(COLOR_GRAYTEXT), colorTextSel = GetSysColor(COLOR_HIGHLIGHTTEXT);
-	const auto windowColor = GetSysColor(COLOR_WINDOW), highlightColor = GetSysColor(COLOR_HIGHLIGHT), faceColor = GetSysColor(COLOR_BTNFACE);
+	const auto separatorColor = DarkUI::Color(COLOR_WINDOW) ^ 0x808080;
+	const auto colorText = DarkUI::Color(COLOR_WINDOWTEXT), colorInvalid = DarkUI::Color(COLOR_GRAYTEXT), colorTextSel = DarkUI::Color(COLOR_HIGHLIGHTTEXT);
+	const auto windowColor = DarkUI::Color(COLOR_WINDOW), highlightColor = DarkUI::Color(COLOR_HIGHLIGHT), faceColor = DarkUI::Color(COLOR_BTNFACE);
 
 	dc.SetDCPenColor(separatorColor);
 

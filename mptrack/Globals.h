@@ -181,6 +181,7 @@ protected:
 	afx_msg void OnSwitchToView();
 	afx_msg LRESULT OnActivateModView(WPARAM, LPARAM);
 	afx_msg LRESULT OnModCtrlMsg(WPARAM wParam, LPARAM lParam);
+	afx_msg BOOL OnEraseBkgnd(CDC *dc);
 	//}}AFX_MSG
 	DECLARE_MESSAGE_MAP()
 };
