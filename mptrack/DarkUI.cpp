@@ -1426,6 +1426,11 @@ void Apply(HWND window)
 	} else if(ClassIs(window, L"ComboLBox"))
 	{
 		SetWindowTheme(window, L"DarkMode_Explorer", nullptr);
+	} else if(ClassIs(window, L"ListBox") && (style & (LBS_OWNERDRAWFIXED | LBS_OWNERDRAWVARIABLE)))
+	{
+		// Список с галочками (настройки): MFC рисует галочки темой «Button»
+		// этого окна, а тёмная она только у темы Explorer.
+		SetWindowTheme(window, L"DarkMode_Explorer", nullptr);
 	} else if(ClassIs(window, L"Edit") || ClassIs(window, L"ComboBox") || ClassIs(window, L"ListBox"))
 	{
 		SetWindowTheme(window, L"DarkMode_CFD", nullptr);

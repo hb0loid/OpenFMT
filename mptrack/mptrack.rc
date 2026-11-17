@@ -2420,6 +2420,8 @@ IDB_SPLASHNOFOLDFIN     PNG                     "res\\Splash.png"
 
 IDB_MPTRACK             PNG                     "res\\About.png"
 
+IDB_MPTRACK_DARK        PNG                     "res\\About-dark.png"
+
 IDB_NEW_BIG             PNG                     "res\\New32.png"
 
 IDB_OPEN_BIG            PNG                     "res\\Open32.png"

@@ -11,6 +11,7 @@
 #include "stdafx.h"
 #include "OpenFMTVersion.h"
 #include "AboutDialog.h"
+#include "DarkUI.h"
 #include "HighDPISupport.h"
 #include "Image.h"
 #include "Mptrack.h"
@@ -39,7 +40,8 @@ END_MESSAGE_MAP()
 
 CRippleBitmap::CRippleBitmap()
 {
-	m_bitmapSrc = LoadPixelImage(GetResource(MAKEINTRESOURCE(IDB_MPTRACK), _T("PNG")));
+	// Картинка под тему: тёмная для тёмного интерфейса, прежняя светлая для обычного.
+	m_bitmapSrc = LoadPixelImage(GetResource(MAKEINTRESOURCE(DarkUI::Enabled() ? IDB_MPTRACK_DARK : IDB_MPTRACK), _T("PNG")));
 	m_bitmapTarget = std::make_unique<RawGDIDIB>(m_bitmapSrc->Width(), m_bitmapSrc->Height());
 	m_offset1.assign(m_bitmapSrc->Pixels().size(), 0);
 	m_offset2.assign(m_bitmapSrc->Pixels().size(), 0);
@@ -253,13 +255,14 @@ BOOL CAboutDlg::OnInitDialog()
 	DialogBase::OnInitDialog();
 
 	mpt::ustring app;
-	app += MPT_UFORMAT("OpenMPT{} ({}, {} bit)\r\n")(
-			mpt::ToUnicode(mpt::Charset::ASCII, OPENMPT_BUILD_VARIANT_MONIKER),
+	app += MPT_UFORMAT("{} ({}, {} bit)\r\n")(
+			U_(OPENFMT_NAME),
 			mpt::OS::Windows::Name(mpt::OS::Windows::GetProcessArchitecture()),
 			mpt::arch_bits)
-		+ UL_("Version ") + Build::GetVersionStringSimple() + UL_("\r\n\r\n")
-		+ Build::GetURL(Build::Url::Website) + UL_("\r\n");
+		+ UL_("Version ") + U_(OPENFMT_VERSION_A) + UL_("\r\n\r\n")
+		+ UL_("Based on OpenMPT ") + Build::GetVersionStringSimple() + UL_("\r\n");
 	SetDlgItemText(IDC_EDIT3, mpt::ToCString(app));
+	SetWindowText(_T("About ") _T(OPENFMT_NAME));
 
 	m_bmp.SubclassDlgItem(IDC_BITMAP1, this);
 

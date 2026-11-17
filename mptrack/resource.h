@@ -53,6 +53,7 @@
 #define IDB_PATTERNS                    302
 #define IDB_PATTERNVIEW                 303
 #define IDB_MPTRACK                     304
+#define IDB_MPTRACK_DARK                546
 #define IDB_COLORSETUP                  305
 #define IDB_SPLASHSCREEN                307
 #define IDB_ENVTOOLBAR                  308
@@ -1374,7 +1375,7 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_3D_CONTROLS                     1
-#define _APS_NEXT_RESOURCE_VALUE        546
+#define _APS_NEXT_RESOURCE_VALUE        547
 #define _APS_NEXT_COMMAND_VALUE         44672
 #define _APS_NEXT_CONTROL_VALUE         2655
 #define _APS_NEXT_SYMED_VALUE           901
