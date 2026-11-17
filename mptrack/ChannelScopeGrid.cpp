@@ -324,7 +324,19 @@ void ChannelScopeGrid::OnPaint()
 void ChannelScopeGrid::Draw(CDC &dc, const CRect &client)
 {
 	CMainFrame *main = CMainFrame::GetMainFrame();
-	const COLORREF back = RGB(0x10, 0x12, 0x18);
+	// Цвета берутся из схемы (волна и фон сэмпла), как у волны в редакторе
+	// сэмплов: своя зелёная игнорировала выбранную схему.
+	const auto &colors = TrackerSettings::Instance().rgbCustomColors;
+	const COLORREF cellBack = colors[MODCOLOR_BACKSAMPLE];
+	const COLORREF wave = colors[MODCOLOR_SAMPLE];
+	const auto mix = [](COLORREF a, COLORREF b, int weightB)
+	{
+		return RGB((GetRValue(a) * (8 - weightB) + GetRValue(b) * weightB) / 8,
+			(GetGValue(a) * (8 - weightB) + GetGValue(b) * weightB) / 8,
+			(GetBValue(a) * (8 - weightB) + GetBValue(b) * weightB) / 8);
+	};
+	// Щели между окошками чуть темнее самих окошек.
+	const COLORREF back = mix(cellBack, RGB(0, 0, 0), 3);
 	dc.FillSolidRect(&client, back);
 	if(main == nullptr)
 		return;
@@ -371,8 +383,8 @@ void ChannelScopeGrid::Draw(CDC &dc, const CRect &client)
 	HFONT font = CMainFrame::GetGUIFont();
 	HGDIOBJ oldFont = ::SelectObject(dc.m_hDC, font);
 	dc.SetBkMode(TRANSPARENT);
-	CPen wavePen(PS_SOLID, HighDPISupport::ScalePixels(1, m_hWnd), RGB(0x60, 0xE8, 0x90));
-	CPen quietPen(PS_SOLID, HighDPISupport::ScalePixels(1, m_hWnd), RGB(0x3A, 0x50, 0x44));
+	CPen wavePen(PS_SOLID, HighDPISupport::ScalePixels(1, m_hWnd), wave);
+	CPen quietPen(PS_SOLID, HighDPISupport::ScalePixels(1, m_hWnd), mix(cellBack, wave, 3));
 
 	m_samples.resize(Span);
 	for(CHANNELINDEX chn = 0; chn < numChannels; chn++)
@@ -382,7 +394,7 @@ void ChannelScopeGrid::Draw(CDC &dc, const CRect &client)
 		cell.DeflateRect(margin, margin);
 		if(cell.Height() < HighDPISupport::ScalePixels(12, m_hWnd))
 			break;
-		dc.FillSolidRect(&cell, RGB(0x16, 0x18, 0x22));
+		dc.FillSolidRect(&cell, cellBack);
 
 		const bool haveData = scopes.ReadLatest(chn, m_samples.data(), Span);
 		float peak = 0.0f;

@@ -23,6 +23,8 @@
 #include "../common/mptStringBuffer.h"
 #include "mpt/fs/fs.hpp"
 #include "mpt/string/utility.hpp"
+#include "ColorSchemes.h"
+#include "Reporting.h"
 
 
 OPENMPT_NAMESPACE_BEGIN
@@ -136,31 +138,14 @@ BOOL WelcomeDlg::OnInitDialog()
 	CheckDlgButton(IDC_CHECK2, (TrackerSettings::Instance().patternFont.Get().name == PATTERNFONT_LARGE) ? BST_CHECKED : BST_UNCHECKED);
 
 	SetWindowText(_T("Welcome to ") _T(OPENFMT_NAME) _T("!"));
-#if !defined(MPT_ENABLE_UPDATE)
-	// Проверки обновлений и статистики у OpenFMT нет: эти пункты прячем, а
-	// остальное поднимаем на их место, чтобы не оставалось дыры.
+	// Тема: тёмная — тёмный интерфейс и тёмные цвета паттерна, светлая —
+	// обычный вид Windows и стандартные цвета.
+	if(CComboBox *theme = static_cast<CComboBox *>(GetDlgItem(IDC_COMBO_THEME)); theme != nullptr)
 	{
-		CRect first, below;
-		GetDlgItem(IDC_CHECK1)->GetWindowRect(first);
-		GetDlgItem(IDC_CHECK2)->GetWindowRect(below);
-		ScreenToClient(first);
-		ScreenToClient(below);
-		const int shift = below.top - first.top;
-		for(const UINT id : {IDC_CHECK1, IDC_CHECK3, IDC_STATIC_WELCOME_STATISTICS})
-			GetDlgItem(id)->ShowWindow(SW_HIDE);
-		for(CWnd *child = GetWindow(GW_CHILD); child != nullptr; child = child->GetWindow(GW_HWNDNEXT))
-		{
-			CRect rect;
-			child->GetWindowRect(rect);
-			ScreenToClient(rect);
-			if(rect.top >= below.top)
-				child->SetWindowPos(nullptr, rect.left, rect.top - shift, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-		}
-		CRect window;
-		GetWindowRect(window);
-		SetWindowPos(nullptr, 0, 0, window.Width(), window.Height() - shift, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+		theme->AddString(_T("Dark"));
+		theme->AddString(_T("Light (Windows)"));
+		theme->SetCurSel(TrackerSettings::Instance().darkInterface ? 0 : 1);
 	}
-#endif // !MPT_ENABLE_UPDATE
 
 	ShowWindow(SW_SHOW);
 
@@ -185,7 +170,35 @@ void WelcomeDlg::OnScanPlugins()
 
 void WelcomeDlg::OnOK()
 {
+	// Читаем до DialogBase::OnOK: после него окно уже закрывается.
+	bool dark = true;
+	if(CComboBox *theme = static_cast<CComboBox *>(GetDlgItem(IDC_COMBO_THEME)); theme != nullptr)
+		dark = theme->GetCurSel() != 1;
+	CString artistName;
+	GetDlgItemText(IDC_EDIT2, artistName);
+
 	DialogBase::OnOK();
+
+	// Имя автора у OpenMPT сохранялось только вместе с настройками обновлений,
+	// а они у OpenFMT выключены.
+	TrackerSettings::Instance().defaultArtist = mpt::ToUnicode(artistName);
+	const bool wasDark = TrackerSettings::Instance().darkInterface;
+	TrackerSettings::Instance().darkInterface = dark;
+	if(dark)
+	{
+		if(const ColorScheme *scheme = FindColorScheme(_T("OpenFMT (Dark)")); scheme != nullptr)
+		{
+			auto colors = TrackerSettings::Instance().rgbCustomColors;
+			TrackerSettings::GetDefaultColourScheme(colors);
+			for(const auto &c : scheme->colors)
+			{
+				if(c.color != 0 || c.id != 0)
+					colors[c.id] = c.color;
+			}
+			TrackerSettings::Instance().rgbCustomColors = colors;
+			CMainFrame::UpdateColors();
+		}
+	}
 
 #if defined(MPT_ENABLE_UPDATE)
 	bool runUpdates = IsDlgButtonChecked(IDC_CHECK1) != BST_UNCHECKED;
@@ -193,10 +206,6 @@ void WelcomeDlg::OnOK()
 	TrackerSettings::Instance().UpdateStatistics = (IsDlgButtonChecked(IDC_CHECK3) != BST_UNCHECKED);
 	TrackerSettings::Instance().UpdateShowUpdateHint = false;
 	TrackerSettings::Instance().UpdateStatisticsConsentAsked = true;
-
-	CString artistName;
-	GetDlgItemText(IDC_EDIT2, artistName);
-	TrackerSettings::Instance().defaultArtist = mpt::ToUnicode(artistName);
 
 #endif // MPT_ENABLE_UPDATE
 	if(IsDlgButtonChecked(IDC_CHECK2) != BST_UNCHECKED)
@@ -225,6 +234,9 @@ void WelcomeDlg::OnOK()
 	theApp.GetSettings().Flush();
 
 	CMainFrame::GetMainFrame()->PostMessage(WM_MOD_INVALIDATEPATTERNS, HINT_MPTOPTIONS);
+
+	if(dark != wasDark)
+		Reporting::Information(_T("The new theme will be applied after restarting OpenFMT."), _T("OpenFMT"));
 
 	DestroyWindow();
 }

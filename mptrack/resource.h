@@ -881,6 +881,7 @@
 #define IDC_SCOPE_SAMPLES               2653
 #define IDC_OPN2_FIRST                  2520
 #define IDC_DARK_INTERFACE              2654
+#define IDC_COMBO_THEME                 2655
 #define IDC_RADIO_RESIZETO              2384
 #define IDC_METRONOME                   2385
 #define IDC_CHECK_PATRECORD             2386
@@ -1377,7 +1378,7 @@
 #define _APS_3D_CONTROLS                     1
 #define _APS_NEXT_RESOURCE_VALUE        547
 #define _APS_NEXT_COMMAND_VALUE         44672
-#define _APS_NEXT_CONTROL_VALUE         2655
+#define _APS_NEXT_CONTROL_VALUE         2656
 #define _APS_NEXT_SYMED_VALUE           901
 #endif
 #endif

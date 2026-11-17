@@ -768,31 +768,44 @@ void RepaintListSelection(HWND list, HDC target = nullptr)
 	const LONG_PTR style = GetWindowLongPtrW(list, GWL_STYLE);
 	if((style & (LBS_OWNERDRAWFIXED | LBS_OWNERDRAWVARIABLE)) && !(style & LBS_HASSTRINGS))
 		return;
-	const auto selected = static_cast<int>(SendMessageW(list, LB_GETCURSEL, 0, 0));
-	if(selected < 0)
-		return;
-	RECT rect{};
-	if(SendMessageW(list, LB_GETITEMRECT, selected, reinterpret_cast<LPARAM>(&rect)) == LB_ERR)
+	std::vector<int> selected;
+	if(style & (LBS_MULTIPLESEL | LBS_EXTENDEDSEL))
+	{
+		const auto count = SendMessageW(list, LB_GETSELCOUNT, 0, 0);
+		if(count > 0 && count < 4096)
+		{
+			selected.resize(static_cast<size_t>(count));
+			SendMessageW(list, LB_GETSELITEMS, count, reinterpret_cast<LPARAM>(selected.data()));
+		}
+	} else if(const auto cursel = static_cast<int>(SendMessageW(list, LB_GETCURSEL, 0, 0)); cursel >= 0)
+	{
+		selected.push_back(cursel);
+	}
+	if(selected.empty())
 		return;
 	RECT client{};
 	GetClientRect(list, &client);
-	if(!IntersectRect(&rect, &rect, &client))
-		return;
-	const auto length = SendMessageW(list, LB_GETTEXTLEN, selected, 0);
-	if(length == LB_ERR || length > 1024)
-		return;
-	std::wstring text(static_cast<size_t>(length) + 1, L'\0');
-	SendMessageW(list, LB_GETTEXT, selected, reinterpret_cast<LPARAM>(text.data()));
 	const HDC dc = target ? target : GetDC(list);
 	const int saved = SaveDC(dc);
 	if(const auto font = reinterpret_cast<HFONT>(SendMessageW(list, WM_GETFONT, 0, 0)))
 		SelectObject(dc, font);
-	Fill(dc, rect, COLOR_HIGHLIGHT);
 	SetBkMode(dc, TRANSPARENT);
 	SetTextColor(dc, Text);
-	RECT textRect = rect;
-	textRect.left += 2;
-	DrawTextW(dc, text.c_str(), -1, &textRect, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_EXPANDTABS);
+	for(const int item : selected)
+	{
+		RECT rect{};
+		if(SendMessageW(list, LB_GETITEMRECT, item, reinterpret_cast<LPARAM>(&rect)) == LB_ERR || !IntersectRect(&rect, &rect, &client))
+			continue;
+		const auto length = SendMessageW(list, LB_GETTEXTLEN, item, 0);
+		if(length == LB_ERR || length > 1024)
+			continue;
+		std::wstring text(static_cast<size_t>(length) + 1, L'\0');
+		SendMessageW(list, LB_GETTEXT, item, reinterpret_cast<LPARAM>(text.data()));
+		Fill(dc, rect, COLOR_HIGHLIGHT);
+		RECT textRect = rect;
+		textRect.left += 2;
+		DrawTextW(dc, text.c_str(), -1, &textRect, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_EXPANDTABS);
+	}
 	RestoreDC(dc, saved);
 	if(!target)
 		ReleaseDC(list, dc);
@@ -1489,7 +1502,7 @@ void Apply(HWND window)
 		kind = 6;
 	else if(ClassIs(window, L"msctls_updown32"))
 		kind = 7;
-	else if(ClassIs(window, L"ComboLBox"))
+	else if(ClassIs(window, L"ComboLBox") || (ClassIs(window, L"ListBox") && !(style & (LBS_OWNERDRAWFIXED | LBS_OWNERDRAWVARIABLE))))
 		kind = 8;
 	else if(ClassIs(window, L"ComboBox"))
 		kind = 9;

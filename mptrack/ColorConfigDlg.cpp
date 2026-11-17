@@ -154,7 +154,7 @@ static CString FormatFontName(const FontSetting &font)
 BOOL COptionsColors::OnInitDialog()
 {
 	CPropertyPage::OnInitDialog();
-	CheckDlgButton(IDC_DARK_INTERFACE, theApp.GetSettings().Read<bool>(UL_("Display"), UL_("DarkInterface"), true) ? BST_CHECKED : BST_UNCHECKED);
+	CheckDlgButton(IDC_DARK_INTERFACE, TrackerSettings::Instance().darkInterface ? BST_CHECKED : BST_UNCHECKED);
 	
 	m_pPreviewDib = LoadDib(MAKEINTRESOURCE(IDB_COLORSETUP));
 	
@@ -266,7 +266,7 @@ BOOL COptionsColors::OnKillActive()
 
 void COptionsColors::OnOK()
 {
-	theApp.GetSettings().Write<bool>(UL_("Display"), UL_("DarkInterface"), IsDlgButtonChecked(IDC_DARK_INTERFACE) == BST_CHECKED);
+	TrackerSettings::Instance().darkInterface = IsDlgButtonChecked(IDC_DARK_INTERFACE) == BST_CHECKED;
 	if(m_ComboDPIAwareness.GetCurSel() >= 0)
 	{
 		const DPIAwarenessMode currentDPIMode = TrackerSettings::Instance().dpiAwareness;
