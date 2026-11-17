@@ -31,7 +31,7 @@ CCtrlChips::CCtrlChips(CModControlView &parent, CModDoc &document)
 Setting<LONG> &CCtrlChips::GetSplitPosRef()
 {
 	auto &height = TrackerSettings::Instance().glChipsWindowHeight;
-	height = 8;
+	height = 26;  // ровно под ярлыки вкладок (в пикселях при 100%)
 	return height;
 }
 
