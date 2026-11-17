@@ -16,6 +16,7 @@
 #ifdef MODPLUG_TRACKER
 #include "../mptrack/Moddoc.h"
 #include "../mptrack/TrackerSettings.h"
+#include "../mptrack/OpenFMTVersion.h"
 #endif // MODPLUG_TRACKER
 #ifdef MPT_EXTERNAL_SAMPLES
 #include "../common/mptPathString.h"
@@ -1469,6 +1470,9 @@ bool CSoundFile::ReadIT(FileReader &file, ModLoadingFlags loadFlags)
 
 	m_modFormat.formatName = isFmt ? U_("OpenMPT Chip FMT") : (GetType() == MOD_TYPE_MPT) ? U_("OpenMPT MPTM") : MPT_UFORMAT("Impulse Tracker {}.{}")(fileHeader.cmwt >> 8, mpt::ufmt::hex0<2>(fileHeader.cmwt & 0xFF));
 	m_modFormat.type = isFmt ? U_("fmt") : (GetType() == MOD_TYPE_MPT) ? U_("mptm") : U_("it");
+	// Сохранён в OpenFMT — так и подписываем, а не номером OpenMPT внутри файла.
+	if(!m_openFMTSavedWith.empty())
+		madeWithTracker = UL_("OpenFMT ") + mpt::ToUnicode(mpt::Charset::UTF8, m_openFMTSavedWith);
 	m_modFormat.madeWithTracker = std::move(madeWithTracker);
 	m_modFormat.charset = m_dwLastSavedWithVersion ? mpt::Charset::Windows1252 : mpt::Charset::CP437;
 #if MPT_TIME_UTC_ON_DISK
@@ -2550,6 +2554,19 @@ void CSoundFile::SaveExtendedSongProperties(std::ostream &f) const
 	WriteModular(f, MagicBE("VSTV"), m_nVSTiVolume);
 	if(m_furnaceSlides)
 		WriteModular(f, MagicLE("FPSL"), m_furnaceSlides);
+#ifdef MODPLUG_TRACKER
+	// Пометка OpenFMT: чем модуль создан и чем сохранён (сейчас — этой версией).
+	if(!m_openFMTCreatedWith.empty() && m_openFMTCreatedWith.size() < 64)
+	{
+		WriteModularHeader(f, MagicLE("OFCV"), m_openFMTCreatedWith.size());
+		mpt::IO::WriteRaw(f, m_openFMTCreatedWith.data(), m_openFMTCreatedWith.size());
+	}
+	{
+		const std::string_view saved = OPENFMT_VERSION_A;
+		WriteModularHeader(f, MagicLE("OFSV"), saved.size());
+		mpt::IO::WriteRaw(f, saved.data(), saved.size());
+	}
+#endif
 	// Подстройка высоты Furnace живёт в канале. Это флаг воспроизведения, но
 	// среди флагов совместимости OpenMPT (MSF.) его хранить нельзя: в новых
 	// версиях OpenMPT этот номер может занять их собственный флаг.
@@ -2804,6 +2821,8 @@ bool CSoundFile::LoadExtendedSongProperties(FileReader &file, bool ignoreChannel
 			case MagicBE("VSTV"): ReadField(chunk, size, m_nVSTiVolume); break;
 			case MagicLE("FPSL"): ReadField(chunk, size, m_furnaceSlides); break;
 			case MagicLE("FPFT"): furnaceFinetune = true; break;
+			case MagicLE("OFCV"): chunk.ReadString<mpt::String::maybeNullTerminated>(m_openFMTCreatedWith, size); break;
+			case MagicLE("OFSV"): chunk.ReadString<mpt::String::maybeNullTerminated>(m_openFMTSavedWith, size); break;
 			case MagicLE("FARP"):
 				{
 					uint16 arp = 0;

@@ -110,7 +110,10 @@ BOOL CModTypeDlg::OnInitDialog()
 
 	// Version information
 
-	if(sndFile.m_dwCreatedWithVersion) SetDlgItemText(IDC_EDIT_CREATEDWITH, _T("OpenMPT ") + FormatVersionNumber(sndFile.m_dwCreatedWithVersion));
+	if(!sndFile.m_openFMTCreatedWith.empty())
+		SetDlgItemText(IDC_EDIT_CREATEDWITH, _T("OpenFMT ") + mpt::ToCString(mpt::Charset::UTF8, sndFile.m_openFMTCreatedWith));
+	else if(sndFile.m_dwCreatedWithVersion)
+		SetDlgItemText(IDC_EDIT_CREATEDWITH, _T("OpenMPT ") + FormatVersionNumber(sndFile.m_dwCreatedWithVersion));
 	SetDlgItemText(IDC_EDIT_SAVEDWITH, mpt::ToCString(sndFile.m_modFormat.madeWithTracker.empty() ? sndFile.m_modFormat.formatName : sndFile.m_modFormat.madeWithTracker));
 
 	OnDPIChanged();

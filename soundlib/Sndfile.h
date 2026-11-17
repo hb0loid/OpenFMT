@@ -611,6 +611,10 @@ public:
 	mpt::ustring m_songArtist;
 	SongMessage m_songMessage;
 	ModFormatDetails m_modFormat;
+	// Какой версией OpenFMT модуль создан и последний раз сохранён (пусто —
+	// не OpenFMT). Внутренний номер OpenMPT в файле остаётся прежним: по нему
+	// выбирается совместимость, а это только подпись для пользователя.
+	std::string m_openFMTCreatedWith, m_openFMTSavedWith;
 
 protected:
 	std::vector<FileHistory> m_FileHistory;	// File edit history

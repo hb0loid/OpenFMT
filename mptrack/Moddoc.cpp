@@ -9,6 +9,7 @@
 
 
 #include "stdafx.h"
+#include "OpenFMTVersion.h"
 #include "Moddoc.h"
 #include "ChannelManagerDlg.h"
 #include "Childfrm.h"
@@ -362,6 +363,9 @@ bool CModDoc::OnSaveDocument(const mpt::PathString &filename, const bool setPath
 
 	if(ok)
 	{
+		// Подпись «Last saved with» сразу, а не после переоткрытия файла.
+		m_SndFile.m_openFMTSavedWith = OPENFMT_VERSION_A;
+		m_SndFile.m_modFormat.madeWithTracker = UL_("OpenFMT " OPENFMT_VERSION_A);
 		if(setPath)
 		{
 			// Set new path for this file, unless we are saving a template or a copy, in which case we want to keep the old file path.

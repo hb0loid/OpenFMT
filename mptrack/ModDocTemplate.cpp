@@ -9,6 +9,7 @@
 
 
 #include "stdafx.h"
+#include "OpenFMTVersion.h"
 #include "ModDocTemplate.h"
 #include "FolderScanner.h"
 #include "Mainfrm.h"
@@ -71,6 +72,8 @@ CDocument *CModDocTemplate::OpenTemplateFile(const mpt::PathString &filename, bo
 			sndFile.GetFileHistory().clear();
 			sndFile.m_dwCreatedWithVersion = Version::Current();
 			sndFile.m_dwLastSavedWithVersion = Version();
+			sndFile.m_openFMTCreatedWith = OPENFMT_VERSION_A;
+			sndFile.m_openFMTSavedWith.clear();
 			sndFile.m_modFormat = ModFormatDetails();
 			sndFile.m_songArtist = TrackerSettings::Instance().defaultArtist;
 			if(sndFile.GetType() != MOD_TYPE_MPT)
