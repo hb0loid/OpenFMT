@@ -10,6 +10,7 @@
 
 #include "stdafx.h"
 #include "DarkUI.h"
+#include "ColorPickerDlg.h"
 #include "ColorConfigDlg.h"
 #include "ColorSchemes.h"
 #include "FileDialog.h"
@@ -503,19 +504,9 @@ static COLORREF rgbCustomColors[16] =
 void COptionsColors::SelectColor(int colorIndex)
 {
 	auto &color = CustomColors[colorDefs[m_nColorItem].colorIndex[colorIndex]];
-	CHOOSECOLOR cc;
-	cc.lStructSize = sizeof(CHOOSECOLOR);
-	cc.hwndOwner = m_hWnd;
-	cc.hInstance = NULL;
-	cc.rgbResult = color;
-	cc.lpCustColors = rgbCustomColors;
-	cc.Flags = CC_RGBINIT | CC_FULLOPEN;
-	cc.lCustData = 0;
-	cc.lpfnHook = nullptr;
-	cc.lpTemplateName = nullptr;
-	if(::ChooseColor(&cc))
+	if(const auto picked = ColorPicker::Pick(this, color, mpt::span<const COLORREF>(std::begin(rgbCustomColors), std::end(rgbCustomColors))))
 	{
-		color = cc.rgbResult;
+		color = *picked;
 		m_BtnColor[colorIndex].SetColor(color);
 		OnSettingsChanged();
 	}

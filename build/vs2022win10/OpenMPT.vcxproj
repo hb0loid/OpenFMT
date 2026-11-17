@@ -1733,6 +1733,7 @@
     <ClInclude Include="..\..\mptrack\CloseMainDialog.h" />
     <ClInclude Include="..\..\mptrack\ColorConfigDlg.h" />
     <ClInclude Include="..\..\mptrack\ColorPickerButton.h" />
+    <ClInclude Include="..\..\mptrack\ColorPickerDlg.h" />
     <ClInclude Include="..\..\mptrack\ColorSchemes.h" />
     <ClInclude Include="..\..\mptrack\ColourEdit.h" />
     <ClInclude Include="..\..\mptrack\CommandSet.h" />
@@ -2205,6 +2206,7 @@
     <ClCompile Include="..\..\mptrack\CloseMainDialog.cpp" />
     <ClCompile Include="..\..\mptrack\ColorConfigDlg.cpp" />
     <ClCompile Include="..\..\mptrack\ColorPickerButton.cpp" />
+    <ClCompile Include="..\..\mptrack\ColorPickerDlg.cpp" />
     <ClCompile Include="..\..\mptrack\ColourEdit.cpp" />
     <ClCompile Include="..\..\mptrack\CommandSet.cpp" />
     <ClCompile Include="..\..\mptrack\Ctrl_com.cpp" />

@@ -11,6 +11,7 @@
 #include "stdafx.h"
 #include "DarkUI.h"
 #include "ColorPickerButton.h"
+#include "ColorPickerDlg.h"
 #include "HighDPISupport.h"
 #include "Sndfile.h"
 
@@ -82,18 +83,12 @@ std::optional<COLORREF> ColorPickerButton::PickColor(mpt::span<COLORREF> colors,
 		colors[i] = (col++)->first;
 	}
 
-	CColorDialog dlg;
-	dlg.m_cc.hwndOwner = m_hWnd;
-	dlg.m_cc.rgbResult = m_color;
-	dlg.m_cc.Flags |= CC_RGBINIT | CC_FULLOPEN;
-	dlg.m_cc.lpCustColors = colors.data();
-	if(dlg.DoModal() == IDOK)
-	{
-		SetColor(dlg.GetColor());
-		return dlg.GetColor();
-	}
-
-	return {};
+	// Своё окно палитры вместо системного: то не перекрасить в тёмный цвет.
+	// Цвета, которые уже есть в песне, оно показывает отдельным рядом.
+	const auto picked = ColorPicker::Pick(this, m_color == ModChannelSettings::INVALID_COLOR ? RGB(97, 175, 239) : m_color, mpt::span<const COLORREF>(colors.data(), numColors));
+	if(picked)
+		SetColor(*picked);
+	return picked;
 }
 
 
@@ -103,7 +98,15 @@ void ColorPickerButton::DrawItem(DRAWITEMSTRUCT *dis)
 		return;
 	HDC hdc = dis->hDC;
 	CRect rect = dis->rcItem;
-	::DrawEdge(hdc, rect, (dis->itemState & ODS_SELECTED) ? BDR_SUNKENINNER : BDR_RAISEDINNER, BF_RECT | BF_ADJUST);
+	if(DarkUI::Enabled())
+	{
+		// Объёмный край Windows рисует системными (светлыми) цветами.
+		::FrameRect(hdc, rect, DarkUI::Brush(COLOR_BTNSHADOW));
+		rect.DeflateRect(1, 1);
+	} else
+	{
+		::DrawEdge(hdc, rect, (dis->itemState & ODS_SELECTED) ? BDR_SUNKENINNER : BDR_RAISEDINNER, BF_RECT | BF_ADJUST);
+	}
 	if(m_color == ModChannelSettings::INVALID_COLOR || (dis->itemState & ODS_DISABLED))
 	{
 		::FillRect(hdc, rect, DarkUI::Brush(COLOR_BTNFACE));
