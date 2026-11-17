@@ -1012,7 +1012,7 @@ LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, U
 					const int saved = SaveDC(draw.nmcd.hdc);
 					SelectObject(draw.nmcd.hdc, GetStockObject(DC_PEN));
 					SelectObject(draw.nmcd.hdc, GetStockObject(DC_BRUSH));
-					const COLORREF color = (state & CDIS_DISABLED) ? Border : Text;
+					const COLORREF color = (state & CDIS_DISABLED) ? Border : Muted;
 					SetDCPenColor(draw.nmcd.hdc, color);
 					SetDCBrushColor(draw.nmcd.hdc, color);
 					Polygon(draw.nmcd.hdc, points, 3);

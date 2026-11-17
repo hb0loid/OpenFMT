@@ -783,7 +783,8 @@ void COrderList::OnPaint()
 	CPaintDC dc(this);
 	HGDIOBJ oldFont = dc.SelectObject(m_hFont);
 	HGDIOBJ oldPen = dc.SelectStockObject(DC_PEN);
-	const auto separatorColor = DarkUI::Color(COLOR_WINDOW) ^ 0x808080;
+	// Инверсия фона даёт серый на светлом, но почти белый на тёмном.
+	const auto separatorColor = DarkUI::Enabled() ? DarkUI::Color(COLOR_BTNSHADOW) : (DarkUI::Color(COLOR_WINDOW) ^ 0x808080);
 	const auto colorText = DarkUI::Color(COLOR_WINDOWTEXT), colorInvalid = DarkUI::Color(COLOR_GRAYTEXT), colorTextSel = DarkUI::Color(COLOR_HIGHLIGHTTEXT);
 	const auto windowColor = DarkUI::Color(COLOR_WINDOW), highlightColor = DarkUI::Color(COLOR_HIGHLIGHT), faceColor = DarkUI::Color(COLOR_BTNFACE);
 
@@ -851,7 +852,14 @@ void COrderList::OnPaint()
 				dc.SetBkColor(RGB(0, 0, 0));
 				dc.SetTextColor(RGB(255, 255, 255));
 				rect.InflateRect(-1, -1);
-				dc.DrawFocusRect(&rect);
+				if(DarkUI::Enabled())
+				{
+					CBrush focus(DarkUI::Color(COLOR_GRAYTEXT));
+					dc.FrameRect(&rect, &focus);
+				} else
+				{
+					dc.DrawFocusRect(&rect);
+				}
 				rect.InflateRect(1, 1);
 			}
 

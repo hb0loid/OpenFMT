@@ -1317,7 +1317,14 @@ void CViewSample::OnDraw(CDC *pDC)
 						rect.top = timelineHeight / 2;
 					else
 						rect.top = timelineHeight - timelineHeight / 4;
-					m_offScreenDC.DrawEdge(rect, EDGE_ETCHED, BF_LEFT);
+					if(DarkUI::Enabled())
+					{
+						// Вдавленный край Windows рисует белым — на тёмном слишком ярко.
+						m_offScreenDC.FillSolidRect(rect.left, rect.top, 1, rect.Height(), DarkUI::Color(i == 0 ? COLOR_GRAYTEXT : COLOR_BTNSHADOW));
+					} else
+					{
+						m_offScreenDC.DrawEdge(rect, EDGE_ETCHED, BF_LEFT);
+					}
 				}
 				rc.bottom = timelineHeight / 2;
 				rc.left += textOffset;
