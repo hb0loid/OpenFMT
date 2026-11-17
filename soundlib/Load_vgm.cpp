@@ -263,6 +263,8 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// нужна ли новая нота, смена громкости или снятие.
 	std::array<ModCommand::NOTE, PSGChannels> psgSounding{};
 	std::array<uint8, PSGChannels> psgLastVolume{};
+	std::array<int, PSGChannels> psgFine;
+	psgFine.fill(0x80);
 	uint8 psgLatch = 0, psgLatchType = 0;
 	uint8 noiseMode = 0;
 	// Поток ЦАП: блок сэмплов из файла, указатель чтения и текущий удар.
@@ -607,11 +609,40 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 					events.push_back({sample, channel, NOTE_KEYOFF, 255, -1});
 					psgSounding[lane] = NOTE_NONE;
 				}
+			} else if(lane < 3 && note != NOTE_NONE)
+			{
+				// Тон ведётся как FM: в пределах полутона от ноты строки —
+				// подстройка E5xx, чуть дальше — легато (слайд, вибрато), а
+				// скачок больше трёх полутонов — новая нота. Ключа у PSG нет,
+				// так что новая нота ничего не обрывает, а портаменто до далёкой
+				// ноты ехало бы несколько тиков и было бы слышно.
+				const double exact = ExactNote(hertz, PSGOctave);
+				VgmEvent event{sample, channel, NOTE_NONE, 255, -1};
+				const double away = (psgSounding[lane] == NOTE_NONE) ? 99.0 : std::abs(exact - psgSounding[lane]);
+				if(away > 3.0)
+				{
+					event.note = note;
+					event.volume = volume;
+					psgSounding[lane] = note;
+				} else if(away > 127.0 / 128.0)
+				{
+					event.note = note;
+					event.legato = true;
+					psgSounding[lane] = note;
+				}
+				const int fine = FineFromOffset(exact - psgSounding[lane]);
+				if(fine != psgFine[lane])
+				{
+					event.fine = fine;
+					psgFine[lane] = fine;
+				}
+				if(event.volume == 255 && volume != psgLastVolume[lane])
+					event.volume = volume;
+				if(event.note != NOTE_NONE || event.fine >= 0 || event.volume != 255)
+					events.push_back(event);
 			} else if(note != NOTE_NONE && note != psgSounding[lane])
 			{
-				// Новая нота — только когда сменился полутон: мелкие правки
-				// периода внутри ноты это вибрато, и каждую из них в строку
-				// выносить незачем.
+				// Шум: новая нота — только когда сменился полутон.
 				events.push_back({sample, channel, note, volume, -1});
 				psgSounding[lane] = note;
 			} else if(volume != psgLastVolume[lane])
