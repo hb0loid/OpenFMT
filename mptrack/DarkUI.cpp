@@ -103,7 +103,17 @@ void DrawTabs(HWND window, HDC dc)
 	for(HWND sibling = GetWindow(parent, GW_CHILD); sibling; sibling = GetWindow(sibling, GW_HWNDNEXT))
 		if(sibling != window && (GetWindowLongPtrW(sibling, GWL_STYLE) & WS_VISIBLE))
 			ExcludeWindow(dc, window, sibling);
-	Fill(dc, client, COLOR_BTNFACE);
+	{
+		RECT strip = client;
+		strip.bottom = client.top;
+		for(int i = 0, count = TabCtrl_GetItemCount(window); i < count; i++)
+		{
+			RECT item{};
+			if(TabCtrl_GetItemRect(window, i, &item))
+				strip.bottom = std::max(strip.bottom, item.bottom + 2);
+		}
+		Fill(dc, strip, COLOR_BTNFACE);
+	}
 	const int selected = TabCtrl_GetCurSel(window);
 	const HFONT font = reinterpret_cast<HFONT>(SendMessageW(window, WM_GETFONT, 0, 0));
 	const int saved = SaveDC(dc);
@@ -267,7 +277,7 @@ void PaintFrame(HWND window)
 	const HDC dc = GetWindowDC(window);
 	if(!dc)
 		return;
-	if(!(style & WS_CHILD))
+	if(!(style & WS_CHILD) && (style & WS_CAPTION) == WS_CAPTION)
 	{
 		if(GetMenu(window))
 		{
@@ -367,7 +377,7 @@ LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, U
 			for(HWND child = (WindowFromDC(dc) == window) ? GetWindow(window, GW_CHILD) : nullptr; child; child = GetWindow(child, GW_HWNDNEXT))
 			{
 				const LONG_PTR style = GetWindowLongPtrW(child, GWL_STYLE);
-				if((style & WS_VISIBLE) && !(ClassIs(child, L"Button") && (style & BS_TYPEMASK) == BS_GROUPBOX))
+				if((style & WS_VISIBLE) && !(ClassIs(child, L"Button") && (style & BS_TYPEMASK) == BS_GROUPBOX) && !ClassIs(child, L"SysTabControl32"))
 					ExcludeWindow(dc, window, child);
 			}
 			Fill(dc, rect, kind == 1 ? COLOR_APPWORKSPACE : COLOR_BTNFACE);
