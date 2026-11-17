@@ -61,12 +61,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "OpenFMT"
             VALUE "FileDescription",  VER_FILEDESCRIPTION
-            VALUE "FileVersion",      "0.1"
+            VALUE "FileVersion",      "0.1.0"
             VALUE "InternalName",     "OpenFMT"
             VALUE "LegalCopyright",   "OpenFMT contributors. Based on OpenMPT: Copyright © 2004-2026 OpenMPT Project Developers and Contributors, Copyright © 1997-2003 Olivier Lapicque"
             VALUE "OriginalFilename", "OpenFMT.exe"
             VALUE "ProductName",      "OpenFMT"
-            VALUE "ProductVersion",   "0.1"
+            VALUE "ProductVersion",   "0.1.0"
         END
     END
     BLOCK "VarFileInfo"
