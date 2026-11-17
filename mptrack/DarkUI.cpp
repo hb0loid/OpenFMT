@@ -381,12 +381,27 @@ LRESULT DrawTrackbar(HWND trackbar, NMCUSTOMDRAW &draw)
 			std::swap(channel.right, channel.bottom);
 		}
 		const int half = vertical ? (thumb.bottom - thumb.top) / 2 : (thumb.right - thumb.left) / 2;
-		std::vector<int> positions;
-		positions.push_back(vertical ? channel.top + half : channel.left + half);
+		// Деления считаем сами из значений: TBM_GETTICPOS у автоделений
+		// отдаёт не те координаты, и они сбивались в кучку у края.
+		const int start = vertical ? channel.top + half : channel.left + half;
+		const int end = vertical ? channel.bottom - half : channel.right - half;
+		const auto minimum = static_cast<int>(SendMessageW(trackbar, TBM_GETRANGEMIN, 0, 0));
+		const auto maximum = static_cast<int>(SendMessageW(trackbar, TBM_GETRANGEMAX, 0, 0));
+		std::vector<int> positions{start, end};
 		const auto count = static_cast<int>(SendMessageW(trackbar, TBM_GETNUMTICS, 0, 0));
-		for(int i = 0; i + 2 < count; i++)
-			positions.push_back(static_cast<int>(SendMessageW(trackbar, TBM_GETTICPOS, i, 0)));
-		positions.push_back(vertical ? channel.bottom - half : channel.right - half);
+		if(maximum > minimum)
+		{
+			for(int i = 0; i + 2 < count; i++)
+			{
+				const auto value = static_cast<int>(SendMessageW(trackbar, TBM_GETTIC, i, 0));
+				if(value < minimum || value > maximum)
+					continue;
+				int pos = start + MulDiv(value - minimum, end - start, maximum - minimum);
+				if(style & TBS_REVERSED)
+					pos = start + end - pos;
+				positions.push_back(pos);
+			}
+		}
 		const bool before = (style & (TBS_BOTH | TBS_TOP)) != 0;
 		const bool after = (style & TBS_BOTH) || !(style & TBS_TOP);
 		for(const int pos : positions)
