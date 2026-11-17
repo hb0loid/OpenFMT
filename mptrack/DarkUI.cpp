@@ -24,7 +24,7 @@ constexpr COLORREF Surface = RGB(32, 34, 38);
 constexpr COLORREF Canvas = RGB(21, 23, 26);
 constexpr COLORREF Raised = RGB(47, 50, 56);
 constexpr COLORREF Border = RGB(68, 72, 79);
-constexpr COLORREF Text = RGB(229, 232, 237);
+constexpr COLORREF Text = RGB(200, 204, 210);
 constexpr COLORREF Muted = RGB(118, 124, 134);
 constexpr COLORREF Selection = RGB(46, 76, 105);
 // Ползунки и кнопки: у темы Windows для них нет тёмного варианта — белая
