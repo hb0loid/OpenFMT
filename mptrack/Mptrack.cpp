@@ -1019,14 +1019,19 @@ void CTrackApp::SetupPaths(bool overridePortable)
 			|| (SHGetFolderPath(NULL, CSIDL_MYDOCUMENTS, NULL, SHGFP_TYPE_CURRENT, dir) == S_OK))
 		{
 			// Store our app settings in %APPDATA% or "My Documents"
-			configPathUser = mpt::PathString::FromNative(dir) + P_("\\OpenMPT\\");
+			// Своя папка настроек: в %APPDATA%\OpenMPT живёт официальный
+			// OpenMPT, и с ним бы перезаписывались настройки друг друга.
+			configPathUser = mpt::PathString::FromNative(dir) + P_("\\OpenFMT\\");
 		}
 	}
 
 	// Check if the user has configured portable mode.
 	bool configInstallPortable = false;
-	mpt::PathString portableFlagFilename = (configPathPortable + P_("OpenMPT.portable"));
-	bool configPortableFlag = mpt::native_fs{}.is_file(portableFlagFilename);
+	// Портативный режим включает OpenFMT.portable, а для уже существующих
+	// папок по-прежнему и OpenMPT.portable.
+	mpt::PathString portableFlagFilename = (configPathPortable + P_("OpenFMT.portable"));
+	bool configPortableFlag = mpt::native_fs{}.is_file(portableFlagFilename)
+		|| mpt::native_fs{}.is_file(configPathPortable + P_("OpenMPT.portable"));
 	configInstallPortable = configInstallPortable || configPortableFlag;
 	// before 1.29.00.13:
 	configInstallPortable = configInstallPortable || (GetPrivateProfileInt(_T("Paths"), _T("UseAppDataDirectory"), 1, (configPathPortable + P_("mptrack.ini")).AsNative().c_str()) == 0);

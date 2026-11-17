@@ -3013,6 +3013,8 @@ void CMainFrame::OnInternetUpdate()
 {
 #if defined(MPT_ENABLE_UPDATE)
 	CUpdateCheck::DoManualUpdateCheck();
+#else
+	Reporting::Information(U_("OpenFMT does not update itself. New versions are published on the project page."), U_("OpenFMT"));
 #endif // MPT_ENABLE_UPDATE
 }
 

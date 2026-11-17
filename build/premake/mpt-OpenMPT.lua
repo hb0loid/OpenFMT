@@ -52,7 +52,7 @@ if stringmode and stringmode == "UTF8" then
 elseif charset and charset == "MBCS" then
    targetname "OpenMPT-ANSI"
 else
-   targetname "OpenMPT"
+   targetname "OpenFMT"
 end
   filter {}
 	
