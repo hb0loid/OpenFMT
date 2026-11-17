@@ -189,11 +189,12 @@ void CViewChips::LayoutStrips()
 		strip.value.SetWindowPos(nullptr, left, top, stripWidth, valueHeight, SWP_NOZORDER | SWP_NOACTIVATE);
 	}
 
-	// Осциллографы занимают всё, что осталось справа от полосок.
+	// Осциллографы — под полосками, на всю ширину: громкости чипов наверху,
+	// картинка ниже.
 	CRect client;
 	GetClientRect(&client);
-	const int stripsRight = margin + NumStrips * stripWidth + margin;
-	CRect scopes(stripsRight, margin, client.right - margin, client.bottom - margin);
+	const int stripsBottom = margin + lineHeight + sliderHeight + valueHeight + margin;
+	CRect scopes(margin, stripsBottom, client.right - margin, client.bottom - margin);
 	m_scopes.Place(scopes, TrackerSettings::Instance().chipsShowScopes
 		&& scopes.Width() > HighDPISupport::ScalePixels(120, m_hWnd));
 }

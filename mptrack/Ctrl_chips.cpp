@@ -26,7 +26,14 @@ CCtrlChips::CCtrlChips(CModControlView &parent, CModDoc &document)
 }
 
 
-Setting<LONG> &CCtrlChips::GetSplitPosRef() { return TrackerSettings::Instance().glChipsWindowHeight; }
+// Верхняя панель этой вкладки пустая: держим её минимальной, чтобы громкости
+// и осциллографы начинались сразу под ярлыками.
+Setting<LONG> &CCtrlChips::GetSplitPosRef()
+{
+	auto &height = TrackerSettings::Instance().glChipsWindowHeight;
+	height = 8;
+	return height;
+}
 
 
 CRuntimeClass *CCtrlChips::GetAssociatedViewClass() { return RUNTIME_CLASS(CViewChips); }
