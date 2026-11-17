@@ -2378,6 +2378,10 @@ bool CSoundFile::ReadITSSample(SAMPLEINDEX nSample, FileReader &file, bool rewin
 				sample.opn2 = patch;
 				sample.isOPN2 = true;
 				sample.isOPM = chipFormat == FmtOPMSample;
+				// За патчем может идти LFO с меткой: старые файлы его не имеют.
+				FMLfo lfo;
+				if(file.ReadMagic("LFO1") && file.ReadArray(lfo))
+					sample.fmLfo = lfo;
 			}
 		} else
 		{
@@ -2553,7 +2557,12 @@ bool CSoundFile::SaveITSSample(SAMPLEINDEX smp, std::ostream &f) const
 	if(isPSG)
 		WritePSGPatch(f, *sample.psg);
 	else if(isOPN2)
+	{
 		mpt::IO::WriteRaw(f, sample.opn2.data(), sample.opn2.size());
+		// LFO — сразу за патчем, с меткой: старые сборки его просто не дочитают.
+		mpt::IO::WriteRaw(f, "LFO1", 4);
+		mpt::IO::WriteRaw(f, sample.fmLfo.data(), sample.fmLfo.size());
+	}
 	else if(sample.uFlags[CHN_ADLIB])
 		mpt::IO::WriteRaw(f, sample.adlib.data(), sample.adlib.size());
 	else
@@ -2634,7 +2643,9 @@ bool CSoundFile::SaveITIInstrument(INSTRUMENTINDEX nInstr, std::ostream &f, cons
 		} else if(isOPN2)
 		{
 			mpt::IO::WriteRaw(f, chipSample.opn2.data(), chipSample.opn2.size());
-			filePos += mpt::saturate_cast<uint32>(chipSample.opn2.size());
+			mpt::IO::WriteRaw(f, "LFO1", 4);
+			mpt::IO::WriteRaw(f, chipSample.fmLfo.data(), chipSample.fmLfo.size());
+			filePos += mpt::saturate_cast<uint32>(chipSample.opn2.size() + 4 + chipSample.fmLfo.size());
 		} else if(!isExternal)
 		{
 			filePos += mpt::saturate_cast<uint32>(itss.GetSampleFormat(0x0214).WriteSample(f, Samples[smp]));
