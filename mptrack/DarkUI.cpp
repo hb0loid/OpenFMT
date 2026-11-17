@@ -790,6 +790,225 @@ void DrawComboFrame(HWND combo)
 	ReleaseDC(combo, dc);
 }
 
+// --- Окна треков внутри главного окна (MDI). У Windows для них нет тёмного
+// вида: заголовок и рамка светлые, кнопки старого образца. Когда окно
+// развёрнуто, его значок и кнопки живут в строке меню.
+
+enum class CaptionGlyph { Minimize, Maximize, Restore, Close };
+
+void DrawCaptionGlyph(HDC dc, const RECT &rect, CaptionGlyph glyph, COLORREF color)
+{
+	const int size = std::max(6, static_cast<int>(std::min(rect.right - rect.left, rect.bottom - rect.top)) * 2 / 5) & ~1;
+	const int cx = (rect.left + rect.right) / 2, cy = (rect.top + rect.bottom) / 2;
+	const int left = cx - size / 2, top = cy - size / 2, right = left + size, bottom = top + size;
+	const int saved = SaveDC(dc);
+	SelectObject(dc, GetStockObject(DC_PEN));
+	SelectObject(dc, GetStockObject(NULL_BRUSH));
+	SetDCPenColor(dc, color);
+	switch(glyph)
+	{
+	case CaptionGlyph::Minimize:
+		MoveToEx(dc, left, cy, nullptr);
+		LineTo(dc, right + 1, cy);
+		break;
+	case CaptionGlyph::Maximize:
+		Rectangle(dc, left, top, right + 1, bottom + 1);
+		break;
+	case CaptionGlyph::Restore:
+	{
+		const int shift = std::max(2, size / 4);
+		Rectangle(dc, left, top + shift, right + 1 - shift, bottom + 1);
+		MoveToEx(dc, left + shift, top + shift, nullptr);
+		LineTo(dc, left + shift, top);
+		LineTo(dc, right, top);
+		LineTo(dc, right, bottom - shift);
+		LineTo(dc, right - shift, bottom - shift);
+		break;
+	}
+	case CaptionGlyph::Close:
+		MoveToEx(dc, left, top, nullptr);
+		LineTo(dc, right + 1, bottom + 1);
+		MoveToEx(dc, right, top, nullptr);
+		LineTo(dc, left - 1, bottom + 1);
+		break;
+	}
+	RestoreDC(dc, saved);
+}
+
+HWND ActiveMdiChild(HWND frame)
+{
+	for(HWND child = GetWindow(frame, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT))
+		if(ClassIs(child, L"MDIClient"))
+			return reinterpret_cast<HWND>(SendMessageW(child, WM_MDIGETACTIVE, 0, 0));
+	return nullptr;
+}
+
+HICON SmallIcon(HWND window)
+{
+	auto icon = reinterpret_cast<HICON>(SendMessageW(window, WM_GETICON, ICON_SMALL2, 0));
+	if(!icon)
+		icon = reinterpret_cast<HICON>(GetClassLongPtrW(window, GCLP_HICONSM));
+	if(!icon)
+		icon = reinterpret_cast<HICON>(GetClassLongPtrW(window, GCLP_HICON));
+	return icon;
+}
+
+// Пункт строки меню с картинкой Windows: значок или кнопка окна трека.
+HBITMAP MenuItemBitmap(HMENU menu, int position)
+{
+	MENUITEMINFOW info{sizeof(info)};
+	info.fMask = MIIM_BITMAP;
+	if(GetMenuItemInfoW(menu, position, TRUE, &info) && info.hbmpItem)
+		return info.hbmpItem;
+	info = MENUITEMINFOW{sizeof(info)};
+	info.fMask = MIIM_TYPE;
+	if(GetMenuItemInfoW(menu, position, TRUE, &info) && (info.fType & MFT_BITMAP))
+		return reinterpret_cast<HBITMAP>(info.dwTypeData);
+	return nullptr;
+}
+
+bool DrawMdiMenuItem(HWND frame, HDC dc, RECT rect, HBITMAP bitmap, bool hot, bool pressed)
+{
+	CaptionGlyph glyph;
+	if(bitmap == HBMMENU_MBAR_MINIMIZE || bitmap == HBMMENU_MBAR_MINIMIZE_D)
+		glyph = CaptionGlyph::Minimize;
+	else if(bitmap == HBMMENU_MBAR_RESTORE)
+		glyph = CaptionGlyph::Restore;
+	else if(bitmap == HBMMENU_MBAR_CLOSE || bitmap == HBMMENU_MBAR_CLOSE_D)
+		glyph = CaptionGlyph::Close;
+	else if(bitmap == HBMMENU_SYSTEM)
+	{
+		Fill(dc, rect, hot || pressed ? COLOR_HIGHLIGHT : COLOR_MENU);
+		if(const HWND child = ActiveMdiChild(frame))
+		{
+			if(const HICON icon = SmallIcon(child))
+			{
+				const int size = std::min<int>(rect.right - rect.left, rect.bottom - rect.top) - 2;
+				DrawIconEx(dc, (rect.left + rect.right - size) / 2, (rect.top + rect.bottom - size) / 2, icon, size, size, 0, nullptr, DI_NORMAL);
+			}
+		}
+		return true;
+	} else
+	{
+		return false;
+	}
+	const bool disabled = bitmap == HBMMENU_MBAR_MINIMIZE_D || bitmap == HBMMENU_MBAR_CLOSE_D;
+	FillColor(dc, rect, pressed ? Selection : (hot && !disabled) ? (glyph == CaptionGlyph::Close ? RGB(150, 52, 52) : ButtonHot) : Surface);
+	DrawCaptionGlyph(dc, rect, glyph, disabled ? Border : (hot ? Text : Muted));
+	return true;
+}
+
+// Перерисовать картинки-пункты строки меню поверх того, что нарисовала Windows.
+void PaintMdiMenuItems(HWND frame)
+{
+	const HMENU menu = GetMenu(frame);
+	if(!menu)
+		return;
+	RECT windowRect{};
+	GetWindowRect(frame, &windowRect);
+	const HDC dc = GetWindowDC(frame);
+	if(!dc)
+		return;
+	POINT mouse{};
+	GetCursorPos(&mouse);
+	for(int i = 0, count = GetMenuItemCount(menu); i < count; i++)
+	{
+		const HBITMAP bitmap = MenuItemBitmap(menu, i);
+		if(!bitmap)
+			continue;
+		RECT rect{};
+		if(!GetMenuItemRect(frame, menu, i, &rect))
+			continue;
+		const bool hot = PtInRect(&rect, mouse) != FALSE;
+		OffsetRect(&rect, -windowRect.left, -windowRect.top);
+		DrawMdiMenuItem(frame, dc, rect, bitmap, hot, false);
+	}
+	ReleaseDC(frame, dc);
+}
+
+// Заголовок и рамка неразвёрнутого окна трека.
+void PaintMdiChildCaption(HWND window)
+{
+	if(IsZoomed(window))
+		return;
+	TITLEBARINFOEX bar{sizeof(bar)};
+	if(!SendMessageW(window, WM_GETTITLEBARINFOEX, 0, reinterpret_cast<LPARAM>(&bar)))
+		return;
+	RECT windowRect{}, client{};
+	GetWindowRect(window, &windowRect);
+	GetClientRect(window, &client);
+	MapWindowPoints(window, HWND_DESKTOP, reinterpret_cast<POINT *>(&client), 2);
+	const POINT origin{windowRect.left, windowRect.top};
+	OffsetRect(&client, -origin.x, -origin.y);
+	OffsetRect(&bar.rcTitleBar, -origin.x, -origin.y);
+	OffsetRect(&windowRect, -origin.x, -origin.y);
+	const HDC dc = GetWindowDC(window);
+	if(!dc)
+		return;
+	const bool active = ActiveMdiChild(GetAncestor(window, GA_ROOT)) == window;
+	const int saved = SaveDC(dc);
+	ExcludeClipRect(dc, client.left, client.top, client.right, client.bottom);
+	FillColor(dc, windowRect, active ? Raised : Surface);
+	FrameColor(dc, windowRect, Border);
+
+	// Значок и имя
+	RECT title = bar.rcTitleBar;
+	title.top = std::max(title.top, windowRect.top + 1);
+	int x = title.left + 2;
+	if(const HICON icon = SmallIcon(window))
+	{
+		const int size = GetSystemMetrics(SM_CXSMICON);
+		DrawIconEx(dc, x, (title.top + title.bottom - size) / 2, icon, size, size, 0, nullptr, DI_NORMAL);
+		x += size + 6;
+	}
+	NONCLIENTMETRICSW metrics{sizeof(metrics)};
+	HFONT font = nullptr;
+	if(SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0))
+		font = CreateFontIndirectW(&metrics.lfCaptionFont);
+	if(font)
+		SelectObject(dc, font);
+	wchar_t text[256]{};
+	GetWindowTextW(window, text, static_cast<int>(std::size(text)));
+	RECT textRect = title;
+	textRect.left = x;
+	// Кнопки: 2 — свернуть, 3 — развернуть, 5 — закрыть.
+	for(const int index : {2, 3, 5})
+	{
+		if(!(bar.rgstate[index] & STATE_SYSTEM_INVISIBLE) && bar.rgrect[index].right > bar.rgrect[index].left)
+			textRect.right = std::min<LONG>(textRect.right, bar.rgrect[index].left - origin.x - 4);
+	}
+	SetBkMode(dc, TRANSPARENT);
+	SetTextColor(dc, active ? Text : Muted);
+	DrawTextW(dc, text, -1, &textRect, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+	POINT mouse{};
+	GetCursorPos(&mouse);
+	for(const int index : {2, 3, 5})
+	{
+		RECT button = bar.rgrect[index];
+		if((bar.rgstate[index] & STATE_SYSTEM_INVISIBLE) || button.right <= button.left)
+			continue;
+		const bool hot = PtInRect(&button, mouse) != FALSE;
+		const bool pressed = (bar.rgstate[index] & STATE_SYSTEM_PRESSED) != 0;
+		OffsetRect(&button, -origin.x, -origin.y);
+		const CaptionGlyph glyph = index == 2 ? (IsIconic(window) ? CaptionGlyph::Restore : CaptionGlyph::Minimize)
+			: index == 3 ? CaptionGlyph::Maximize
+			: CaptionGlyph::Close;
+		const bool disabled = (bar.rgstate[index] & STATE_SYSTEM_UNAVAILABLE) != 0;
+		FillColor(dc, button, pressed ? Selection : (hot && !disabled) ? (index == 5 ? RGB(150, 52, 52) : ButtonHot) : (active ? Raised : Surface));
+		DrawCaptionGlyph(dc, button, glyph, disabled ? Border : (hot || active) ? Text : Muted);
+	}
+	RestoreDC(dc, saved);
+	if(font)
+		DeleteObject(font);
+	ReleaseDC(window, dc);
+}
+
+bool IsMdiChild(HWND window)
+{
+	return (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_MDICHILD) != 0;
+}
+
 LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR id, DWORD_PTR kind)
 {
 	switch(msg)
@@ -810,6 +1029,14 @@ LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, U
 	case DrawMenuBarItem:
 	{
 		const auto &data = *reinterpret_cast<const MenuItemDrawData *>(lParam);
+		if(data.menu.menu == GetMenu(window))
+		{
+			if(const HBITMAP bitmap = MenuItemBitmap(data.menu.menu, data.position))
+			{
+				if(DrawMdiMenuItem(window, data.item.hDC, data.item.rcItem, bitmap, (data.item.itemState & ODS_HOTLIGHT) != 0, (data.item.itemState & ODS_SELECTED) != 0))
+					return 0;
+			}
+		}
 		wchar_t label[256]{};
 		if(data.menu.menu != GetMenu(window) || !GetMenuStringW(data.menu.menu, data.position, label, static_cast<int>(std::size(label)), MF_BYPOSITION))
 			break;
@@ -1028,9 +1255,32 @@ LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, U
 	{
 		const LRESULT result = DefSubclassProc(window, msg, wParam, lParam);
 		PaintFrame(window);
+		if(!(GetWindowLongPtrW(window, GWL_STYLE) & WS_CHILD) && GetMenu(window))
+			PaintMdiMenuItems(window);
+		if(IsMdiChild(window))
+			PaintMdiChildCaption(window);
 		return result;
 	}
+	case WM_SETTEXT:
+	case WM_NCMOUSEMOVE:
+	case WM_NCMOUSELEAVE:
+	case WM_NCLBUTTONUP:
+	case WM_MOUSEMOVE:
+		if(IsMdiChild(window) && !IsZoomed(window))
+		{
+			// Наведение на кнопки Windows перерисовывает своим видом — перекрываем.
+			const LRESULT result = DefSubclassProc(window, msg, wParam, lParam);
+			if(msg != WM_MOUSEMOVE || GetPropW(window, L"OpenFMT.NcHot"))
+				PaintMdiChildCaption(window);
+			if(msg == WM_NCMOUSEMOVE)
+				SetPropW(window, L"OpenFMT.NcHot", reinterpret_cast<HANDLE>(1));
+			else if(msg == WM_MOUSEMOVE || msg == WM_NCMOUSELEAVE)
+				RemovePropW(window, L"OpenFMT.NcHot");
+			return result;
+		}
+		break;
 	case WM_NCDESTROY:
+		RemovePropW(window, L"OpenFMT.NcHot");
 		RemovePropW(window, L"OpenMPT.DarkUI");
 		RemoveWindowSubclass(window, DarkProc, id);
 		break;
