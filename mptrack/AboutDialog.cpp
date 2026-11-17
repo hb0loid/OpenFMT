@@ -262,7 +262,7 @@ BOOL CAboutDlg::OnInitDialog()
 
 	m_bmp.SubclassDlgItem(IDC_BITMAP1, this);
 
-	m_Tab.InsertItem(TCIF_TEXT, 0, _T("OpenMPT"), 0, 0, 0, 0);
+	m_Tab.InsertItem(TCIF_TEXT, 0, _T("OpenFMT"), 0, 0, 0, 0);
 	m_Tab.InsertItem(TCIF_TEXT, 1, _T("Components"), 0, 0, 0, 0);
 	m_Tab.InsertItem(TCIF_TEXT, 2, _T("Credits"), 0, 0, 0, 0);
 	m_Tab.InsertItem(TCIF_TEXT, 3, _T("License"), 0, 0, 0, 0);
@@ -353,7 +353,8 @@ mpt::ustring CAboutDlg::GetTabText(int tab)
 	switch(tab)
 	{
 		case 0:
-			text = UL_("OpenMPT - Open ModPlug Tracker\n\n")
+			text = mpt::ustring(UL_("OpenFMT - OpenMPT fork with native chip support (YM2612, YM2151, SN76489, Furnace and VGM import)\n"))
+				+ UL_("Based on OpenMPT - Open ModPlug Tracker. Not affiliated with the OpenMPT or Furnace developers.\n\n")
 				+ MPT_UFORMAT("Version: {}\n")(Build::GetVersionStringExtended())
 				+ MPT_UFORMAT("Source Code: {}\n")(SourceInfo::Current().GetUrlWithRevision() + UL_(" ") + SourceInfo::Current().GetStateString())
 				+ MPT_UFORMAT("Build Date: {}\n")(Build::GetBuildDateString())

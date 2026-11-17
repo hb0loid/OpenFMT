@@ -219,8 +219,10 @@ CMainFrame::CMainFrame()
 void CMainFrame::Initialize()
 {
 	//Adding version number to the frame title
+	// «OpenFMT 0.1 (OpenMPT 1.33…)»: форк со своей версией, но видно, на
+	// какой версии OpenMPT он основан.
 	CString title = GetTitle();
-	title += _T(" ") + mpt::cfmt::val(Version::Current());
+	title += _T(" ") OPENFMT_VERSION _T(" (OpenMPT ") + mpt::cfmt::val(Version::Current()) + _T(")");
 	title += mpt::ToCString(mpt::Charset::ASCII, OPENMPT_BUILD_VARIANT_MONIKER);
 	if(Build::IsDebugBuild())
 	{
@@ -2098,7 +2100,7 @@ void CMainFrame::OnViewOptions()
 	if (m_bOptionsLocked)
 		return;
 
-	CPropertySheetMPT dlg(_T("OpenMPT Setup"), this, m_nLastOptionsPage);
+	CPropertySheetMPT dlg(_T("OpenFMT Setup"), this, m_nLastOptionsPage);
 	struct Pages
 	{
 		COptionsGeneral general;

@@ -3023,7 +3023,7 @@ END
 
 STRINGTABLE
 BEGIN
-    IDR_MAINFRAME           "OpenMPT"
+    IDR_MAINFRAME           "OpenFMT"
     IDR_MODULETYPE          "\nModule\nuntitled\nMusic Modules (*.mod;*.s3m;*.it;*.xm)\n.mod\nModplugTracker.Document\nMusic Module"
     ID_PATTERN_CHANNELMANAGER 
                             "Display Channel Manager window\nChannel Manager"
@@ -3040,7 +3040,7 @@ END
 
 STRINGTABLE
 BEGIN
-    AFX_IDS_APP_TITLE       "OpenMPT"
+    AFX_IDS_APP_TITLE       "OpenFMT"
     AFX_IDS_IDLEMESSAGE     "Ready"
 END
 
