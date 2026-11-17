@@ -13,6 +13,7 @@
 #include "UpdateHints.h"
 #include "WindowMessages.h"
 #include "../soundlib/Sndfile.h"
+#include <random>
 
 OPENMPT_NAMESPACE_BEGIN
 
@@ -23,6 +24,7 @@ BEGIN_MESSAGE_MAP(PSGInstrDlg, DialogBase)
 	ON_COMMAND(IDC_PSG_EASYPITCH, &PSGInstrDlg::ParamsChanged)
 	ON_COMMAND(IDC_PSG_FURNACEPITCH, &PSGInstrDlg::ParamsChanged)
 	ON_COMMAND(IDC_PSG_PITCHREL, &PSGInstrDlg::ParamsChanged)
+	ON_COMMAND(2598, &PSGInstrDlg::Randomize)
 	ON_CBN_SELCHANGE(IDC_PSG_LANE, &PSGInstrDlg::ParamsChanged)
 	ON_CONTROL_RANGE(EN_CHANGE, IDC_PSG_SPEED1, IDC_PSG_SPEED1 + PSGPatch::Count - 1, &PSGInstrDlg::OnFieldChanged)
 	ON_CONTROL_RANGE(EN_CHANGE, IDC_PSG_DELAY1, IDC_PSG_DELAY1 + PSGPatch::Count - 1, &PSGInstrDlg::OnFieldChanged)
@@ -300,6 +302,89 @@ void PSGInstrDlg::ParamsChanged()
 		m_parent.SendMessage(WM_MOD_VIEWMSG, VIEWMSG_SETMODIFIED, SampleHint().Data().AsLPARAM());
 		m_applying = false;
 	}
+}
+
+
+void PSGInstrDlg::Randomize()
+{
+	if(m_patch == nullptr || !*m_patch)
+		return;
+	static std::mt19937 rng{std::random_device{}()};
+	const auto rnd = [](int lo, int hi) { return std::uniform_int_distribution<int>(lo, hi)(rng); };
+	const bool noise = m_lane.GetCurSel() == 3;
+
+	PSGPatch patch = m_working;
+	for(auto &seq : patch.macros)
+	{
+		seq.values.clear();
+		seq.loop = seq.release = 255;
+		seq.speed = 1;
+		seq.delay = 0;
+		seq.relative = false;
+	}
+
+	// Громкость: короткая атака (не всегда), пик, спад к удержанию. У шума —
+	// удар без удержания, как у ударных.
+	auto &vol = patch.macros[PSGPatch::Volume];
+	const int peak = rnd(12, 15);
+	const int attack = rnd(0, 3) == 0 ? rnd(1, 3) : 0;
+	for(int i = 1; i <= attack; i++)
+		vol.values.push_back(peak * i / (attack + 1));
+	const int sustain = noise ? 0 : (rnd(0, 2) == 0 ? 0 : rnd(5, 11));
+	const int decay = noise ? rnd(3, 10) : rnd(4, 24);
+	for(int i = 0; i <= decay; i++)
+		vol.values.push_back(peak + (sustain - peak) * i / decay);
+	if(sustain > 0)
+		vol.loop = static_cast<uint8>(vol.values.size() - 1);
+	vol.speed = static_cast<uint8>(rnd(1, 2));
+
+	// Арпеджио: у тона иногда аккорд по кругу, иногда «щелчок» октавой в начале.
+	auto &arp = patch.macros[PSGPatch::Arpeggio];
+	static constexpr std::array<std::array<int, 3>, 4> chords = {{{0, 4, 7}, {0, 3, 7}, {0, 7, 12}, {0, 5, 7}}};
+	const int arpChoice = rnd(0, 5);
+	if(!noise && arpChoice <= 1)
+	{
+		const auto &chord = chords[rnd(0, 3)];
+		arp.values.assign(chord.begin(), chord.end());
+		arp.loop = 0;
+	} else if(arpChoice == 2)
+	{
+		arp.values = {12, 0};
+	}
+
+	// Режим шума: у шумового канала — случайный, изредка смена после удара.
+	if(noise)
+	{
+		auto &mode = patch.macros[PSGPatch::Duty];
+		mode.values.push_back(rnd(0, 3));
+		if(rnd(0, 2) == 0)
+			mode.values.push_back(rnd(0, 3));
+	}
+
+	// Высота: иногда вибрато, иногда спад вниз (относительный макрос).
+	auto &pitch = patch.macros[PSGPatch::Pitch];
+	const int pitchChoice = rnd(0, 5);
+	if(pitchChoice == 0)
+	{
+		const int depth = rnd(1, 3);
+		pitch.values = {0, depth, depth * 2, depth, 0, -depth, -depth * 2, -depth};
+		pitch.loop = 0;
+		pitch.delay = static_cast<uint8>(rnd(4, 12));
+		pitch.relative = true;
+	} else if(pitchChoice == 1)
+	{
+		const int step = rnd(1, 4);
+		const int steps = rnd(4, 10);
+		for(int i = 0; i < steps; i++)
+			pitch.values.push_back(-step);
+		pitch.relative = true;
+	}
+
+	m_parent.SendMessage(WM_MOD_VIEWMSG, VIEWMSG_PREPAREUNDO);
+	*m_patch = std::make_shared<const PSGPatch>(std::move(patch));
+	m_parent.SendMessage(WM_MOD_VIEWMSG, VIEWMSG_SETMODIFIED, SampleHint().Data().AsLPARAM());
+	// Показать новый патч в полях и графиках.
+	SetPatch(*m_patch);
 }
 
 

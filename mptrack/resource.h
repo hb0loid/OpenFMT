@@ -877,6 +877,7 @@
 #define IDC_SAMPLE_INITOPL              2383
 #define IDC_SAMPLE_INITOPN2             2518
 #define IDC_SAMPLE_INITPSG              2519
+#define IDC_SAMPLE_INITOPM              2656
 #define IDC_SCOPE_PATTERNS              2652
 #define IDC_SCOPE_SAMPLES               2653
 #define IDC_OPN2_FIRST                  2520
@@ -1378,7 +1379,7 @@
 #define _APS_3D_CONTROLS                     1
 #define _APS_NEXT_RESOURCE_VALUE        547
 #define _APS_NEXT_COMMAND_VALUE         44672
-#define _APS_NEXT_CONTROL_VALUE         2656
+#define _APS_NEXT_CONTROL_VALUE         2657
 #define _APS_NEXT_SYMED_VALUE           901
 #endif
 #endif

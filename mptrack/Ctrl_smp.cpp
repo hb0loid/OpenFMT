@@ -94,6 +94,7 @@ BEGIN_MESSAGE_MAP(CCtrlSamples, CModControlDlg)
 	ON_COMMAND(IDC_SAMPLE_INITOPL,		&CCtrlSamples::OnInitOPLInstrument)
 	ON_COMMAND(IDC_SAMPLE_INITPSG,		&CCtrlSamples::OnInitPSGInstrument)
 	ON_COMMAND(IDC_SAMPLE_INITOPN2,		&CCtrlSamples::OnInitOPN2Instrument)
+	ON_COMMAND(IDC_SAMPLE_INITOPM,		&CCtrlSamples::OnInitOPMInstrument)
 	
 	ON_EN_CHANGE(IDC_SAMPLE_NAME,		&CCtrlSamples::OnNameChanged)
 	ON_EN_CHANGE(IDC_SAMPLE_FILENAME,	&CCtrlSamples::OnFileNameChanged)
@@ -1337,6 +1338,7 @@ void CCtrlSamples::OnTbnDropDownToolBar(NMHDR *pNMHDR, LRESULT *pResult)
 		menu.AppendMenu(MF_STRING, IDC_SAMPLE_DUPLICATE, ih->GetKeyTextFromCommand(kcSampleDuplicate, m_sndFile.GetSample(m_nSample).uFlags[CHN_ADLIB] ? _T("&Duplicate Instrument") : _T("&Duplicate Sample")));
 		menu.AppendMenu(MF_STRING | (m_sndFile.SupportsOPL() ? 0 : MF_DISABLED), IDC_SAMPLE_INITOPL, ih->GetKeyTextFromCommand(kcSampleInitializeOPL, _T("Initialize &OPL Instrument")));
 		menu.AppendMenu(MF_STRING | (m_sndFile.GetType() == MOD_TYPE_MPT ? 0 : MF_DISABLED), IDC_SAMPLE_INITOPN2, _T("Initialize &YM2612 Instrument"));
+		menu.AppendMenu(MF_STRING | (m_sndFile.GetType() == MOD_TYPE_MPT ? 0 : MF_DISABLED), IDC_SAMPLE_INITOPM, _T("Initialize Y&M2151 Instrument"));
 		menu.AppendMenu(MF_STRING | (m_sndFile.GetType() == MOD_TYPE_MPT ? 0 : MF_DISABLED), IDC_SAMPLE_INITPSG, _T("Initialize &PSG Instrument"));
 		menu.TrackPopupMenu(TPM_LEFTALIGN | TPM_RIGHTBUTTON, x, y, this);
 		menu.DestroyMenu();
@@ -3165,6 +3167,12 @@ void CCtrlSamples::OnInitOPN2Instrument()
 }
 
 
+void CCtrlSamples::OnInitOPMInstrument()
+{
+	InitFMInstrument(true, true);
+}
+
+
 void CCtrlSamples::OnInitPSGInstrument()
 {
 	if(m_sndFile.GetType() != MOD_TYPE_MPT)
@@ -3187,12 +3195,12 @@ void CCtrlSamples::OnInitPSGInstrument()
 }
 
 
-void CCtrlSamples::InitFMInstrument(bool opn2)
+void CCtrlSamples::InitFMInstrument(bool opn2, bool opm)
 {
 	if(opn2 ? m_sndFile.GetType() == MOD_TYPE_MPT : m_sndFile.SupportsOPL())
 	{
 		CriticalSection cs;
-		PrepareUndo(opn2 ? "Initialize YM2612 Instrument" : "Initialize OPL Instrument", sundo_replace);
+		PrepareUndo(opm ? "Initialize YM2151 Instrument" : opn2 ? "Initialize YM2612 Instrument" : "Initialize OPL Instrument", sundo_replace);
 		m_sndFile.DestroySample(m_nSample);
 		m_sndFile.InitOPL();
 		ModSample &sample = m_sndFile.GetSample(m_nSample);
@@ -3203,6 +3211,9 @@ void CCtrlSamples::InitFMInstrument(bool opn2)
 		{
 			sample.opn2 = DefaultOPN2Patch;
 			sample.isOPN2 = true;
+			// YM2151 хранится в том же патче; у него нет SSG-EG, а DT2 по
+			// умолчанию нулевой — значения по умолчанию подходят обоим.
+			sample.isOPM = opm;
 		}
 		SetModified(SampleHint().Info().Data().Names(), true, true);
 		SwitchToViewIfMouse();
