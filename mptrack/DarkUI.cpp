@@ -763,7 +763,7 @@ void DrawUpDown(HWND window, HDC dc)
 // Выпадающая часть списка (ComboLBox): выделенную строку Windows рисует
 // системным цветом выделения прямо при движении мыши, мимо WM_PAINT и
 // любой темы, — у многих он белый. Перерисовываем её поверх своими цветами.
-void RepaintListSelection(HWND list)
+void RepaintListSelection(HWND list, HDC target = nullptr)
 {
 	const LONG_PTR style = GetWindowLongPtrW(list, GWL_STYLE);
 	if((style & (LBS_OWNERDRAWFIXED | LBS_OWNERDRAWVARIABLE)) && !(style & LBS_HASSTRINGS))
@@ -783,7 +783,7 @@ void RepaintListSelection(HWND list)
 		return;
 	std::wstring text(static_cast<size_t>(length) + 1, L'\0');
 	SendMessageW(list, LB_GETTEXT, selected, reinterpret_cast<LPARAM>(text.data()));
-	const HDC dc = GetDC(list);
+	const HDC dc = target ? target : GetDC(list);
 	const int saved = SaveDC(dc);
 	if(const auto font = reinterpret_cast<HFONT>(SendMessageW(list, WM_GETFONT, 0, 0)))
 		SelectObject(dc, font);
@@ -794,7 +794,8 @@ void RepaintListSelection(HWND list)
 	textRect.left += 2;
 	DrawTextW(dc, text.c_str(), -1, &textRect, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_EXPANDTABS);
 	RestoreDC(dc, saved);
-	ReleaseDC(list, dc);
+	if(!target)
+		ReleaseDC(list, dc);
 }
 
 void DrawChevron(HDC dc, const RECT &area, COLORREF color)
@@ -1389,10 +1390,8 @@ LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, U
 		RemoveWindowSubclass(window, DarkProc, id);
 		break;
 	}
-	const LRESULT result = DefSubclassProc(window, msg, wParam, lParam);
-	if((kind == 2 && (msg == TCM_SETCURSEL || msg == WM_SETFOCUS || msg == WM_KILLFOCUS || msg == WM_MOUSELEAVE || msg == WM_MOUSEMOVE))
-		|| (kind == 3 && (msg == SB_SETTEXTW || msg == SB_SETTEXTA)))
-		InvalidateRect(window, nullptr, FALSE);
+	// Должно стоять до обычной обработки: иначе список сначала рисует белую
+	// строку сам, а сообщение обрабатывается дважды.
 	if(kind == 8)
 	{
 		switch(msg)
@@ -1421,6 +1420,10 @@ LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, U
 		}
 		}
 	}
+	const LRESULT result = DefSubclassProc(window, msg, wParam, lParam);
+	if((kind == 2 && (msg == TCM_SETCURSEL || msg == WM_SETFOCUS || msg == WM_KILLFOCUS || msg == WM_MOUSELEAVE || msg == WM_MOUSEMOVE))
+		|| (kind == 3 && (msg == SB_SETTEXTW || msg == SB_SETTEXTA)))
+		InvalidateRect(window, nullptr, FALSE);
 	if(kind == 8)
 	{
 		switch(msg)
@@ -1436,6 +1439,10 @@ LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, U
 		case LB_SETCURSEL:
 		case WM_SHOWWINDOW:
 			RepaintListSelection(window);
+			break;
+		case WM_PRINTCLIENT:
+			// Раскрытие списка с анимацией рисует его в картинку, мимо WM_PAINT.
+			RepaintListSelection(window, reinterpret_cast<HDC>(wParam));
 			break;
 		}
 	}
