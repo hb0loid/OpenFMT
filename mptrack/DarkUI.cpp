@@ -407,6 +407,35 @@ LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, U
 	case WM_NOTIFY:
 	{
 		const auto &notification = *reinterpret_cast<const NMHDR *>(lParam);
+		if(notification.code == NM_CUSTOMDRAW && ClassIs(notification.hwndFrom, L"SysListView32"))
+		{
+			auto &draw = *reinterpret_cast<NMLVCUSTOMDRAW *>(lParam);
+			if(draw.dwItemType == LVCDI_GROUP && draw.nmcd.dwDrawStage == CDDS_PREPAINT)
+			{
+				wchar_t text[256]{};
+				LVGROUP group{};
+				group.cbSize = sizeof(group);
+				group.mask = LVGF_HEADER;
+				group.pszHeader = text;
+				group.cchHeader = static_cast<int>(std::size(text));
+				ListView_GetGroupInfo(notification.hwndFrom, static_cast<int>(draw.nmcd.dwItemSpec), &group);
+				const HDC dc = draw.nmcd.hdc;
+				RECT rect = draw.rcText;
+				Fill(dc, rect, COLOR_WINDOW);
+				const int saved = SaveDC(dc);
+				if(const auto font = reinterpret_cast<HFONT>(SendMessageW(notification.hwndFrom, WM_GETFONT, 0, 0)))
+					SelectObject(dc, font);
+				SetBkMode(dc, TRANSPARENT);
+				SetTextColor(dc, Text);
+				rect.left += 10;
+				DrawTextW(dc, text, -1, &rect, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+				RestoreDC(dc, saved);
+				return CDRF_SKIPDEFAULT;
+			}
+			// Заголовки групп приходят, только если список попросили сообщать о каждом элементе.
+			if(draw.nmcd.dwDrawStage == CDDS_PREPAINT && draw.dwItemType != LVCDI_GROUP)
+				return DefSubclassProc(window, msg, wParam, lParam) | CDRF_NOTIFYITEMDRAW;
+		}
 		if(notification.code == NM_CUSTOMDRAW && ClassIs(notification.hwndFrom, L"ToolbarWindow32"))
 		{
 			auto &draw = *reinterpret_cast<NMTBCUSTOMDRAW *>(lParam);
@@ -515,6 +544,16 @@ void Apply(HWND window)
 	{
 		SetClassLongPtrW(window, GCLP_HBRBACKGROUND, reinterpret_cast<LONG_PTR>(Brush(static_cast<int>(classBrush - 1))));
 	}
+	if((style & WS_CHILD) && ClassIs(window, L"#32770"))
+	{
+		const LONG_PTR exStyle = GetWindowLongPtrW(window, GWL_EXSTYLE);
+		if((style & WS_DLGFRAME) || (exStyle & WS_EX_DLGMODALFRAME))
+		{
+			SetWindowLongPtrW(window, GWL_EXSTYLE, exStyle & ~(WS_EX_DLGMODALFRAME | WS_EX_CLIENTEDGE | WS_EX_WINDOWEDGE));
+			SetWindowLongPtrW(window, GWL_STYLE, (style & ~WS_DLGFRAME) | WS_BORDER);
+			SetWindowPos(window, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+		}
+	}
 	SetWindowSubclass(window, DarkProc, 1, kind);
 	if(ClassIs(window, L"SysTreeView32"))
 	{
@@ -524,7 +563,7 @@ void Apply(HWND window)
 		TreeView_SetLineColor(window, Border);
 	} else if(ClassIs(window, L"SysListView32"))
 	{
-		SetWindowTheme(window, L"DarkMode_ItemsView", nullptr);
+		SetWindowTheme(window, L"DarkMode_Explorer", nullptr);
 		if(const HWND header = ListView_GetHeader(window))
 			SetWindowTheme(header, L"DarkMode_ItemsView", nullptr);
 		ListView_SetBkColor(window, Canvas);
