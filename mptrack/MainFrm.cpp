@@ -3292,6 +3292,27 @@ void CMainFrame::OnHelp()
 		}
 	}
 
+	// Справку OpenMPT (файл .chm) из исходников не собрать: она идёт только в
+	// архиве официального релиза. Если файла рядом нет, открываем то же
+	// руководство онлайн, на странице текущей вкладки.
+	if(!mpt::native_fs{}.is_file(theApp.GetInstallPath() + P_("OpenMPT Manual.chm")))
+	{
+		mpt::ustring wikiPage = UL_("Category:Manual");  // оглавление руководства
+		const std::string_view pageName = page;
+		static constexpr std::pair<std::string_view, const char *> pages[] =
+		{
+			{"::/General.html", "Manual:_General"}, {"::/Patterns.html", "Manual:_Patterns"},
+			{"::/Samples.html", "Manual:_Samples"}, {"::/Instruments.html", "Manual:_Instruments"},
+			{"::/Comments.html", "Manual:_Comments"},
+		};
+		for(const auto &[chmPage, wiki] : pages)
+		{
+			if(pageName == chmPage)
+				wikiPage = mpt::ToUnicode(mpt::Charset::ASCII, wiki);
+		}
+		CTrackApp::OpenURL(UL_("https://wiki.openmpt.org/") + wikiPage);
+		return;
+	}
 	const mpt::PathString helpFile = theApp.GetInstallPath() + P_("OpenMPT Manual.chm") + mpt::PathString::FromUTF8(page) + P_(">OpenMPT");
 	if(!::HtmlHelp(m_hWnd, helpFile.AsNative().c_str(), strcmp(page, "") ? HH_DISPLAY_TOC : HH_DISPLAY_TOPIC, NULL))
 	{
