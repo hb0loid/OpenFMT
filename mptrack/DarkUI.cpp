@@ -29,13 +29,13 @@ constexpr COLORREF Muted = RGB(118, 124, 134);
 constexpr COLORREF Selection = RGB(46, 76, 105);
 // Ползунки и кнопки: у темы Windows для них нет тёмного варианта — белая
 // дорожка, ярко-синий бегунок, светлые рамки. Рисуем сами, спокойнее.
-constexpr COLORREF Track = RGB(58, 62, 69);
-constexpr COLORREF Thumb = RGB(92, 128, 164);
-constexpr COLORREF ThumbHot = RGB(112, 150, 188);
-constexpr COLORREF Tick = RGB(84, 89, 98);
-constexpr COLORREF ButtonFace = RGB(44, 47, 53);
-constexpr COLORREF ButtonHot = RGB(54, 58, 65);
-constexpr COLORREF ButtonBorder = RGB(78, 83, 92);
+constexpr COLORREF Track = RGB(50, 54, 60);
+constexpr COLORREF Thumb = RGB(80, 98, 120);
+constexpr COLORREF ThumbHot = RGB(98, 120, 146);
+constexpr COLORREF Tick = RGB(66, 70, 78);
+constexpr COLORREF ButtonFace = RGB(39, 42, 47);
+constexpr COLORREF ButtonHot = RGB(48, 52, 58);
+constexpr COLORREF ButtonBorder = RGB(56, 60, 67);
 
 using GetSysColorFn = DWORD (WINAPI *)(int);
 using GetSysColorBrushFn = HBRUSH (WINAPI *)(int);
@@ -87,6 +87,12 @@ bool ClassIs(HWND window, const wchar_t *name)
 {
 	wchar_t actual[64] = {};
 	return GetClassNameW(window, actual, static_cast<int>(std::size(actual))) && !lstrcmpiW(actual, name);
+}
+
+bool IsAfxClass(HWND window)
+{
+	wchar_t actual[64] = {};
+	return GetClassNameW(window, actual, static_cast<int>(std::size(actual))) && !wcsncmp(actual, L"Afx", 3);
 }
 
 void Fill(HDC dc, const RECT &rect, int color)
@@ -513,6 +519,54 @@ void PaintMessageBoxFooter(HWND window)
 	ReleaseDC(window, dc);
 }
 
+void DrawUpDown(HWND window, HDC dc)
+{
+	RECT client{};
+	GetClientRect(window, &client);
+	const bool horizontal = (GetWindowLongPtrW(window, GWL_STYLE) & UDS_HORZ) != 0;
+	const bool enabled = IsWindowEnabled(window) != FALSE;
+	POINT mouse{};
+	GetCursorPos(&mouse);
+	ScreenToClient(window, &mouse);
+	const bool pressed = GetCapture() == window && GetKeyState(VK_LBUTTON) < 0;
+	RECT halves[2] = {client, client};
+	if(horizontal)
+		halves[0].right = halves[1].left = (client.left + client.right) / 2;
+	else
+		halves[0].bottom = halves[1].top = (client.top + client.bottom) / 2;
+	const int saved = SaveDC(dc);
+	SelectObject(dc, GetStockObject(DC_PEN));
+	SelectObject(dc, GetStockObject(DC_BRUSH));
+	for(int i = 0; i < 2; i++)
+	{
+		const RECT &half = halves[i];
+		const bool over = PtInRect(&half, mouse) != FALSE;
+		FillColor(dc, half, (over && pressed) ? Selection : over ? ButtonHot : ButtonFace);
+		FrameColor(dc, half, ButtonBorder);
+		const int cx = (half.left + half.right) / 2, cy = (half.top + half.bottom) / 2;
+		const int size = std::max(2, std::min<int>(half.right - half.left, half.bottom - half.top) / 4);
+		POINT arrow[3];
+		if(horizontal)
+		{
+			const int dir = i == 0 ? -1 : 1;
+			arrow[0] = {cx + dir * size, cy};
+			arrow[1] = {cx - dir * size, cy - size};
+			arrow[2] = {cx - dir * size, cy + size};
+		} else
+		{
+			const int dir = i == 0 ? -1 : 1;
+			arrow[0] = {cx, cy + dir * size};
+			arrow[1] = {cx - size, cy - dir * size};
+			arrow[2] = {cx + size, cy - dir * size};
+		}
+		const COLORREF color = enabled ? Muted : Border;
+		SetDCPenColor(dc, color);
+		SetDCBrushColor(dc, color);
+		Polygon(dc, arrow, 3);
+	}
+	RestoreDC(dc, saved);
+}
+
 LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR id, DWORD_PTR kind)
 {
 	switch(msg)
@@ -565,7 +619,7 @@ LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, U
 		return reinterpret_cast<LRESULT>(Brush(color));
 	}
 	case WM_ERASEBKGND:
-		if(kind == 2 || kind == 3 || kind == 5 || kind == 6)
+		if(kind == 2 || kind == 3 || kind == 5 || kind == 6 || kind == 7)
 			return TRUE;
 		if(kind == 1 || kind == 4)
 		{
@@ -594,6 +648,15 @@ LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, U
 			const LRESULT result = DefSubclassProc(window, msg, wParam, lParam);
 			PaintMessageBoxFooter(window);
 			return result;
+		}
+		if(kind == 7)
+		{
+			PAINTSTRUCT paint{};
+			const HDC dc = msg == WM_PAINT ? BeginPaint(window, &paint) : reinterpret_cast<HDC>(wParam);
+			DrawUpDown(window, dc);
+			if(msg == WM_PAINT)
+				EndPaint(window, &paint);
+			return 0;
 		}
 		if(kind == 2 || kind == 3 || kind == 5 || kind == 6)
 		{
@@ -708,7 +771,9 @@ LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, U
 	if((kind == 2 && (msg == TCM_SETCURSEL || msg == WM_SETFOCUS || msg == WM_KILLFOCUS || msg == WM_MOUSELEAVE || msg == WM_MOUSEMOVE))
 		|| (kind == 3 && (msg == SB_SETTEXTW || msg == SB_SETTEXTA)))
 		InvalidateRect(window, nullptr, FALSE);
-	if(kind == 2 && msg == WM_MOUSEMOVE)
+	if(kind == 7 && (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP || msg == WM_MOUSEMOVE || msg == WM_MOUSELEAVE || msg == WM_ENABLE))
+		InvalidateRect(window, nullptr, FALSE);
+	if((kind == 2 || kind == 7) && msg == WM_MOUSEMOVE)
 	{
 		TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, window, 0};
 		TrackMouseEvent(&tracking);
@@ -747,6 +812,8 @@ void Apply(HWND window)
 		kind = 5;
 	else if(ClassIs(window, L"SysHeader32") && !(style & HDS_FILTERBAR))
 		kind = 6;
+	else if(ClassIs(window, L"msctls_updown32"))
+		kind = 7;
 	else if(ClassIs(window, L"#32770") || ClassIs(window, L"ReBarWindow32")
 		|| (GetDlgCtrlID(window) >= AFX_IDW_DOCKBAR_TOP && GetDlgCtrlID(window) <= AFX_IDW_DOCKBAR_RIGHT))
 		kind = 4;
@@ -788,12 +855,18 @@ void Apply(HWND window)
 	} else if(ClassIs(window, L"Edit") && (style & ES_MULTILINE))
 	{
 		SetWindowTheme(window, L"DarkMode_Explorer", nullptr);
-	} else if(ClassIs(window, L"Edit") || ClassIs(window, L"ComboBox") || ClassIs(window, L"ComboLBox") || ClassIs(window, L"ListBox"))
+	} else if(ClassIs(window, L"ComboLBox"))
+	{
+		SetWindowTheme(window, L"DarkMode_Explorer", nullptr);
+	} else if(ClassIs(window, L"Edit") || ClassIs(window, L"ComboBox") || ClassIs(window, L"ListBox"))
 	{
 		SetWindowTheme(window, L"DarkMode_CFD", nullptr);
 	} else if(ClassIs(window, L"Button") || ClassIs(window, L"ToolbarWindow32")
 		|| ClassIs(window, L"msctls_trackbar32") || ClassIs(window, L"msctls_updown32")
 		|| ClassIs(window, L"SysHeader32") || ClassIs(window, L"ScrollBar"))
+	{
+		SetWindowTheme(window, L"DarkMode_Explorer", nullptr);
+	} else if(kind == 0 && (style & WS_CHILD) && IsAfxClass(window))
 	{
 		SetWindowTheme(window, L"DarkMode_Explorer", nullptr);
 	} else if(ClassIs(window, L"ReBarWindow32"))
