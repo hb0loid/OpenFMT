@@ -2330,8 +2330,12 @@ void CSoundFile::NoteChange(ModChannel &chn, int note, bool bPorta, bool bResetE
 				// У Furnace нота начинает вибрато с нуля фазы (playback.cpp, doNote),
 				// а не с четверти периода, как MPTM: иначе каждая нота стартует с
 				// верхней точки качания и звучит выше.
+				// С флагом continuousVibrato фаза идёт сквозь ноты.
 				if(m_furnaceSlides)
-					chn.nVibratoPos = 0;
+				{
+					if(!(m_furnaceArpFlags & FurnaceContinuousVibrato))
+						chn.nVibratoPos = 0;
+				}
 				else if(!m_playBehaviour[kITVibratoTremoloPanbrello] && (GetType() & (MOD_TYPE_IT | MOD_TYPE_MPT)) && !m_SongFlags[SONG_ITOLDEFFECTS])
 					chn.nVibratoPos = 0x10;
 				else if(GetType() == MOD_TYPE_MTM)
@@ -2871,6 +2875,23 @@ bool CSoundFile::ProcessEffects()
 
 		uint32 nStartTick = 0;
 		chn.isFirstTick = m_PlayState.m_flags[SONG_FIRSTTICK];
+
+		// Furnace (playback.cpp, «commit note on») сбрасывает фазу вибрато на
+		// ноте строки и тогда, когда нота лишь меняет цель уже идущего
+		// портаменто. Но `03xx` в самой строке отменяет doNote — тогда сброса
+		// нет. Нота-портаменто у нас не перезапускается, поэтому сброс здесь.
+		if(m_furnaceSlides && chn.isFirstTick && bPorta && chn.rowCommand.IsNote()
+			&& !(m_furnaceArpFlags & FurnaceContinuousVibrato) && chn.nVibratoType < 4)
+		{
+			bool explicitPorta = chn.rowCommand.volcmd == VOLCMD_TONEPORTAMENTO;
+			for(uint8 slot = 0; slot < ModCommand::Effects() && !explicitPorta; slot++)
+			{
+				const auto [slotCmd, slotParam] = chn.rowCommand.GetEffect(slot);
+				explicitPorta = slotCmd == CMD_TONEPORTAMENTO || slotCmd == CMD_TONEPORTAVOL;
+			}
+			if(!explicitPorta)
+				chn.nVibratoPos = 0;
+		}
 
 		// Process parameter control note.
 		if(chn.rowCommand.note == NOTE_PC)

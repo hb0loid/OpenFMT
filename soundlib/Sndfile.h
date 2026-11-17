@@ -517,6 +517,9 @@ public:
 		FurnaceArpRowReset = 1 << 0,    // rowResetsArpPos
 		FurnaceArpZeroReset = 1 << 1,   // arp0Reset
 		FurnaceArpYieldOnNote = 1 << 2, // compatibleArpeggio
+		// continuousVibrato: новая нота не сбрасывает фазу вибрато. Лежит среди
+		// флагов арпеджио, потому что они уже сохраняются в MPTM (блок FARP).
+		FurnaceContinuousVibrato = 1 << 3,
 	};
 	uint8 m_furnaceArpSpeed = 1;
 	uint8 m_furnaceArpFlags = 0;

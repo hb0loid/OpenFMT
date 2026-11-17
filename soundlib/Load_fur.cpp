@@ -1186,7 +1186,8 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		// в его выгрузке VGM `G20` даёт 110 → 113,3 → 116,5 Гц, ровно +32.
 		m_furnaceArpFlags = (extraCompat[2] ? FurnaceArpRowReset : 0)
 			| (compat[19] ? FurnaceArpZeroReset : 0)
-			| (compat[7] ? FurnaceArpYieldOnNote : 0);
+			| (compat[7] ? FurnaceArpYieldOnNote : 0)
+			| (compat[15] ? FurnaceContinuousVibrato : 0);
 		if(compat[1] == 1)
 		{
 			m_furnaceSlides = 1 | FurnaceChipUnits;
