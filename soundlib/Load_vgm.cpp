@@ -1304,6 +1304,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			smpl.Initialize(MOD_TYPE_MPT);
 			smpl.nLength = length;
 			smpl.uFlags.set(CHN_16BIT);
+			smpl.chipPanning = true;  // Панорама YMZ280B: центр — полная громкость в оба уха
 			const auto best = std::max_element(rates[i].begin(), rates[i].end(), [](const auto &a, const auto &b) { return a.second < b.second; });
 			soundRate[i] = static_cast<double>(best->first);
 			smpl.nC5Speed = std::clamp<uint32>(static_cast<uint32>(best->first), 1000, 192000);

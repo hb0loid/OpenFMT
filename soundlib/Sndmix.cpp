@@ -2555,7 +2555,15 @@ bool CSoundFile::ReadNote()
 					realvol /= 2;
 
 				const PanningMode panningMode = m_PlayConfig.getPanningMode();
-				if(panningMode == PanningMode::SoftPanning || (panningMode == PanningMode::Undetermined && (m_MixerSettings.MixerFlags & SNDMIX_SOFTPANNING)))
+				if(chn.pModSample && chn.pModSample->chipPanning)
+				{
+					// Как у самого чипа (YMZ280B): сторона, к которой смещён звук,
+					// играет в полную силу, другая приглушается; на центре — обе
+					// полностью. Обычный закон OpenMPT давал на центре половину,
+					// и такие каналы в athletic rrt звучали на 6–7 дБ тише Furnace.
+					chn.newLeftVol = (realvol * std::min(256 - pan, 128)) / 128;
+					chn.newRightVol = (realvol * std::min(pan, 128)) / 128;
+				} else if(panningMode == PanningMode::SoftPanning || (panningMode == PanningMode::Undetermined && (m_MixerSettings.MixerFlags & SNDMIX_SOFTPANNING)))
 				{
 					if(pan < 128)
 					{

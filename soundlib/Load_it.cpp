@@ -2747,6 +2747,23 @@ void CSoundFile::SaveExtendedSongProperties(std::ostream &f) const
 				mpt::IO::WriteIntLE<uint8>(f, ChnSettings[i].effectColumns);
 		}
 	}
+
+	// Сэмплы с панорамой как у чипа (OpenFMT): байт на сэмпл, до последнего
+	// отмеченного. Старые сборки поле пропустят и сыграют их по закону OpenMPT.
+	{
+		SAMPLEINDEX numSamples = 0;
+		for(SAMPLEINDEX i = 1; i <= GetNumSamples(); i++)
+		{
+			if(Samples[i].chipPanning)
+				numSamples = i;
+		}
+		if(numSamples > 0)
+		{
+			WriteModularHeader(f, MagicLE("OFCP"), numSamples);
+			for(SAMPLEINDEX i = 1; i <= numSamples; i++)
+				mpt::IO::WriteIntLE<uint8>(f, Samples[i].chipPanning ? 1 : 0);
+		}
+	}
 #endif
 }
 
@@ -2939,7 +2956,13 @@ bool CSoundFile::LoadExtendedSongProperties(FileReader &file, bool ignoreChannel
 						ChnSettings[i].effectColumns = static_cast<uint8>(std::clamp(chunk.ReadUint8(), uint8(1), ModCommand::NumEffects));
 				}
 				break;
+
 #endif
+			case MagicLE("OFCP"):
+				// Панорама как у чипа по сэмплам (OpenFMT), байт на сэмпл.
+				for(SAMPLEINDEX i = 1; i <= std::min(static_cast<SAMPLEINDEX>(std::min<size_t>(size, MAX_SAMPLES - 1)), GetNumSamples()); i++)
+					Samples[i].chipPanning = chunk.ReadUint8() != 0;
+				break;
 			case MagicLE("AUTH"):
 				{
 					std::string artist;

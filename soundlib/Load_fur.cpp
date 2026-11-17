@@ -1599,6 +1599,20 @@ bool CSoundFile::BuildFurSong(FurSong &song, ModLoadingFlags flags)
 					const int note = sourceRow.note;
 					if(note >= 0 && note < 180)
 						cell.note = static_cast<ModCommand::NOTE>(ConvertNote(note - 60));
+					else if(voice == FurVoice::PCM && note >= 180 && note <= 182)
+					{
+						// Сэмплерный чип (YMZ280B) ключа как у FM не имеет: OFF у
+						// Furnace глушит голос сразу (`^^^`), а `===` и REL только
+						// отпускают макросы — звук идёт дальше. Отпускание макроса у
+						// нас — это `===`, но лишь при точке отпускания в макросе
+						// громкости: без неё `===` начал бы гасить ноту. В athletic
+						// rrt из-за прежнего `===` на OFF и пропущенных REL сэмплы
+						// звенели дальше, чем у Furnace.
+						if(note == 180)
+							cell.note = NOTE_NOTECUT;
+						else if(furIns >= 0 && furInstruments[furIns].volumeRelease < furInstruments[furIns].volume.size())
+							cell.note = NOTE_KEYOFF;
+					}
 					else if(note == 180 || note == 181)
 						// В Furnace и note off, и note release снимают ключ, то есть
 						// отпускают огибающую: у YM2612 команда ставит keyOff, а не
@@ -1943,6 +1957,49 @@ bool CSoundFile::BuildFurSong(FurSong &song, ModLoadingFlags flags)
 			}
 		}
 		m_furnaceArpSpeed = std::max<uint8>(arpLength, 1);
+	}
+	// Задержка EDxx на строке без ноты. У Furnace она лишь откладывает эффекты
+	// строки, а SDx по правилам IT без ноты заново запускает прошлую ноту. В
+	// athletic rrt REL с ED01 так давал короткий лишний удар после каждой ноты.
+	for(PATTERNINDEX pat = 0; pat < Patterns.Size(); pat++)
+	{
+		if(!Patterns.IsValidPat(pat))
+			continue;
+		for(ModCommand &m : Patterns[pat])
+		{
+			if(m.note != NOTE_NONE)
+				continue;
+			for(uint8 slot = 0; slot < ModCommand::Effects(); slot++)
+			{
+				const auto [command, param] = m.GetEffect(slot);
+				if(command == CMD_S3MCMDEX && (param & 0xF0) == 0xD0)
+					m.SetEffect(slot, CMD_NONE, 0);
+			}
+		}
+	}
+	// Сэмплы, звучащие на сэмплерных чипах (YMZ280B), панорамируются как у
+	// чипа: на центре полная громкость в оба уха. По обычному закону OpenMPT
+	// центр давал половину, и такие каналы athletic rrt были на 6–7 дБ тише.
+	for(CHANNELINDEX c = 0; c < voices.size(); c++)
+	{
+		if(voices[c] != FurVoice::PCM)
+			continue;
+		for(PATTERNINDEX pat = 0; pat < Patterns.Size(); pat++)
+		{
+			if(!Patterns.IsValidPat(pat) || c >= Patterns[pat].GetNumChannels())
+				continue;
+			for(ROWINDEX row = 0; row < Patterns[pat].GetNumRows(); row++)
+			{
+				const ModCommand &m = *Patterns[pat].GetpModCommand(row, c);
+				if(!m.instr || m.instr > GetNumInstruments() || Instruments[m.instr] == nullptr)
+					continue;
+				for(SAMPLEINDEX smp : Instruments[m.instr]->Keyboard)
+				{
+					if(smp > 0 && smp <= GetNumSamples())
+						Samples[smp].chipPanning = true;
+				}
+			}
+		}
 	}
 	// Строй у Furnace двигает и сэмплы, которые звучат по ноте: на YMZ280B в
 	// `athletic rrt` без этого все шестнадцать сэмплерных голосов шли на 20

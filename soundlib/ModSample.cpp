@@ -135,6 +135,7 @@ void ModSample::Initialize(MODTYPE type)
 {
 	isOPN2 = false;
 	isOPM = false;
+	chipPanning = false;
 	psg.reset();
 	opn2 = {};
 	FreeSample();
@@ -655,6 +656,7 @@ void ModSample::SetAdlib(bool enable, OPLPatch patch)
 {
 	isOPN2 = false;
 	isOPM = false;
+	chipPanning = false;
 	psg.reset();
 	if(!enable && uFlags[CHN_ADLIB])
 	{

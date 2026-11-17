@@ -56,6 +56,9 @@ struct ModSample
 	FMLfo fmLfo = DefaultFMLfo;
 	bool isOPN2 = false;  // Four-operator Yamaha patch uses the native FM mixer.
 	bool isOPM = false;
+	// Сэмпл сэмплерного чипа (YMZ280B и т.п.): панорама как у чипа — на центре
+	// полная громкость в оба уха, а не половина, как у обычного сэмпла.
+	bool chipPanning = false;
 	std::shared_ptr<const PSGPatch> psg;
 
 	ModSample(MODTYPE type = MOD_TYPE_NONE)
