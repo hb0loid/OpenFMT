@@ -9,6 +9,7 @@
 #include <uxtheme.h>
 
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "msimg32.lib")
 
 OPENMPT_NAMESPACE_BEGIN
 namespace DarkUI
@@ -536,6 +537,68 @@ LRESULT DrawCheckBox(HWND button, NMCUSTOMDRAW &draw, bool radio)
 	return CDRF_SKIPDEFAULT;
 }
 
+LRESULT DrawImageButton(HWND button, NMCUSTOMDRAW &draw, HBITMAP bitmap, HICON icon, SIZE imageSize, bool pushLike)
+{
+	const LONG_PTR style = GetWindowLongPtrW(button, GWL_STYLE);
+	const HDC dc = draw.hdc;
+	const bool enabled = IsWindowEnabled(button) != FALSE;
+	const bool pressed = (draw.uItemState & CDIS_SELECTED) || (pushLike && SendMessageW(button, BM_GETCHECK, 0, 0) == BST_CHECKED);
+	const bool hot = (draw.uItemState & CDIS_HOT) != 0;
+	RECT rect = draw.rc;
+	FillColor(dc, rect, pressed ? Selection : hot ? ButtonHot : ButtonFace);
+	FrameColor(dc, rect, (style & BS_TYPEMASK) == BS_DEFPUSHBUTTON ? Thumb : ButtonBorder);
+	wchar_t label[256]{};
+	if(!(style & (BS_BITMAP | BS_ICON)))
+		GetWindowTextW(button, label, static_cast<int>(std::size(label)));
+	const int saved = SaveDC(dc);
+	if(const auto font = reinterpret_cast<HFONT>(SendMessageW(button, WM_GETFONT, 0, 0)))
+		SelectObject(dc, font);
+	// Подписи у таких кнопок часто начинаются пробелами для места под
+	// картинку — свою раскладку делаем сами, пробелы не нужны.
+	const wchar_t *text = label;
+	while(*text == L' ')
+		text++;
+	SIZE textSize{};
+	if(*text)
+		GetTextExtentPoint32W(dc, text, lstrlenW(text), &textSize);
+	const int gap = *text ? ScaleForWindow(button, 8) : 0;
+	const int total = imageSize.cx + gap + textSize.cx;
+	int x = (rect.left + rect.right - total) / 2;
+	const int imageY = (rect.top + rect.bottom - imageSize.cy) / 2;
+	if(bitmap)
+	{
+		const HDC source = CreateCompatibleDC(dc);
+		const HGDIOBJ old = SelectObject(source, bitmap);
+		BLENDFUNCTION blend{AC_SRC_OVER, 0, static_cast<BYTE>(enabled ? 255 : 110), AC_SRC_ALPHA};
+		if(!AlphaBlend(dc, x, imageY, imageSize.cx, imageSize.cy, source, 0, 0, imageSize.cx, imageSize.cy, blend))
+			BitBlt(dc, x, imageY, imageSize.cx, imageSize.cy, source, 0, 0, SRCCOPY);
+		SelectObject(source, old);
+		DeleteDC(source);
+	} else if(icon)
+	{
+		DrawIconEx(dc, x, imageY, icon, imageSize.cx, imageSize.cy, 0, nullptr, DI_NORMAL);
+	}
+	x += imageSize.cx + gap;
+	if(*text)
+	{
+		SetBkMode(dc, TRANSPARENT);
+		SetTextColor(dc, enabled ? Text : Muted);
+		RECT textRect{x, rect.top, rect.right - 2, rect.bottom};
+		UINT format = DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS;
+		if(SendMessageW(button, WM_QUERYUISTATE, 0, 0) & UISF_HIDEACCEL)
+			format |= DT_HIDEPREFIX;
+		DrawTextW(dc, text, -1, &textRect, format);
+	}
+	if((draw.uItemState & CDIS_FOCUS) && !(SendMessageW(button, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS))
+	{
+		RECT focus = draw.rc;
+		InflateRect(&focus, -2, -2);
+		FrameColor(dc, focus, Thumb);
+	}
+	RestoreDC(dc, saved);
+	return CDRF_SKIPDEFAULT;
+}
+
 LRESULT DrawButton(HWND button, NMCUSTOMDRAW &draw)
 {
 	if(draw.dwDrawStage != CDDS_PREPAINT)
@@ -551,8 +614,34 @@ LRESULT DrawButton(HWND button, NMCUSTOMDRAW &draw)
 	}
 	const bool push = type == BS_PUSHBUTTON || type == BS_DEFPUSHBUTTON;
 	const bool pushLike = (style & BS_PUSHLIKE) && (type == BS_CHECKBOX || type == BS_AUTOCHECKBOX || type == BS_RADIOBUTTON || type == BS_AUTORADIOBUTTON || type == BS_3STATE || type == BS_AUTO3STATE);
-	if((!push && !pushLike) || (style & (BS_BITMAP | BS_ICON)) || SendMessageW(button, BM_GETIMAGE, IMAGE_BITMAP, 0) || SendMessageW(button, BM_GETIMAGE, IMAGE_ICON, 0))
+	if(!push && !pushLike)
 		return CDRF_DODEFAULT;
+	// Кнопки с картинкой (New Module / Open Module на стартовом окне и др.):
+	// картинка слева от подписи, вместе по центру.
+	const auto bitmap = reinterpret_cast<HBITMAP>(SendMessageW(button, BM_GETIMAGE, IMAGE_BITMAP, 0));
+	const auto icon = bitmap ? nullptr : reinterpret_cast<HICON>(SendMessageW(button, BM_GETIMAGE, IMAGE_ICON, 0));
+	SIZE imageSize{};
+	if(bitmap)
+	{
+		BITMAP info{};
+		if(GetObjectW(bitmap, sizeof(info), &info))
+			imageSize = {info.bmWidth, info.bmHeight};
+	} else if(icon)
+	{
+		ICONINFO info{};
+		if(GetIconInfo(icon, &info))
+		{
+			BITMAP mask{};
+			if(info.hbmMask && GetObjectW(info.hbmMask, sizeof(mask), &mask))
+				imageSize = {mask.bmWidth, info.hbmColor ? mask.bmHeight : mask.bmHeight / 2};
+			if(info.hbmMask)
+				DeleteObject(info.hbmMask);
+			if(info.hbmColor)
+				DeleteObject(info.hbmColor);
+		}
+	}
+	if(imageSize.cx > 0)
+		return DrawImageButton(button, draw, bitmap, icon, imageSize, pushLike);
 	const HDC dc = draw.hdc;
 	const bool enabled = IsWindowEnabled(button) != FALSE;
 	const bool pressed = (draw.uItemState & CDIS_SELECTED) || (pushLike && SendMessageW(button, BM_GETCHECK, 0, 0) == BST_CHECKED);
