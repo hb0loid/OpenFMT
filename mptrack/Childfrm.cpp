@@ -559,8 +559,11 @@ void PatternViewState::Deserialize(FileReader &f)
 		if(!visibleColumns[PatternCursor::effectColumn2] && !visibleColumns[PatternCursor::paramColumn2])
 		{
 			visibleColumns.set(PatternCursor::effectColumn2, visibleColumns[PatternCursor::effectColumn]);
-			visibleColumns.set(PatternCursor::paramColumn2, visibleColumns[PatternCursor::effectColumn]);
 		}
+		// Колонки третьего и четвёртого эффектов (и параметр второго) всегда
+		// повторяют букву второго эффекта.
+		for(int col = PatternCursor::paramColumn2; col <= PatternCursor::lastColumn; col++)
+			visibleColumns.set(col, visibleColumns[PatternCursor::effectColumn2]);
 	}
 }
 

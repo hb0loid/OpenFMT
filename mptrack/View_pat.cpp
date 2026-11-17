@@ -53,6 +53,7 @@ BEGIN_MESSAGE_MAP(CViewPattern, CModScrollView)
 	ON_WM_MOUSEWHEEL()
 	ON_WM_XBUTTONUP()
 	ON_WM_MOUSEMOVE()
+	ON_WM_SETCURSOR()
 	ON_WM_LBUTTONDOWN()
 	ON_WM_LBUTTONDBLCLK()
 	ON_WM_LBUTTONUP()
@@ -83,8 +84,7 @@ BEGIN_MESSAGE_MAP(CViewPattern, CModScrollView)
 	ON_COMMAND(ID_EDIT_UNDO,		&CViewPattern::OnEditUndo)
 	ON_COMMAND(ID_EDIT_REDO,		&CViewPattern::OnEditRedo)
 	ON_COMMAND(ID_PATTERN_CHANNELSCOPE,			&CViewPattern::OnToggleChannelScope)
-	ON_COMMAND(ID_PATTERN_EFFECTCOLS_1,			&CViewPattern::OnEffectColumns1)
-	ON_COMMAND(ID_PATTERN_EFFECTCOLS_2,			&CViewPattern::OnEffectColumns2)
+	ON_COMMAND_RANGE(ID_PATTERN_EFFECTCOLS_1, ID_PATTERN_EFFECTCOLS_4, &CViewPattern::OnEffectColumns)
 	ON_COMMAND(ID_CHANNEL_SETTINGS,	&CViewPattern::OnChannelSettings)
 	ON_COMMAND(ID_PATTERN_CHNRESET,	&CViewPattern::OnChannelReset)
 	ON_COMMAND(ID_PATTERN_MUTE,		&CViewPattern::OnMuteFromClick)
@@ -735,12 +735,10 @@ BOOL CViewPattern::PreTranslateMessage(MSG *pMsg)
 		{
 			CInputHandler *ih = CMainFrame::GetInputHandler();
 
-			// Вторая пара колонок эффекта пользуется теми же раскладками, что и первая.
+			// Дополнительные колонки эффекта пользуются теми же раскладками, что и первая.
 			PatternCursor::Columns keyColumn = m_Cursor.GetColumnType();
-			if(keyColumn == PatternCursor::effectColumn2)
-				keyColumn = PatternCursor::effectColumn;
-			else if(keyColumn == PatternCursor::paramColumn2)
-				keyColumn = PatternCursor::paramColumn;
+			if(PatternCursor::IsEffectColumn(keyColumn))
+				keyColumn = PatternCursor::ToSlot(keyColumn, 0);
 			InputTargetContext ctx = (InputTargetContext)(kCtxViewPatterns + 1 + keyColumn);
 			// If editing is disabled, preview notes no matter which column we are in
 			if(!IsEditingEnabled() && TrackerSettings::Instance().patternNoEditPopup)
@@ -921,14 +919,20 @@ void CViewPattern::OnGrowSelection()
 					blank->param = 0;
 					break;
 
-				case PatternCursor::effectColumn2:
-					dest->SetEffect(1, src->GetEffect(1).first, dest->GetEffect(1).second);
-					blank->SetEffect(1, CMD_NONE, blank->GetEffect(1).second);
-					break;
-
-				case PatternCursor::paramColumn2:
-					dest->SetEffect(1, dest->GetEffect(1).first, src->GetEffect(1).second);
-					blank->SetEffect(1, blank->GetEffect(1).first, 0);
+				default:
+					// Дополнительные эффекты: буква и параметр своего слота.
+					if(const uint8 slot = PatternCursor::EffectSlot(i); slot != PatternCursor::NoEffectSlot)
+					{
+						if(PatternCursor::IsEffectCommandColumn(i))
+						{
+							dest->SetEffect(slot, src->GetEffect(slot).first, dest->GetEffect(slot).second);
+							blank->SetEffect(slot, CMD_NONE, blank->GetEffect(slot).second);
+						} else
+						{
+							dest->SetEffect(slot, dest->GetEffect(slot).first, src->GetEffect(slot).second);
+							blank->SetEffect(slot, blank->GetEffect(slot).first, 0);
+						}
+					}
 					break;
 				}
 			}
@@ -1033,12 +1037,14 @@ void CViewPattern::OnShrinkSelection()
 					dest->param = src.param;
 					break;
 
-				case PatternCursor::effectColumn2:
-					dest->SetEffect(1, src.GetEffect(1).first, dest->GetEffect(1).second);
-					break;
-
-				case PatternCursor::paramColumn2:
-					dest->SetEffect(1, dest->GetEffect(1).first, src.GetEffect(1).second);
+				default:
+					if(const uint8 slot = PatternCursor::EffectSlot(i); slot != PatternCursor::NoEffectSlot)
+					{
+						if(PatternCursor::IsEffectCommandColumn(i))
+							dest->SetEffect(slot, src.GetEffect(slot).first, dest->GetEffect(slot).second);
+						else
+							dest->SetEffect(slot, dest->GetEffect(slot).first, src.GetEffect(slot).second);
+					}
 					break;
 				}
 			}
@@ -1125,12 +1131,14 @@ void CViewPattern::OnClearSelection(bool ITStyle, std::bitset<PatternCursor::num
 				}
 				break;
 
-			case PatternCursor::effectColumn2:  // Clear second command
-				m.SetEffect(1, CMD_NONE, 0);
-				break;
-
-			case PatternCursor::paramColumn2:  // Clear second command param
-				m.SetEffect(1, m.GetEffect(1).first, 0);
+			default:  // Дополнительные эффекты: буква очищает весь слот, параметр — только себя
+				if(const uint8 slot = PatternCursor::EffectSlot(i); slot != PatternCursor::NoEffectSlot)
+				{
+					if(PatternCursor::IsEffectCommandColumn(i))
+						m.SetEffect(slot, CMD_NONE, 0);
+					else
+						m.SetEffect(slot, m.GetEffect(slot).first, 0);
+				}
 				break;
 
 			case PatternCursor::paramColumn:  // Clear Command Param
@@ -1209,6 +1217,21 @@ void CViewPattern::OnLButtonDown(UINT nFlags, CPoint point)
 	const auto &sndFile = modDoc->GetSoundFile();
 
 	SetFocus();
+	// Правый край шапки канала: перетаскиванием меняется число колонок
+	// эффектов. Один шаг отмены на всё перетаскивание: снимается здесь, а
+	// если число так и не поменялось — убирается при отпускании.
+	if(!(nFlags & (MK_CONTROL | MK_SHIFT)))
+	{
+		if(const CHANNELINDEX chn = GetResizeEdgeChannel(point); chn != CHANNELINDEX_INVALID)
+		{
+			m_resizeChannel = chn;
+			m_resizeStartColumns = sndFile.ChnSettings[chn].effectColumns;
+			GetDocument()->GetPatternUndo().PrepareChannelUndo(chn, 1, "Effect Columns");
+			SetCapture();
+			return;
+		}
+	}
+
 	m_nDropItem = m_nDragItem = GetDragItem(point, m_rcDragItem);
 	m_Status.set(psDragging);
 	m_bInItemRect = true;
@@ -1323,6 +1346,12 @@ void CViewPattern::OnLButtonUp(UINT nFlags, CPoint point)
 	CModDoc *modDoc = GetDocument();
 	if(modDoc == nullptr)
 		return;
+
+	if(m_resizeChannel != CHANNELINDEX_INVALID)
+	{
+		FinishChannelResize();
+		return;
+	}
 
 	const auto dragType = m_nDragItem.Type();
 	const bool wasDraggingRecordGroup = IsDraggingRecordGroup();
@@ -1689,9 +1718,62 @@ void CViewPattern::OnXButtonUp(UINT nFlags, UINT nButton, CPoint point)
 }
 
 
+void CViewPattern::FinishChannelResize()
+{
+	const CHANNELINDEX chn = m_resizeChannel;
+	m_resizeChannel = CHANNELINDEX_INVALID;
+	if(GetCapture() == this)
+		ReleaseCapture();
+	CModDoc *modDoc = GetDocument();
+	if(modDoc == nullptr || chn >= modDoc->GetNumChannels())
+		return;
+	if(modDoc->GetSoundFile().ChnSettings[chn].effectColumns == m_resizeStartColumns)
+		modDoc->GetPatternUndo().RemoveLastUndoStep();
+}
+
+
+BOOL CViewPattern::OnSetCursor(CWnd *pWnd, UINT nHitTest, UINT message)
+{
+	if(nHitTest == HTCLIENT)
+	{
+		CPoint point;
+		::GetCursorPos(&point);
+		ScreenToClient(&point);
+		if(m_resizeChannel != CHANNELINDEX_INVALID || GetResizeEdgeChannel(point) != CHANNELINDEX_INVALID)
+		{
+			::SetCursor(::LoadCursor(nullptr, IDC_SIZEWE));
+			return TRUE;
+		}
+	}
+	return CModScrollView::OnSetCursor(pWnd, nHitTest, message);
+}
+
+
 void CViewPattern::OnMouseMove(UINT nFlags, CPoint point)
 {
 	CModScrollView::OnMouseMove(nFlags, point);
+
+	if(m_resizeChannel != CHANNELINDEX_INVALID)
+	{
+		if(!(nFlags & MK_LBUTTON))
+		{
+			// Кнопку отпустили, а сообщение об этом не дошло (например, захват мыши потерян).
+			FinishChannelResize();
+			return;
+		}
+		// Число колонок — по ближайшему краю: канал с n колонками кончается
+		// на ширине канала с одной плюс (n - 1) пар колонок.
+		const int left = GetChannelLeft(m_resizeChannel);
+		const int widthOne = ExtraEffectsShown() ? GetChannelWidthFor(1) : m_szCell.cx;
+		const int dx = point.x - left - widthOne;
+		int numColumns = 1;
+		if(dx > 0 && m_effectSlotWidth > 0)
+			numColumns = 1 + (dx + m_effectSlotWidth / 2) / m_effectSlotWidth;
+		numColumns = std::clamp(numColumns, 1, static_cast<int>(ModCommand::NumEffects));
+		if(numColumns != GetVisibleEffectColumns(m_resizeChannel))
+			SetChannelEffectColumns(m_resizeChannel, static_cast<uint8>(numColumns), false);
+		return;
+	}
 
 	const bool isDraggingRecordGroup = IsDraggingRecordGroup();
 	if(!m_Status[psDragging] && !isDraggingRecordGroup)
@@ -2373,13 +2455,12 @@ void CViewPattern::OnCursorCopy()
 		m_cmdOld.param = m.param;
 		break;
 
-	case PatternCursor::effectColumn2:
-	case PatternCursor::paramColumn2:
-		std::tie(m_cmdOld.command, m_cmdOld.param) = m.GetEffect(1);
-		break;
-
 	case PatternCursor::numColumns:
 		MPT_ASSERT_NOTREACHED();
+		break;
+
+	default:
+		std::tie(m_cmdOld.command, m_cmdOld.param) = m.GetEffect(CursorEffectSlot());
 		break;
 	}
 }
@@ -2428,17 +2509,16 @@ void CViewPattern::OnCursorPaste()
 		m.param = m_cmdOld.param;
 		break;
 
-	case PatternCursor::effectColumn2:
-	case PatternCursor::paramColumn2:
+	case PatternCursor::numColumns:
+		MPT_ASSERT_NOTREACHED();
+		break;
+
+	default:
 		if(!specs.HasCommand(m_cmdOld.command))
 			break;
 		if(m_cmdOld.command == CMD_DUMMY && sndFile.GetType() != MOD_TYPE_XM)
 			break;
-		m.SetEffect(1, m_cmdOld.command, m_cmdOld.param);
-		break;
-
-	case PatternCursor::numColumns:
-		MPT_ASSERT_NOTREACHED();
+		m.SetEffect(CursorEffectSlot(), m_cmdOld.command, m_cmdOld.param);
 		break;
 	}
 
@@ -2540,28 +2620,36 @@ PatternRect CViewPattern::SweepPattern(bool(*startCond)(const ModCommand &), boo
 
 void CViewPattern::OnInterpolateEffect()
 {
-	std::vector<CHANNELINDEX> first, firstParam, second, secondParam;
-	ListChansWhereColSelected(PatternCursor::effectColumn, first);
-	ListChansWhereColSelected(PatternCursor::paramColumn, firstParam);
-	ListChansWhereColSelected(PatternCursor::effectColumn2, second);
-	ListChansWhereColSelected(PatternCursor::paramColumn2, secondParam);
-	const bool wantFirst = !first.empty() || !firstParam.empty();
-	const bool wantSecond = !second.empty() || !secondParam.empty();
-	if(wantFirst || !wantSecond)
+	const auto slotSelected = [this](uint8 slot)
+	{
+		std::vector<CHANNELINDEX> effect, param;
+		ListChansWhereColSelected(PatternCursor::EffectColumn(slot), effect);
+		ListChansWhereColSelected(PatternCursor::ParamColumn(slot), param);
+		return !effect.empty() || !param.empty();
+	};
+	bool wantExtra = false;
+	for(uint8 slot = 1; slot < ModCommand::NumEffects; slot++)
+		wantExtra |= slotSelected(slot);
+	if(slotSelected(0) || !wantExtra)
 		Interpolate(PatternCursor::effectColumn);
-	if(wantSecond)
-		InterpolateSecondEffect();
+	for(uint8 slot = 1; slot < ModCommand::NumEffects; slot++)
+	{
+		if(slotSelected(slot))
+			InterpolateExtraEffect(slot);
+	}
 }
 
 
-void CViewPattern::InterpolateSecondEffect()
+// Интерполяция дополнительного эффекта: слот на время меняется местами с
+// первым, и работает обычная интерполяция первой колонки.
+void CViewPattern::InterpolateExtraEffect(uint8 slot)
 {
 	CSoundFile *sndFile = GetSoundFile();
-	if(sndFile == nullptr || !sndFile->Patterns.IsValidPat(m_nPattern) || !IsEditingEnabled())
+	if(sndFile == nullptr || !sndFile->Patterns.IsValidPat(m_nPattern) || !IsEditingEnabled() || slot == 0 || slot >= ModCommand::NumEffects)
 		return;
 	std::vector<CHANNELINDEX> effectChans, paramChans;
-	ListChansWhereColSelected(PatternCursor::effectColumn2, effectChans);
-	ListChansWhereColSelected(PatternCursor::paramColumn2, paramChans);
+	ListChansWhereColSelected(PatternCursor::EffectColumn(slot), effectChans);
+	ListChansWhereColSelected(PatternCursor::ParamColumn(slot), paramChans);
 	std::vector<CHANNELINDEX> chans(effectChans.size() + paramChans.size());
 	chans.resize(std::set_union(effectChans.begin(), effectChans.end(), paramChans.begin(), paramChans.end(), chans.begin()) - chans.begin());
 	if(chans.empty())
@@ -2576,26 +2664,35 @@ void CViewPattern::InterpolateSecondEffect()
 			for(ROWINDEX row = 0; row < numRows; row++)
 			{
 				ModCommand &m = *pattern.GetpModCommand(row, chn);
-				const auto a = m.GetEffect(0), b = m.GetEffect(1);
+				const auto a = m.GetEffect(0), b = m.GetEffect(slot);
 				m.SetEffect(0, b.first, b.second);
-				m.SetEffect(1, a.first, a.second);
+				m.SetEffect(slot, a.first, a.second);
 			}
 		}
 	};
 	// Интерполяция может расшириться до ближайших значений, поэтому undo
 	// снимаем со всего столбца этих каналов до перестановки.
-	PrepareUndo(PatternRect(PatternCursor(0, chans.front(), PatternCursor::firstColumn), PatternCursor(numRows - 1, chans.back(), PatternCursor::lastColumn)), "Interpolate Effect Column 2");
+	PrepareUndo(PatternRect(PatternCursor(0, chans.front(), PatternCursor::firstColumn), PatternCursor(numRows - 1, chans.back(), PatternCursor::lastColumn)), "Interpolate Extra Effect Column");
 	const PatternRect oldSelection = m_Selection;
-	const auto toFirst = [](const PatternCursor &c)
+	// Углы выделения переносятся на первый слот так, чтобы в него попал
+	// ровно тот кусок пары колонок слота slot, что был выделен.
+	const auto toFirst = [slot](const PatternCursor &c, bool upperLeft)
 	{
 		PatternCursor::Columns col = c.GetColumnType();
-		if(col == PatternCursor::effectColumn2)
+		if(col == PatternCursor::EffectColumn(slot))
 			col = PatternCursor::effectColumn;
-		else if(col == PatternCursor::paramColumn2)
+		else if(col == PatternCursor::ParamColumn(slot))
 			col = PatternCursor::paramColumn;
+		else if(col >= PatternCursor::effectColumn)
+		{
+			if(upperLeft)
+				col = (col < PatternCursor::EffectColumn(slot)) ? PatternCursor::effectColumn : PatternCursor::effectColumn2;
+			else
+				col = (col > PatternCursor::ParamColumn(slot)) ? PatternCursor::paramColumn : PatternCursor::volumeColumn;
+		}
 		return PatternCursor(c.GetRow(), c.GetChannel(), col);
 	};
-	m_Selection = PatternRect(toFirst(oldSelection.GetUpperLeft()), toFirst(oldSelection.GetLowerRight()));
+	m_Selection = PatternRect(toFirst(oldSelection.GetUpperLeft(), true), toFirst(oldSelection.GetLowerRight(), false));
 	swapColumns();
 	m_interpolateNoUndo = true;
 	Interpolate(PatternCursor::effectColumn);
@@ -2915,22 +3012,57 @@ void CViewPattern::OnResetChannelColors()
 }
 
 
-// Сменить число колонок эффектов у канала (1 или 2). Данные второго слота
-// не трогаются: он лишь прячется в редакторе и по-прежнему играет.
-void CViewPattern::SetChannelEffectColumns(CHANNELINDEX chn, uint8 numColumns)
+// Сменить число колонок эффектов у канала (1..4). Данные скрытых слотов
+// не трогаются: они лишь прячутся в редакторе и по-прежнему играют.
+void CViewPattern::SetChannelEffectColumns(CHANNELINDEX chn, uint8 numColumns, bool prepareUndo)
 {
 	CModDoc *modDoc = GetDocument();
 	if(modDoc == nullptr || chn >= modDoc->GetNumChannels())
 		return;
-	numColumns = (numColumns == 1) ? uint8(1) : uint8(2);
+	numColumns = std::clamp(numColumns, uint8(1), ModCommand::NumEffects);
+	// Выбрано больше одной колонки, а дополнительные скрыты: включаем их,
+	// иначе выбор ничего не покажет.
+	if(numColumns > 1 && !ExtraEffectsShown())
+	{
+		auto visible = m_visibleColumns;
+		visible.set(PatternCursor::effectColumn2);
+		UpdateVisibileColumns(visible);
+	}
 	CSoundFile &sndFile = modDoc->GetSoundFile();
 	if(sndFile.ChnSettings[chn].effectColumns == numColumns)
 		return;
-	modDoc->GetPatternUndo().PrepareChannelUndo(chn, 1, "Effect Columns");
+	if(prepareUndo)
+		modDoc->GetPatternUndo().PrepareChannelUndo(chn, 1, "Effect Columns");
 	sndFile.ChnSettings[chn].effectColumns = numColumns;
 	modDoc->SetModified();
 	CheckChannelLayout();
 	modDoc->UpdateAllViews(nullptr, GeneralHint(chn).Channels(), nullptr);
+}
+
+
+void CViewPattern::OnEffectColumns(UINT id)
+{
+	SetChannelEffectColumns(m_MenuCursor.GetChannel(), static_cast<uint8>(id - ID_PATTERN_EFFECTCOLS_1 + 1), true);
+}
+
+
+CHANNELINDEX CViewPattern::GetResizeEdgeChannel(CPoint point) const
+{
+	const CSoundFile *sndFile = GetSoundFile();
+	if(sndFile == nullptr || point.y < 0 || point.y >= m_szHeader.cy - m_szPluginHeader.cy || point.x < m_szHeader.cx)
+		return CHANNELINDEX_INVALID;
+	// Ухватиться можно в нескольких точках по обе стороны от края.
+	const int grip = MulDiv(3, m_dpi, 96);
+	int right = m_szHeader.cx;
+	for(CHANNELINDEX chn = static_cast<CHANNELINDEX>(GetXScrollPos()); chn < sndFile->GetNumChannels(); chn++)
+	{
+		right += GetChannelWidth(chn);
+		if(point.x >= right - grip && point.x < right + grip)
+			return chn;
+		if(right - grip > point.x)
+			break;
+	}
+	return CHANNELINDEX_INVALID;
 }
 
 
@@ -3200,13 +3332,13 @@ bool CViewPattern::DataEntry(bool up, bool coarse)
 				m.param = static_cast<ModCommand::PARAM>(Clamp(param, minValue, maxValue));
 			}
 		}
-		if((column == PatternCursor::effectColumn2 || column == PatternCursor::paramColumn2)
-			&& (m_Selection.ContainsHorizontal(PatternCursor(0, chn, PatternCursor::effectColumn2)) || m_Selection.ContainsHorizontal(PatternCursor(0, chn, PatternCursor::paramColumn2)))
+		const uint8 slot = PatternCursor::EffectSlot(column);
+		if(slot != PatternCursor::NoEffectSlot && slot > 0
+			&& (m_Selection.ContainsHorizontal(PatternCursor(0, chn, PatternCursor::EffectColumn(slot))) || m_Selection.ContainsHorizontal(PatternCursor(0, chn, PatternCursor::ParamColumn(slot))))
 			&& !m.IsPcNote())
 		{
-			// Второй эффект: то же, что для первого, но в его слоте. Раньше
-			// Ctrl+колёсико и клавиши значения его просто пропускали.
-			auto [command2, param2] = m.GetEffect(1);
+			// Дополнительный эффект: то же, что для первого, но в его слоте.
+			auto [command2, param2] = m.GetEffect(slot);
 			if(command2 != CMD_NONE)
 			{
 				int param = param2 + offset * (coarse ? 16 : 1);
@@ -3221,7 +3353,7 @@ bool CViewPattern::DataEntry(bool up, bool coarse)
 					minValue = static_cast<ModCommand::PARAM>(effectInfo.MapPosToValue(effectIndex, minValue));
 					maxValue = static_cast<ModCommand::PARAM>(effectInfo.MapPosToValue(effectIndex, maxValue));
 				}
-				m.SetEffect(1, command2, static_cast<ModCommand::PARAM>(Clamp(param, minValue, maxValue)));
+				m.SetEffect(slot, command2, static_cast<ModCommand::PARAM>(Clamp(param, minValue, maxValue)));
 			}
 		}
 	});
@@ -3321,7 +3453,7 @@ void CViewPattern::OnDropSelection()
 		return;
 	}
 	end.Move(dy, dx, 0);
-	if(end.GetColumnType() == PatternCursor::effectColumn)
+	if(PatternCursor::IsEffectCommandColumn(end.GetColumnType()))
 	{
 		// Extend to parameter column
 		end.Move(0, 0, 1);
@@ -3380,6 +3512,15 @@ void CViewPattern::OnDropSelection()
 				case PatternCursor::effectColumn:
 					p->command = src.command;
 					p->param = src.param;
+					break;
+				default:
+					// Дополнительный эффект переносится целиком по колонке буквы.
+					if(PatternCursor::IsEffectCommandColumn(c))
+					{
+						const uint8 slot = PatternCursor::EffectSlot(c);
+						const auto effect = src.GetEffect(slot);
+						p->SetEffect(slot, effect.first, effect.second);
+					}
 					break;
 				}
 			}
@@ -7005,8 +7146,11 @@ bool CViewPattern::BuildInterpolationCtxMenu(HMENU hMenu, PatternCursor::Columns
 	{
 		// Вторая колонка эффектов интерполируется тем же пунктом.
 		std::vector<CHANNELINDEX> chans;
-		addSeparator = ListChansWhereColSelected(PatternCursor::effectColumn2, chans) > 0
-			|| ListChansWhereColSelected(PatternCursor::paramColumn2, chans) > 0;
+		for(uint8 slot = 1; slot < ModCommand::NumEffects && !addSeparator; slot++)
+		{
+			addSeparator = ListChansWhereColSelected(PatternCursor::EffectColumn(slot), chans) > 0
+				|| ListChansWhereColSelected(PatternCursor::ParamColumn(slot), chans) > 0;
+		}
 	}
 
 	if(addSeparator || !(TrackerSettings::Instance().patternSetup & PatternSetup::HideUnavailableMenuEntries))
@@ -7134,14 +7278,17 @@ bool CViewPattern::BuildChannelControlCtxMenu(HMENU hMenu, CInputHandler *ih) co
 	// Шапка канала умеет показывать либо столбики громкости, либо осциллограф.
 	AppendMenu(hMenu, MF_STRING | (TrackerSettings::Instance().patternChannelScope ? MF_CHECKED : 0),
 		ID_PATTERN_CHANNELSCOPE, _T("&Oscilloscope in Channel Header"));
-	// Число колонок эффектов у этого канала.
+	// Число колонок эффектов у этого канала. Отмечено то, что видно на
+	// самом деле: при скрытых дополнительных колонках это одна.
 	{
-		const CHANNELINDEX chn = m_MenuCursor.GetChannel();
-		const bool twoColumns = chn >= numChannels || GetDocument()->GetSoundFile().ChnSettings[chn].effectColumns != 1;
+		const uint8 shown = GetVisibleEffectColumns(m_MenuCursor.GetChannel());
 		HMENU effectColumnsMenu = ::CreatePopupMenu();
 		AppendMenu(hMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(effectColumnsMenu), _T("&Effect Columns"));
-		AppendMenu(effectColumnsMenu, MF_STRING | (twoColumns ? 0 : MF_CHECKED), ID_PATTERN_EFFECTCOLS_1, _T("&1"));
-		AppendMenu(effectColumnsMenu, MF_STRING | (twoColumns ? MF_CHECKED : 0), ID_PATTERN_EFFECTCOLS_2, _T("&2"));
+		for(uint8 n = 1; n <= ModCommand::NumEffects; n++)
+		{
+			const TCHAR label[] = {_T('&'), static_cast<TCHAR>(_T('0') + n), 0};
+			AppendMenu(effectColumnsMenu, MF_STRING | (n == shown ? MF_CHECKED : 0), ID_PATTERN_EFFECTCOLS_1 + n - 1, label);
+		}
 	}
 	AppendMenu(hMenu, MF_SEPARATOR, 0, _T(""));
 	AppendMenu(hMenu, MF_STRING, ID_CHANNEL_SETTINGS, ih->GetKeyTextFromCommand(kcChannelSettings, _T("C&hannel Settings")));
@@ -7778,7 +7925,8 @@ void CViewPattern::JumpToPrevOrNextEntry(bool nextEntry, bool select)
 				found = m.command != CMD_NONE;
 				break;
 			default:
-				found = false;
+				// Дополнительные эффекты: свой слот.
+				found = PatternCursor::IsEffectColumn(column) && m.GetEffect(PatternCursor::EffectSlot(column)).first != CMD_NONE;
 			}
 
 			if(found)
@@ -7944,8 +8092,8 @@ HRESULT CViewPattern::get_accName(VARIANT varChild, BSTR *pszName)
 	const ModCommand &m = GetCursorCommand();
 	const size_t columnIndex = m_Cursor.GetColumnType();
 	const TCHAR *column = _T("");
-	static constexpr const TCHAR *regularColumns[] = {_T("Note"), _T("Instrument"), _T("Volume"), _T("Effect"), _T("Parameter"), _T("Effect 2"), _T("Parameter 2")};
-	static constexpr const TCHAR *pcColumns[] = {_T("Note"), _T("Plugin"), _T("Plugin Parameter"), _T("Parameter Value"), _T("Parameter Value"), _T("Effect 2"), _T("Parameter 2")};
+	static constexpr const TCHAR *regularColumns[] = {_T("Note"), _T("Instrument"), _T("Volume"), _T("Effect"), _T("Parameter"), _T("Effect 2"), _T("Parameter 2"), _T("Effect 3"), _T("Parameter 3"), _T("Effect 4"), _T("Parameter 4")};
+	static constexpr const TCHAR *pcColumns[] = {_T("Note"), _T("Plugin"), _T("Plugin Parameter"), _T("Parameter Value"), _T("Parameter Value"), _T("Effect 2"), _T("Parameter 2"), _T("Effect 3"), _T("Parameter 3"), _T("Effect 4"), _T("Parameter 4")};
 	static_assert(PatternCursor::lastColumn + 1 == std::size(regularColumns));
 	static_assert(PatternCursor::lastColumn + 1 == std::size(pcColumns));
 

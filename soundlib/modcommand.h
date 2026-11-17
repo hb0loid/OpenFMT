@@ -262,12 +262,11 @@ public:
 	static bool CombineEffects(EffectCommand &eff1, uint8 &param1, EffectCommand &eff2, uint8 &param2);
 
 public:
-	// Сколько эффектов помещается в строку. У Furnace их до восьми, у нас пока
-	// два: первый лежит в command/param, остальные в extra. Всё, что считает
-	// эффекты, ходит через Effects(), GetEffect() и SetEffect(), поэтому
-	// добавить третий — это поменять одно число здесь и ширины колонок в
-	// редакторе, а не искать по всему коду.
-	static constexpr uint8 NumEffects = 2;
+	// Сколько эффектов помещается в строку. У Furnace их до восьми, у нас
+	// четыре: первый лежит в command/param, остальные в extra. Всё, что считает
+	// эффекты, ходит через Effects(), GetEffect() и SetEffect(). Редактор узоров
+	// держит под них колонки PatternCursor::effectColumn..paramColumn4.
+	static constexpr uint8 NumEffects = 4;
 
 	uint8 note = NOTE_NONE;
 	uint8 instr = 0;

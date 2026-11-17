@@ -1139,6 +1139,8 @@
 #define ID_PATTERN_SCOPEHEIGHT         44660
 #define ID_PATTERN_EFFECTCOLS_1        44672
 #define ID_PATTERN_EFFECTCOLS_2        44673
+#define ID_PATTERN_EFFECTCOLS_3        44674
+#define ID_PATTERN_EFFECTCOLS_4        44675
 #define ID_INSTRUMENT_DUPLICATE         32894
 #define ID_PATTERN_AMPLIFY              32895
 #define ID_MODTREE_MUTE                 32896
@@ -1380,7 +1382,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_3D_CONTROLS                     1
 #define _APS_NEXT_RESOURCE_VALUE        547
-#define _APS_NEXT_COMMAND_VALUE         44674
+#define _APS_NEXT_COMMAND_VALUE         44676
 #define _APS_NEXT_CONTROL_VALUE         2657
 #define _APS_NEXT_SYMED_VALUE           901
 #endif

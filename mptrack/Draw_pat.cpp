@@ -52,15 +52,18 @@ enum
 	COLUMN_BITS_FXCMD         = 0x08,
 	COLUMN_BITS_FXPARAM       = 0x10,
 	COLUMN_BITS_FXCMDANDPARAM = 0x18,
-	// Второй эффект строки: свои два бита. Служебные SKIP и INVISIBLE
-	// подвинуты выше, чтобы не пересечься с колонками.
-	COLUMN_BITS_FXCMD2        = 0x20,
-	COLUMN_BITS_FXPARAM2      = 0x40,
-	COLUMN_BITS_FXCMDANDPARAM2 = 0x60,
-	COLUMN_BITS_ALLCOLUMNS    = 0x7F,
-	COLUMN_BITS_SKIP          = 0x100,
-	COLUMN_BITS_INVISIBLE     = 0x200,
+	// Дополнительные эффекты строки: по два бита на слот (1 << колонка),
+	// см. ColumnBitsFx(). Служебные SKIP и INVISIBLE стоят выше всех колонок.
+	COLUMN_BITS_ALLCOLUMNS    = (1 << PatternCursor::numColumns) - 1,
+	COLUMN_BITS_SKIP          = 0x1000,
+	COLUMN_BITS_INVISIBLE     = 0x2000,
 };
+
+// Биты буквы и параметра эффекта слота slot.
+static constexpr uint32 ColumnBitsFxCmd(uint8 slot) { return 1u << PatternCursor::EffectColumn(slot); }
+static constexpr uint32 ColumnBitsFxParam(uint8 slot) { return 1u << PatternCursor::ParamColumn(slot); }
+static_assert(ColumnBitsFxCmd(0) == COLUMN_BITS_FXCMD && ColumnBitsFxParam(0) == COLUMN_BITS_FXPARAM);
+static_assert(!(COLUMN_BITS_ALLCOLUMNS & (COLUMN_BITS_SKIP | COLUMN_BITS_INVISIBLE)));
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -131,7 +134,9 @@ void CViewPattern::UpdateVisibileColumns(std::bitset<PatternCursor::numColumns> 
 	m_visibleColumns = visibleColumns;
 	m_visibleColumns.set(PatternCursor::noteColumn);  // Cannot be disabled at the moment
 	m_visibleColumns.set(PatternCursor::paramColumn, m_visibleColumns[PatternCursor::effectColumn]);
-	m_visibleColumns.set(PatternCursor::paramColumn2, m_visibleColumns[PatternCursor::effectColumn2]);
+	// Дополнительные колонки эффектов включаются и выключаются вместе.
+	for(int col = PatternCursor::effectColumn2; col <= PatternCursor::lastColumn; col++)
+		m_visibleColumns.set(col, m_visibleColumns[PatternCursor::effectColumn2]);
 	UpdateSizes();
 	UpdateScrollSize();
 	SetCurrentColumn(m_Cursor);
@@ -157,13 +162,12 @@ bool CViewPattern::UpdateSizes()
 	for(size_t i = 0; i <= PatternCursor::lastColumn; i++)
 	{
 		if(m_visibleColumns[static_cast<PatternCursor::Columns>(i)])
-			m_szCell.cx += pfnt->nEltWidths[i];
+			m_szCell.cx += pfnt->nEltWidths[PatternCursor::FontColumn(static_cast<int>(i))];
 	}
 	m_szCell.cy = pfnt->nHeight;
-	// Вторая пара колонок эффектов: столько точек теряет канал, где она скрыта.
-	m_secondEffectWidth = 0;
-	if(m_visibleColumns[PatternCursor::effectColumn2])
-		m_secondEffectWidth = pfnt->nEltWidths[PatternCursor::effectColumn2] + pfnt->nEltWidths[PatternCursor::paramColumn2];
+	// Пара колонок одного дополнительного эффекта: столько точек теряет канал
+	// за каждую колонку эффектов меньше четырёх.
+	m_effectSlotWidth = pfnt->nEltWidths[PatternCursor::effectColumn2] + pfnt->nEltWidths[PatternCursor::paramColumn2];
 
 	m_szHeader.cx = MulDiv(m_szHeader.cx, m_dpi, 96);
 	m_szHeader.cy = MulDiv(m_szHeader.cy, m_dpi, 96);
@@ -178,16 +182,10 @@ bool CViewPattern::UpdateSizes()
 	// узкому каналу: иначе в канале с одной колонкой эффектов они вылезут
 	// на соседа.
 	int vuWidth = m_szCell.cx;
-	if(const CSoundFile *sndFile = GetSoundFile(); sndFile != nullptr && m_secondEffectWidth > 0)
+	if(const CSoundFile *sndFile = GetSoundFile(); sndFile != nullptr)
 	{
 		for(CHANNELINDEX chn = 0; chn < sndFile->GetNumChannels(); chn++)
-		{
-			if(!HasSecondEffectColumn(chn))
-			{
-				vuWidth -= m_secondEffectWidth;
-				break;
-			}
-		}
+			vuWidth = std::min(vuWidth, GetChannelWidth(chn));
 	}
 	if(oldx != m_szCell.cx || oldy != m_szCell.cy || vuWidth != m_vuMeterBaseWidth)
 	{
@@ -199,12 +197,12 @@ bool CViewPattern::UpdateSizes()
 }
 
 
-bool CViewPattern::HasSecondEffectColumn(CHANNELINDEX chn) const
+uint8 CViewPattern::GetEffectColumns(CHANNELINDEX chn) const
 {
 	const CSoundFile *sndFile = GetSoundFile();
 	if(sndFile == nullptr || chn >= sndFile->GetNumChannels())
-		return true;
-	return sndFile->ChnSettings[chn].effectColumns != 1;
+		return ModCommand::NumEffects;
+	return std::clamp(sndFile->ChnSettings[chn].effectColumns, uint8(1), ModCommand::NumEffects);
 }
 
 
@@ -247,7 +245,7 @@ void CViewPattern::CheckChannelLayout()
 		return;
 	std::vector<uint8> layout(sndFile->GetNumChannels());
 	for(CHANNELINDEX chn = 0; chn < sndFile->GetNumChannels(); chn++)
-		layout[chn] = HasSecondEffectColumn(chn) ? 2 : 1;
+		layout[chn] = GetEffectColumns(chn);
 	if(layout == m_channelLayout)
 		return;
 	m_channelLayout = std::move(layout);
@@ -267,7 +265,7 @@ UINT CViewPattern::GetColumnOffset(PatternCursor::Columns column) const
 	LimitMax(column, PatternCursor::lastColumn);
 	UINT offset = 0;
 	for(int i = PatternCursor::firstColumn; i < column; i++)
-		offset += pfnt->nEltWidths[i];
+		offset += pfnt->nEltWidths[PatternCursor::FontColumn(i)];
 	return offset;
 }
 
@@ -361,7 +359,7 @@ POINT CViewPattern::GetPointFromPosition(PatternCursor cursor) const
 	for(int i = 0; i < imax; i++)
 	{
 		if(IsColumnVisible(cursor.GetChannel(), static_cast<PatternCursor::Columns>(i)))
-			pt.x += pfnt->nEltWidths[i];
+			pt.x += pfnt->nEltWidths[PatternCursor::FontColumn(i)];
 	}
 
 	if(pt.x < 0)
@@ -404,7 +402,7 @@ PatternCursor CViewPattern::GetPositionFromPoint(POINT pt) const
 	for(; i < PatternCursor::lastColumn; i++)
 	{
 		if(IsColumnVisible(static_cast<CHANNELINDEX>(x), static_cast<PatternCursor::Columns>(i)))
-			dx += pfnt->nEltWidths[i];
+			dx += pfnt->nEltWidths[PatternCursor::FontColumn(static_cast<int>(i))];
 		if(xx < dx)
 			break;
 	}
@@ -866,7 +864,12 @@ void CViewPattern::OnDraw(CDC *pDC)
 					continue;
 				const auto &channel = sndFile.ChnSettings[chn];
 				// Узкий канал (одна колонка эффектов) получает подпись покороче.
-				const auto numVisibleColums = m_visibleColumns.count() - ((m_secondEffectWidth > 0 && !HasSecondEffectColumn(static_cast<CHANNELINDEX>(chn))) ? 2 : 0);
+				size_t numVisibleColums = 0;
+				for(int c = PatternCursor::firstColumn; c <= PatternCursor::lastColumn; c++)
+				{
+					if(IsColumnVisible(static_cast<CHANNELINDEX>(chn), static_cast<PatternCursor::Columns>(c)))
+						numVisibleColums++;
+				}
 				const auto recordGroup = pModDoc->GetChannelRecordGroup(static_cast<CHANNELINDEX>(chn));
 				const char *pszfmt = sndFile.m_bChannelMuteTogglePending[chn]? "[Channel %u]" : "Channel %u";
 				if(channel.szName[0] != 0)
@@ -1170,7 +1173,7 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 			int x = 0, xClear = 0, bk_col, tx_col, col_sel, fx_col;
 			const UINT nColumnWidth = GetChannelWidth(static_cast<CHANNELINDEX>(col));
 			// Вторая пара колонок эффектов: видна ли она в этом канале.
-			const bool showSecondEffect = IsColumnVisible(static_cast<CHANNELINDEX>(col), PatternCursor::effectColumn2);
+			const uint8 numEffectsShown = (m_visibleColumns[PatternCursor::effectColumn2]) ? GetEffectColumns(static_cast<CHANNELINDEX>(col)) : uint8(1);
 
 			const ModCommand *m = pattern.GetpModCommand(row, static_cast<CHANNELINDEX>(col));
 
@@ -1203,8 +1206,11 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 						dwSpeedUpMask |= COLUMN_BITS_VOLUME;
 					if ((m->command == mold->command) || !m_visibleColumns[PatternCursor::effectColumn])
 						dwSpeedUpMask |= (m->command != CMD_NONE) ? COLUMN_BITS_FXCMD : COLUMN_BITS_FXCMDANDPARAM;
-					if ((m->GetEffect(1) == mold->GetEffect(1)) || !showSecondEffect)
-						dwSpeedUpMask |= (m->GetEffect(1).first != CMD_NONE) ? COLUMN_BITS_FXCMD2 : COLUMN_BITS_FXCMDANDPARAM2;
+					for(uint8 slot = 1; slot < ModCommand::NumEffects; slot++)
+					{
+						if((m->GetEffect(slot) == mold->GetEffect(slot)) || slot >= numEffectsShown)
+							dwSpeedUpMask |= (m->GetEffect(slot).first != CMD_NONE) ? ColumnBitsFxCmd(slot) : (ColumnBitsFxCmd(slot) | ColumnBitsFxParam(slot));
+					}
 				}
 				if (dwSpeedUpMask == COLUMN_BITS_ALLCOLUMNS) goto DoBlit;
 			}
@@ -1228,11 +1234,10 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 				// пара колонок берёт точки из части первого эффекта.
 				const int plainWidth = static_cast<int>(pfnt->nEltWidths[0] + pfnt->nEltWidths[1] + pfnt->nEltWidths[2] + pfnt->nEltWidths[3] + pfnt->nEltWidths[4]);
 				m_Dib.TextBlt(xbmp, 0, plainWidth, m_szCell.cy, pfnt->nClrX, pfnt->nClrY, pfnt->dib);
-				const int extraWidth = static_cast<int>(nColumnWidth - SEPARATOR_WIDTH) - plainWidth;
-				if(extraWidth > 0)
+				const int xClearFx = static_cast<int>(pfnt->nEltWidths[0] + pfnt->nEltWidths[1] + pfnt->nEltWidths[2]);
+				for(int xExtra = plainWidth; xExtra + m_effectSlotWidth <= static_cast<int>(nColumnWidth - SEPARATOR_WIDTH); xExtra += m_effectSlotWidth)
 				{
-					const int xClearFx = static_cast<int>(pfnt->nEltWidths[0] + pfnt->nEltWidths[1] + pfnt->nEltWidths[2]);
-					m_Dib.TextBlt(xbmp + plainWidth, 0, extraWidth, m_szCell.cy, pfnt->nClrX + xClearFx, pfnt->nClrY, pfnt->dib);
+					m_Dib.TextBlt(xbmp + xExtra, 0, m_effectSlotWidth, m_szCell.cy, pfnt->nClrX + xClearFx, pfnt->nClrY, pfnt->dib);
 				}
 				goto DoBlit;
 			}
@@ -1411,14 +1416,16 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 			{
 				xClear += pfnt->nEltWidths[3] + pfnt->nEltWidths[4];
 			}
-			// Второй эффект строки: рисуется тем же способом, что и первый,
-			// только берётся из дополнительного слота ячейки. Пустая ячейка
-			// берёт точки из той же части шрифта, что и первый эффект: дальше
-			// по строке "чистого" образца в картинке шрифта уже нет.
-			if (showSecondEffect)
+			// Дополнительные эффекты строки: рисуются тем же способом, что и
+			// первый, только берутся из своих слотов ячейки. Все они пользуются
+			// размерами второй пары колонок шрифта. Пустая ячейка берёт точки из
+			// той же части шрифта, что и первый эффект: дальше по строке
+			// "чистого" образца в картинке шрифта уже нет.
+			for(uint8 slot = 1; slot < numEffectsShown; slot++)
 			{
+				const uint32 bitsCmd = ColumnBitsFxCmd(slot), bitsParam = ColumnBitsFxParam(slot);
 				const int xClearFx = static_cast<int>(pfnt->nEltWidths[0] + pfnt->nEltWidths[1] + pfnt->nEltWidths[2]);
-				const auto [command2, parameter2] = m->GetEffect(1);
+				const auto [command2, parameter2] = m->GetEffect(slot);
 				fx_col = row_col;
 				if (!m->IsPcNote() && command2 != CMD_NONE && command2 < MAX_EFFECTS && patternSetupFlags[PatternSetup::EffectHighlight])
 				{
@@ -1430,11 +1437,11 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 					else if(command2 == CMD_DUMMY)
 						fx_col = MODCOLOR_DUMMYCOMMAND;
 				}
-				if (!(dwSpeedUpMask & COLUMN_BITS_FXCMD2))
+				if (!(dwSpeedUpMask & bitsCmd))
 				{
 					tx_col = fx_col;
 					bk_col = row_bkcol;
-					if (col_sel & COLUMN_BITS_FXCMD2)
+					if (col_sel & bitsCmd)
 					{
 						tx_col = MODCOLOR_TEXTSELECTED;
 						bk_col = MODCOLOR_BACKSELECTED;
@@ -1453,11 +1460,11 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 				}
 				x += pfnt->nEltWidths[5];
 				xClear += pfnt->nEltWidths[5];
-				if (!(dwSpeedUpMask & COLUMN_BITS_FXPARAM2))
+				if (!(dwSpeedUpMask & bitsParam))
 				{
 					tx_col = fx_col;
 					bk_col = row_bkcol;
-					if (col_sel & COLUMN_BITS_FXPARAM2)
+					if (col_sel & bitsParam)
 					{
 						tx_col = MODCOLOR_TEXTSELECTED;
 						bk_col = MODCOLOR_BACKSELECTED;
@@ -1473,6 +1480,8 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 					}
 					DrawPadding(m_Dib, pfnt, xbmp + x, 0, PatternCursor::paramColumn2);
 				}
+				x += pfnt->nEltWidths[6];
+				xClear += pfnt->nEltWidths[6];
 			}
 		DoBlit:
 			nbmp++;

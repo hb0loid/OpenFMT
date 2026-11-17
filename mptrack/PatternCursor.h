@@ -30,25 +30,45 @@ public:
 		volumeColumn,
 		effectColumn,
 		paramColumn,
-		// Второй эффект строки. У Furnace их до восьми, и эти две колонки —
-		// первый шаг к тому, чтобы они не терялись при импорте.
+		// Дополнительные эффекты строки (слоты 1..3 ModCommand), по паре
+		// колонок на слот. У Furnace их до восьми.
 		effectColumn2,
 		paramColumn2,
-		lastColumn = paramColumn2,
+		effectColumn3,
+		paramColumn3,
+		effectColumn4,
+		paramColumn4,
+		lastColumn = paramColumn4,
 		numColumns
 	};
 
+	// Колонки эффектов идут парами: буква и параметр слота slot (0..3).
+	static constexpr Columns EffectColumn(uint8 slot) noexcept { return static_cast<Columns>(effectColumn + 2 * slot); }
+	static constexpr Columns ParamColumn(uint8 slot) noexcept { return static_cast<Columns>(paramColumn + 2 * slot); }
+	static constexpr bool IsEffectColumn(int column) noexcept { return column >= effectColumn && column <= lastColumn; }
+	// Слот эффекта колонки, или NoEffectSlot для ноты, инструмента и громкости.
+	static constexpr uint8 NoEffectSlot = 0xFF;
+	static constexpr uint8 EffectSlot(int column) noexcept { return IsEffectColumn(column) ? static_cast<uint8>((column - effectColumn) / 2) : NoEffectSlot; }
+	// Буква эффекта (а не параметр) в любом слоте.
+	static constexpr bool IsEffectCommandColumn(int column) noexcept { return IsEffectColumn(column) && ((column - effectColumn) % 2) == 0; }
+	// Та же колонка, но в слоте slot.
+	static constexpr Columns ToSlot(int column, uint8 slot) noexcept { return IsEffectCommandColumn(column) ? EffectColumn(slot) : ParamColumn(slot); }
+	// Колонка в таблицах шрифта: у шрифта описаны только два слота, третий и
+	// четвёртый берут размеры второго.
+	static constexpr Columns FontColumn(int column) noexcept { return column <= paramColumn2 ? static_cast<Columns>(column) : ToSlot(column, 1); }
+
 protected:
 	// Pattern cursor structure (MSB to LSB):
-	// | 16 bits - row | 13 bits - channel | 3 bits - channel component |
+	// | 16 bits - row | 12 bits - channel | 4 bits - channel component |
 	// As you can see, the highest 16 bits contain a row index.
-	// It is followed by a channel index, which is 13 bits wide.
-	// The lowest 3 bits are used for addressing the components of a channel.
+	// It is followed by a channel index, which is 12 bits wide.
+	// The lowest 4 bits are used for addressing the components of a channel.
 	// They are *not* used as a bit set, but treated as one of the Columns enum entries that can be found above.
 	uint32 cursor;
 
-	static_assert(MAX_BASECHANNELS <= 0x1FFF, "Check: Channel index in class PatternCursor is only 13 bits wide!");
+	static_assert(MAX_BASECHANNELS <= 0xFFF, "Check: Channel index in class PatternCursor is only 12 bits wide!");
 	static_assert(MAX_PATTERN_ROWS <= 0xFFFF, "Check: Row index in class PatternCursor is only 16 bits wide!");
+	static_assert(numColumns <= 0x10, "Check: Column index in class PatternCursor is only 4 bits wide!");
 
 public:
 
@@ -73,19 +93,19 @@ public:
 	// Get the pattern channel the cursor is located in.
 	CHANNELINDEX GetChannel() const
 	{
-		return static_cast<CHANNELINDEX>((cursor & 0xFFFF) >> 3);
+		return static_cast<CHANNELINDEX>((cursor & 0xFFFF) >> 4);
 	};
 
 	// Get the pattern channel column the cursor is located in.
 	Columns GetColumnType() const
 	{
-		return static_cast<Columns>((cursor & 0x07));
+		return static_cast<Columns>((cursor & 0x0F));
 	};
 
 	// Set the cursor to given coordinates.
 	PatternCursor& Set(ROWINDEX row, CHANNELINDEX channel, Columns column = firstColumn)
 	{
-		cursor = (row << 16) | ((channel << 3) & 0x1FFF) | (column & 0x07);
+		cursor = (row << 16) | ((static_cast<uint32>(channel) & 0xFFF) << 4) | (column & 0x0F);
 		return *this;
 	};
 
@@ -165,7 +185,7 @@ public:
 	// Remove the channel column type from the cursor position.
 	void RemoveColType()
 	{
-		cursor &= ~0x07;
+		cursor &= ~0x0F;
 	}
 
 	// Compare the row of two cursors.

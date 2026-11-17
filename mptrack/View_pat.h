@@ -131,8 +131,11 @@ protected:
 	int m_nXScroll = 0, m_nYScroll = 0;
 	int m_ledWidth = 0, m_ledHeight = 0;
 	int m_vuMeterBaseWidth = 0;    // По какой ширине канала построены столбики громкости
-	int m_secondEffectWidth = 0;   // Ширина второй пары колонок эффектов (0, если она скрыта везде)
+	int m_effectSlotWidth = 0;     // Ширина одной пары колонок дополнительного эффекта (буква + параметр)
 	std::vector<uint8> m_channelLayout;  // Число колонок эффектов по каналам на момент последнего пересчёта
+	// Перетаскивание правого края шапки канала: меняет число колонок эффектов.
+	CHANNELINDEX m_resizeChannel = CHANNELINDEX_INVALID;
+	uint8 m_resizeStartColumns = 0;
 	std::bitset<PatternCursor::numColumns> m_visibleColumns;
 
 	// Cursor and selection positions
@@ -224,21 +227,28 @@ public:
 
 	int GetXScrollPos() const { return m_nXScroll; }
 	int GetYScrollPos() const { return m_nYScroll; }
-	// Ширина канала на экране. У канала с одной колонкой эффектов она меньше
-	// полной (m_szCell.cx) на ширину второй пары колонок.
-	int GetChannelWidth(CHANNELINDEX chn) const { return HasSecondEffectColumn(chn) ? m_szCell.cx : m_szCell.cx - m_secondEffectWidth; }
+	// Ширина канала на экране. m_szCell.cx — ширина канала со всеми четырьмя
+	// колонками эффектов; каждая недостающая колонка убирает m_effectSlotWidth.
+	int GetChannelWidth(CHANNELINDEX chn) const { return m_szCell.cx - ExtraEffectsShown() * (ModCommand::NumEffects - GetEffectColumns(chn)) * m_effectSlotWidth; }
+	// Ширина канала с заданным числом колонок эффектов.
+	int GetChannelWidthFor(uint8 numEffects) const { return m_szCell.cx - ExtraEffectsShown() * (ModCommand::NumEffects - numEffects) * m_effectSlotWidth; }
+	// Показаны ли дополнительные колонки эффектов вообще (общая настройка).
+	int ExtraEffectsShown() const { return m_visibleColumns[PatternCursor::effectColumn2] ? 1 : 0; }
 	// Суммарная ширина каналов [first, last). Для first > last — со знаком минус.
 	int GetChannelsWidth(CHANNELINDEX first, CHANNELINDEX last) const;
 	// Левый край канала в координатах окна (с учётом прокрутки и шапки строк).
 	int GetChannelLeft(CHANNELINDEX chn) const;
-	// Показывает ли канал вторую пару колонок эффектов.
-	bool HasSecondEffectColumn(CHANNELINDEX chn) const;
+	// Сколько колонок эффектов канал показывает (1..4) по своей настройке.
+	uint8 GetEffectColumns(CHANNELINDEX chn) const;
+	// Сколько их видно на самом деле: при скрытых дополнительных колонках — одна.
+	uint8 GetVisibleEffectColumns(CHANNELINDEX chn) const { return ExtraEffectsShown() ? GetEffectColumns(chn) : uint8(1); }
 	// Видна ли колонка в данном канале: общая видимость плюс число колонок канала.
 	bool IsColumnVisible(CHANNELINDEX chn, PatternCursor::Columns column) const
 	{
 		if(!m_visibleColumns[column])
 			return false;
-		if((column == PatternCursor::effectColumn2 || column == PatternCursor::paramColumn2) && !HasSecondEffectColumn(chn))
+		const uint8 slot = PatternCursor::EffectSlot(column);
+		if(slot != PatternCursor::NoEffectSlot && slot >= GetEffectColumns(chn))
 			return false;
 		return true;
 	}
@@ -248,7 +258,12 @@ public:
 	CHANNELINDEX GetFirstChannelToFit(CHANNELINDEX lastChn, int availWidth, int lastChannelWidth = -1) const;
 	// Сменилось ли число колонок эффектов у каналов; если да — пересчитать вид.
 	void CheckChannelLayout();
-	void SetChannelEffectColumns(CHANNELINDEX chn, uint8 numColumns);
+	// Сменить число колонок эффектов у канала. Если дополнительные колонки
+	// скрыты, а выбрано больше одной — они снова включаются. prepareUndo:
+	// снять шаг отмены (при перетаскивании края он снимается один раз заранее).
+	void SetChannelEffectColumns(CHANNELINDEX chn, uint8 numColumns, bool prepareUndo);
+	// Канал, правый край шапки которого под точкой (для перетаскивания), или CHANNELINDEX_INVALID.
+	CHANNELINDEX GetResizeEdgeChannel(CPoint point) const;
 	int GetRowHeight() const { return m_szCell.cy; }
 	int GetSmoothScrollOffset() const;
 
@@ -258,10 +273,11 @@ public:
 	ORDERINDEX GetCurrentOrder() const { return m_nOrder; }
 	void SetCurrentOrder(ORDERINDEX ord);
 	// Get ModCommand at the pattern cursor position.
-	// Какой слот эффекта правит курсор: 0 — обычная пара колонок, 1 — вторая.
+	// Какой слот эффекта правит курсор: 0 — обычная пара колонок, 1..3 — дополнительные.
 	static uint8 EffectSlotFromColumn(PatternCursor::Columns column)
 	{
-		return (column == PatternCursor::effectColumn2 || column == PatternCursor::paramColumn2) ? 1 : 0;
+		const uint8 slot = PatternCursor::EffectSlot(column);
+		return slot == PatternCursor::NoEffectSlot ? uint8(0) : slot;
 	}
 	uint8 CursorEffectSlot() const { return EffectSlotFromColumn(m_Cursor.GetColumnType()); }
 
@@ -417,6 +433,8 @@ protected:
 	afx_msg BOOL OnMouseWheel(UINT nFlags, short zDelta, CPoint pt);
 	afx_msg void OnXButtonUp(UINT nFlags, UINT nButton, CPoint point);
 	afx_msg void OnMouseMove(UINT, CPoint);
+	afx_msg BOOL OnSetCursor(CWnd *pWnd, UINT nHitTest, UINT message);
+	void FinishChannelResize();
 	afx_msg void OnLButtonUp(UINT, CPoint);
 	afx_msg void OnLButtonDown(UINT, CPoint);
 	afx_msg void OnLButtonDblClk(UINT, CPoint);
@@ -475,7 +493,7 @@ protected:
 	afx_msg void OnInterpolateEffect();
 	// Вторая колонка эффектов: столбцы на время меняются местами, и работает
 	// обычная интерполяция первой колонки.
-	void InterpolateSecondEffect();
+	void InterpolateExtraEffect(uint8 slot);
 	bool m_interpolateNoUndo = false;
 	afx_msg void OnInterpolateNote() { Interpolate(PatternCursor::noteColumn); }
 	afx_msg void OnInterpolateInstr() { Interpolate(PatternCursor::instrColumn); }
@@ -508,8 +526,7 @@ protected:
 	afx_msg LRESULT OnCustomKeyMsg(WPARAM, LPARAM);
 	afx_msg void OnClearSelectionFromMenu();
 	afx_msg void OnToggleChannelScope();
-	afx_msg void OnEffectColumns1() { SetChannelEffectColumns(m_MenuCursor.GetChannel(), 1); }
-	afx_msg void OnEffectColumns2() { SetChannelEffectColumns(m_MenuCursor.GetChannel(), 2); }
+	afx_msg void OnEffectColumns(UINT id);
 	void ApplyChannelScope();
 	afx_msg void OnSelectInstrument(UINT nid);
 	afx_msg void OnSelectPCNoteParam(UINT nid);

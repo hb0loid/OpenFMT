@@ -623,7 +623,7 @@ bool CEditCommand::ShowEditWindow(PATTERNINDEX pat, const PatternCursor &cursor,
 
 	m = sndFile.Patterns[pat].GetpModCommand(row, chn);
 	modified = false;
-	effectSlot = (cursor.GetColumnType() == PatternCursor::effectColumn2 || cursor.GetColumnType() == PatternCursor::paramColumn2) ? 1 : 0;
+	effectSlot = CViewPattern::EffectSlotFromColumn(cursor.GetColumnType());
 
 	InitAll();
 
@@ -641,19 +641,15 @@ bool CEditCommand::ShowEditWindow(PATTERNINDEX pat, const PatternCursor &cursor,
 		else
 			cbnVolCmd.SetFocus();
 		break;
-	case PatternCursor::effectColumn:
-	case PatternCursor::effectColumn2:
-		if(m->IsPcNote())
-			sldParam.SetFocus();
-		else
-			cbnCommand.SetFocus();
-		break;
-	case PatternCursor::paramColumn:
-	case PatternCursor::paramColumn2:
-		sldParam.SetFocus();
-		break;
 	case PatternCursor::numColumns:
 		MPT_ASSERT_NOTREACHED();
+		break;
+	default:
+		// Буква эффекта любого слота — список команд, параметр — ползунок.
+		if(PatternCursor::IsEffectCommandColumn(cursor.GetColumnType()) && !m->IsPcNote())
+			cbnCommand.SetFocus();
+		else
+			sldParam.SetFocus();
 		break;
 	}
 

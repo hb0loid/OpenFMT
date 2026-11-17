@@ -198,8 +198,8 @@ void CViewPattern::OnEditFindNext()
 					for(uint8 slot = 0; slot < ModCommand::Effects() && !effectMatched; slot++)
 					{
 						const auto [cmd, prm] = m->GetEffect(slot);
-						const auto effectCol = slot ? PatternCursor::effectColumn2 : PatternCursor::effectColumn;
-						const auto paramCol = slot ? PatternCursor::paramColumn2 : PatternCursor::paramColumn;
+						const auto effectCol = PatternCursor::EffectColumn(slot);
+						const auto paramCol = PatternCursor::ParamColumn(slot);
 						if(FindReplace::instance.findFlags[FindReplace::Command] && (!findWhere[effectCol] || cmd != FindReplace::instance.findCommand))
 							continue;
 						if(FindReplace::instance.findFlags[FindReplace::Param] && (!findWhere[paramCol] || cmd == CMD_NONE || prm < FindReplace::instance.findParamMin || prm > FindReplace::instance.findParamMax))
@@ -280,9 +280,9 @@ void CViewPattern::OnEditFindNext()
 				else if(FindReplace::instance.findFlags[FindReplace::VolCmd | FindReplace::Volume | FindReplace::PCParam])
 					foundCol = PatternCursor::volumeColumn;
 				else if(FindReplace::instance.findFlags[FindReplace::Command | FindReplace::PCValue])
-					foundCol = effectSlot ? PatternCursor::effectColumn2 : PatternCursor::effectColumn;
+					foundCol = PatternCursor::EffectColumn(effectSlot);
 				else if(FindReplace::instance.findFlags[FindReplace::Param])
-					foundCol = effectSlot ? PatternCursor::paramColumn2 : PatternCursor::paramColumn;
+					foundCol = PatternCursor::ParamColumn(effectSlot);
 
 				if(updatePos)
 				{

@@ -330,14 +330,28 @@ std::string PatternClipboard::CreateClipboardString(const CSoundFile &sndFile, P
 			// Курсор стоял на колонке эффекта: через параметр — на второй эффект.
 			// Раньше сдвигались на одну колонку, попадали на параметр первого, и
 			// выделение одной второй колонки ничего не копировало.
-			cursor.Move(0, 0, 2);
-			const bool secondSelected = selection.ContainsHorizontal(cursor)
-				|| selection.ContainsHorizontal(PatternCursor(cursor.GetRow(), cursor.GetChannel(), PatternCursor::paramColumn2));
-			if(secondSelected && !m->IsPcNote())
+			// Третий и четвёртый эффекты идут следом, по три символа. Слот,
+			// который не выделен, но стоит перед выделенным, пишется тремя
+			// пробелами: при вставке такой слот не трогается.
+			uint8 lastSelectedSlot = 0;
+			for(uint8 slot = 1; slot < ModCommand::NumEffects; slot++)
 			{
-				// Пустой второй эффект тоже пишется («...»): иначе вырезать и
-				// вставить не переносили бы пустоту, и в цели оставался бы старый.
-				if(const auto [command2, param2] = m->GetEffect(1); command2 != CMD_NONE)
+				if(selection.ContainsHorizontal(PatternCursor(cursor.GetRow(), cursor.GetChannel(), PatternCursor::EffectColumn(slot)))
+					|| selection.ContainsHorizontal(PatternCursor(cursor.GetRow(), cursor.GetChannel(), PatternCursor::ParamColumn(slot))))
+					lastSelectedSlot = slot;
+			}
+			for(uint8 slot = 1; slot <= lastSelectedSlot && !m->IsPcNote(); slot++)
+			{
+				const bool slotSelected = selection.ContainsHorizontal(PatternCursor(cursor.GetRow(), cursor.GetChannel(), PatternCursor::EffectColumn(slot)))
+					|| selection.ContainsHorizontal(PatternCursor(cursor.GetRow(), cursor.GetChannel(), PatternCursor::ParamColumn(slot)));
+				if(!slotSelected)
+				{
+					data += "   ";
+					continue;
+				}
+				// Пустой эффект тоже пишется («...»): иначе вырезать и вставить
+				// не переносили бы пустоту, и в цели оставался бы старый.
+				if(const auto [command2, param2] = m->GetEffect(slot); command2 != CMD_NONE)
 				{
 					data += sndFile.GetModSpecifications().GetEffectLetter(command2);
 					data += mpt::afmt::HEX0<2>(param2);
@@ -966,12 +980,14 @@ bool PatternClipboard::HandlePaste(CSoundFile &sndFile, PatternEditPos &pastePos
 
 			pos += 11;
 
-			// Необязательный второй эффект: три символа сразу за ячейкой. Если
-			// там уже начало следующей ячейки или конец строки, его просто нет.
-			if(pos + 2 < eol && data[pos] != '|' && data[pos] != 13 && data[pos] != 10)
+			// Необязательные дополнительные эффекты: по три символа сразу за
+			// ячейкой, слоты 1, 2, 3 по порядку. Если там уже начало следующей
+			// ячейки или конец строки, их просто нет. Три пробела — слот пропущен.
+			for(uint8 slot = 1; slot < ModCommand::NumEffects && pos + 2 < eol && data[pos] != '|' && data[pos] != 13 && data[pos] != 10; slot++)
 			{
-				const auto original2 = m.GetEffect(1);
-				if(!skipPaste && !m.IsPcNote() && (!doMixPaste || original2.first == CMD_NONE))
+				const auto original2 = m.GetEffect(slot);
+				const bool slotSkipped = (data[pos] == ' ' && data[pos + 1] == ' ' && data[pos + 2] == ' ');
+				if(!skipPaste && !slotSkipped && !m.IsPcNote() && (!doMixPaste || original2.first == CMD_NONE))
 				{
 					EffectCommand command2 = CMD_NONE;
 					uint8 param2 = 0;
@@ -992,14 +1008,14 @@ bool PatternClipboard::HandlePaste(CSoundFile &sndFile, PatternEditPos &pastePos
 						if(data[pos + 1] == szHexChar[i]) param2 |= static_cast<uint8>(i << 4);
 						if(data[pos + 2] == szHexChar[i]) param2 |= i;
 					}
-					// «...» очищает второй эффект: так вставка переносит и пустоту.
-					m.SetEffect(1, command2, command2 != CMD_NONE ? param2 : uint8(0));
+					// «...» очищает эффект: так вставка переносит и пустоту.
+					m.SetEffect(slot, command2, command2 != CMD_NONE ? param2 : uint8(0));
 					if(col < sndFile.GetNumChannels())
 					{
-						if(col == startChan && startPoint.CompareColumn(PatternCursor(0, col, PatternCursor::effectColumn2)) > 0)
-							startPoint.SetColumn(startChan, PatternCursor::effectColumn2);
-						if(endPoint.CompareColumn(PatternCursor(0, col, PatternCursor::paramColumn2)) < 0)
-							endPoint.SetColumn(col, PatternCursor::paramColumn2);
+						if(col == startChan && startPoint.CompareColumn(PatternCursor(0, col, PatternCursor::EffectColumn(slot))) > 0)
+							startPoint.SetColumn(startChan, PatternCursor::EffectColumn(slot));
+						if(endPoint.CompareColumn(PatternCursor(0, col, PatternCursor::ParamColumn(slot))) < 0)
+							endPoint.SetColumn(col, PatternCursor::ParamColumn(slot));
 						pasteRect = PatternRect(startPoint, endPoint);
 					}
 				}

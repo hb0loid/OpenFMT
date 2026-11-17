@@ -294,7 +294,7 @@ struct ModChannelSettings
 #ifdef MODPLUG_TRACKER
 	static constexpr uint32 INVALID_COLOR = 0xFFFFFFFF;
 	uint32 color = INVALID_COLOR;   // For pattern editor
-	// Сколько колонок эффектов канал показывает в редакторе узоров: 1 или 2.
+	// Сколько колонок эффектов канал показывает в редакторе узоров: 1..4.
 	// Только отображение: данные второго слота хранятся и играют всегда.
 	uint8 effectColumns = 2;
 #endif                              // MODPLUG_TRACKER
