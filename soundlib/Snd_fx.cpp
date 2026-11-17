@@ -3332,6 +3332,7 @@ bool CSoundFile::ProcessEffects()
 
 				if(!chn.dwFlags[CHN_MUTE | CHN_SYNCMUTE] && chn.pModSample != nullptr && chn.pModSample->uFlags[CHN_ADLIB] && m_opl)
 				{
+					m_opl->SetFMChipCount(m_fmChipCount[0], m_fmChipCount[1]);
 					m_opl->Patch(nChn, *chn.pModSample);
 				}
 
@@ -3399,6 +3400,7 @@ bool CSoundFile::ProcessEffects()
 				}
 				if(!chn.dwFlags[CHN_MUTE | CHN_SYNCMUTE] && chn.pModSample != nullptr && chn.pModSample->uFlags[CHN_ADLIB] && m_opl && (instrChange || !m_opl->IsActive(nChn)))
 				{
+					m_opl->SetFMChipCount(m_fmChipCount[0], m_fmChipCount[1]);
 					m_opl->Patch(nChn, *chn.pModSample);
 				}
 
@@ -4366,6 +4368,7 @@ void CSoundFile::RestoreChipVoices()
 		const ModChannel &chn = m_PlayState.Chn[n];
 		if(chn.dwFlags[CHN_MUTE | CHN_SYNCMUTE] || chn.pModSample == nullptr || !chn.pModSample->uFlags[CHN_ADLIB])
 			continue;
+		m_opl->SetFMChipCount(m_fmChipCount[0], m_fmChipCount[1]);
 		m_opl->Patch(n, *chn.pModSample);
 		m_opl->NoteCut(n);
 		const auto &state = chn.furnaceSlide;

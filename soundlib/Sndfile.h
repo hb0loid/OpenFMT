@@ -525,6 +525,9 @@ public:
 	// потому что чип поддерживает до 32 экземпляров с разными уровнями, и старые
 	// .fmt её уже так хранят; здесь для него остаётся пользовательская поправка.
 	std::array<uint16, ChipKinds> m_chipVolume;
+	// Полифония: сколько чипов YM2612 и YM2151 у песни (1..4). Импорт Furnace
+	// оставляет по одному, как у оригинала.
+	std::array<uint8, 2> m_fmChipCount{1, 1};
 	uint32 m_nSamplePreAmp, m_nVSTiVolume;
 	uint32 m_OPLVolumeFactor;  // 16.16
 	static constexpr uint32 m_OPLVolumeFactorScale = 1 << 16;

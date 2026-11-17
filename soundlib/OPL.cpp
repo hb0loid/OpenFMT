@@ -298,6 +298,17 @@ void OPL::Volume(CHANNELINDEX c, uint8 vol, bool applyToModulator)
 }
 
 
+void OPL::SetFMChipCount(uint8 opn2, uint8 opm)
+{
+	m_fmChipCount = {opn2, opm};
+	if(m_opn2)
+	{
+		m_opn2->SetChipCount(false, opn2);
+		m_opn2->SetChipCount(true, opm);
+	}
+}
+
+
 int8 OPL::Pan(CHANNELINDEX c, int32 pan)
 {
 	if(m_psg && m_psg->Pan(c, pan))
@@ -371,6 +382,8 @@ void OPL::Patch(CHANNELINDEX c, const ModSample &sample)
 			return;
 		if(!m_opn2)
 			m_opn2 = std::make_unique<OPN2>(m_sampleRate);
+		m_opn2->SetChipCount(false, m_fmChipCount[0]);
+		m_opn2->SetChipCount(true, m_fmChipCount[1]);
 		if(GetVoice(c) != OPL_CHANNEL_INVALID)
 		{
 			// Stop an OPL voice before assigning this tracker channel to OPN2.

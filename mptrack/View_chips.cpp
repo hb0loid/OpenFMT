@@ -21,6 +21,7 @@ OPENMPT_NAMESPACE_BEGIN
 // собственному окну, а не по номеру, и командами они не управляют.
 static constexpr UINT FirstSliderID = 0x4000;
 static constexpr UINT ScopeGridID = 0x4100;
+static constexpr UINT FirstChipCountID = 0x4200;
 // Ход ползунка микросхемы: от тишины до вдвое громче, единица посередине.
 static constexpr int MaxChipVolume = ChipVolumeUnity * 2;
 // У сэмплов шкала своя, 0..255, и середина у неё 128 — столько же, сколько
@@ -48,6 +49,7 @@ IMPLEMENT_SERIAL(CViewChips, CModScrollView, 0)
 BEGIN_MESSAGE_MAP(CViewChips, CModScrollView)
 	ON_WM_SIZE()
 	ON_WM_VSCROLL()
+	ON_CONTROL_RANGE(CBN_SELCHANGE, FirstChipCountID, FirstChipCountID + 1, &CViewChips::OnChipCountChanged)
 	ON_WM_ERASEBKGND()
 	ON_WM_RBUTTONUP()
 END_MESSAGE_MAP()
@@ -148,7 +150,39 @@ void CViewChips::CreateStrips()
 		strip.value.Create(_T(""), WS_CHILD | WS_VISIBLE | SS_CENTER, empty, this);
 		strip.value.SendMessage(WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
 	}
+	for(uint8 type = 0; type < 2; type++)
+	{
+		CComboBox &combo = m_chipCount[type];
+		combo.Create(WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, CRect(0, 0, 0, 0), this, FirstChipCountID + type);
+		combo.SendMessage(WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
+		const int voices = (type == 0) ? 6 : 8;
+		for(int count = 1; count <= 4; count++)
+		{
+			CString text;
+			text.Format(_T("x%d (%d)"), count, voices * count);
+			combo.AddString(text);
+		}
+	}
 	m_scopes.Create(this, ScopeGridID);
+}
+
+
+// Число чипов: «x2 (12)» — два YM2612, двенадцать голосов.
+void CViewChips::OnChipCountChanged(UINT id)
+{
+	CModDoc *modDoc = GetDocument();
+	if(!modDoc || m_updating)
+		return;
+	const uint8 type = static_cast<uint8>(id - FirstChipCountID);
+	const int sel = m_chipCount[type].GetCurSel();
+	if(sel < 0)
+		return;
+	CSoundFile &sndFile = modDoc->GetSoundFile();
+	const uint8 count = static_cast<uint8>(sel + 1);
+	if(sndFile.m_fmChipCount[type] == count)
+		return;
+	sndFile.m_fmChipCount[type] = count;
+	modDoc->SetModified();
 }
 
 
@@ -187,13 +221,20 @@ void CViewChips::LayoutStrips()
 			SWP_NOZORDER | SWP_NOACTIVATE);
 		top += sliderHeight;
 		strip.value.SetWindowPos(nullptr, left, top, stripWidth, valueHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+		if(i == ChipOPN2 || i == ChipOPM)
+		{
+			// Выпадающему списку высоту задаём с запасом на раскрытие.
+			m_chipCount[i == ChipOPM ? 1 : 0].SetWindowPos(nullptr, left + 2, top + valueHeight + 2, stripWidth - 4, lineHeight * 8,
+				SWP_NOZORDER | SWP_NOACTIVATE);
+		}
 	}
+	const int comboHeight = lineHeight + HighDPISupport::ScalePixels(10, m_hWnd);
 
 	// Осциллографы — под полосками, на всю ширину: громкости чипов наверху,
 	// картинка ниже.
 	CRect client;
 	GetClientRect(&client);
-	const int stripsBottom = margin + lineHeight + sliderHeight + valueHeight + margin;
+	const int stripsBottom = margin + lineHeight + sliderHeight + valueHeight + comboHeight + margin;
 	CRect scopes(margin, stripsBottom, client.right - margin, client.bottom - margin);
 	m_scopes.Place(scopes, TrackerSettings::Instance().chipsShowScopes
 		&& scopes.Width() > HighDPISupport::ScalePixels(120, m_hWnd));
@@ -224,6 +265,9 @@ void CViewChips::ReadSong()
 		m_strips[i].slider.SetPos(m_strips[i].max - value);
 		ShowValue(i, value);
 	}
+	const CSoundFile &sndFile = GetDocument()->GetSoundFile();
+	for(uint8 type = 0; type < 2; type++)
+		m_chipCount[type].SetCurSel(std::clamp<int>(sndFile.m_fmChipCount[type], 1, 4) - 1);
 }
 
 

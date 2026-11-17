@@ -59,6 +59,8 @@ protected:
 		int def = 0;
 	};
 	std::array<Strip, NumStrips> m_strips;
+	// Полифония: сколько чипов YM2612 и YM2151 у песни — под их полосками.
+	std::array<CComboBox, 2> m_chipCount;
 	// Осциллографы по каналам живут под полосками: место справа от микшера
 	// всё равно пустовало, а смотреть на них надо вместе с балансом.
 	ChannelScopeGrid m_scopes;
@@ -82,6 +84,7 @@ public:
 protected:
 	afx_msg void OnSize(UINT type, int cx, int cy);
 	afx_msg void OnVScroll(UINT code, UINT pos, CScrollBar *bar);
+	afx_msg void OnChipCountChanged(UINT id);
 	afx_msg void OnRButtonUp(UINT flags, CPoint point);
 	afx_msg BOOL OnEraseBkgnd(CDC *dc);
 	DECLARE_MESSAGE_MAP()

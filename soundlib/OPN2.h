@@ -101,7 +101,15 @@ private:
 		bool Exists() const { return opn != nullptr || opm != nullptr; }
 	};
 
-	std::array<Chip, 2> m_chips;  // Index 0 drives the YM2612, index 1 the YM2151
+public:
+	// Полифония: у песни может быть до четырёх чипов каждого типа. По
+	// умолчанию один, как у настоящей приставки и у импорта из Furnace.
+	static constexpr uint8 MaxChipsPerType = 4;
+protected:
+	// 0..3 — YM2612, 4..7 — YM2151.
+	std::array<Chip, MaxChipsPerType * 2> m_chips;
+	std::array<uint8, 2> m_chipCount{1, 1};
+	std::array<size_t, 2> m_nextSteal{};
 	uint32 m_rate;
 
 	static void Write(Chip &chip, uint16 reg, uint8 value)
@@ -182,6 +190,11 @@ private:
 	void InitChip(Chip &chip, bool useOPM)
 	{
 		chip.isOPM = useOPM;
+		// Очерёдность отнятия голосов сбрасывается вместе с первым чипом типа,
+		// как раньше сбрасывался счётчик внутри чипа: иначе после перемотки
+		// ноты попадали бы в другие голоса, чем при игре с начала.
+		if(&chip == &m_chips[useOPM ? MaxChipsPerType : 0])
+			m_nextSteal[useOPM ? 1 : 0] = 0;
 		if(useOPM)
 		{
 			if(!chip.opm)
@@ -378,59 +391,71 @@ public:
 		}
 	}
 
+	void SetChipCount(bool opm, uint8 count)
+	{
+		m_chipCount[opm ? 1 : 0] = std::clamp<uint8>(count, 1, MaxChipsPerType);
+	}
+
 	void Patch(CHANNELINDEX channel, const OPN2Patch &patch, bool useOPM, const FMLfo &lfo = DefaultFMLfo)
 	{
-		Chip &chip = m_chips[useOPM ? 1 : 0];
-		if(!chip.Exists())
-			InitChip(chip, useOPM);
+		const size_t type = useOPM ? 1 : 0;
+		const size_t base = type * MaxChipsPerType;
+		const uint8 chips = m_chipCount[type];
+		const uint8 perChip = useOPM ? OPMChannels : OPN2Channels;
 
-		// A channel that moves between the two chips has to release its old voice first.
+		Chip *target = nullptr;
+		uint8 found = 0;
+		// Канал уже звучит на чипе этого типа — там и остаётся. Канал,
+		// переходящий на чип другого типа, сначала освобождает старый голос.
 		Chip *previousChip = nullptr;
 		uint8 previousIndex = 0;
-		if(Find(channel, &previousChip, &previousIndex) && previousChip != &chip)
-			NoteCut(channel, true);
-
-		const uint8 count = chip.NumChannels();
-		uint8 found = count;
-		for(uint8 i = 0; i < count; i++)
+		if(Find(channel, &previousChip, &previousIndex))
 		{
-			if(chip.slots[i].channel == channel)
+			if(previousChip->isOPM == useOPM)
 			{
-				found = i;
-				break;
+				target = previousChip;
+				found = previousIndex;
+			} else
+			{
+				NoteCut(channel, true);
 			}
 		}
-		if(found == count)
+		// Голос ищется по всем включённым чипам этого типа.
+		const auto pick = [&](auto &&suits)
 		{
-			// Notes starting on the same tick are assigned before any of them are keyed on,
-			// so keep their reservations while there are unused channels left.
-			for(uint8 i = 0; i < count; i++)
+			for(uint8 c = 0; c < chips && target == nullptr; c++)
 			{
-				if(chip.slots[i].channel == CHANNELINDEX_INVALID)
+				Chip &chip = m_chips[base + c];
+				for(uint8 i = 0; i < perChip; i++)
 				{
-					found = i;
-					break;
+					if(suits(chip, chip.slots[i]))
+					{
+						target = &chip;
+						found = i;
+						return;
+					}
 				}
 			}
-		}
-		if(found == count)
+		};
+		// Notes starting on the same tick are assigned before any of them are keyed on,
+		// so keep their reservations while there are unused channels left.
+		if(target == nullptr)
+			pick([](const Chip &, const Slot &slot) { return slot.channel == CHANNELINDEX_INVALID; });
+		// Голос с ожидающим ключом занят нотой этого тика, отбирать его
+		// нельзя: иначе в аккорде часть нот пропадёт.
+		if(target == nullptr)
+			pick([](const Chip &chip, const Slot &slot) { return chip.Exists() && !slot.keyed && slot.hasPlayed && !slot.keyOnDelay; });
+		if(target == nullptr)
 		{
-			for(uint8 i = 0; i < count; i++)
-			{
-				// Голос с ожидающим ключом занят нотой этого тика, отбирать его
-				// нельзя: иначе в аккорде часть нот пропадёт.
-				if(!chip.slots[i].keyed && chip.slots[i].hasPlayed && !chip.slots[i].keyOnDelay)
-				{
-					found = i;
-					break;
-				}
-			}
+			const size_t voices = static_cast<size_t>(chips) * perChip;
+			const size_t n = m_nextSteal[type] % voices;
+			m_nextSteal[type] = (n + 1) % voices;
+			target = &m_chips[base + n / perChip];
+			found = static_cast<uint8>(n % perChip);
 		}
-		if(found == count)
-		{
-			found = static_cast<uint8>(chip.next);
-			chip.next = (chip.next + 1) % count;
-		}
+		Chip &chip = *target;
+		if(!chip.Exists())
+			InitChip(chip, useOPM);
 
 		Slot &slot = chip.slots[found];
 		if(slot.channel != channel)

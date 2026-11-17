@@ -2613,6 +2613,9 @@ void CSoundFile::SaveExtendedSongProperties(std::ostream &f) const
 			packed |= static_cast<uint64>(m_chipVolume[i]) << (16 * i);
 		WriteModular(f, MagicLE("FCHV"), packed);
 	}
+	// Число чипов (полифония). Старые сборки поле пропустят и сыграют на одном.
+	if(m_fmChipCount[0] != 1 || m_fmChipCount[1] != 1)
+		WriteModular(f, MagicLE("FCCN"), static_cast<uint16>(m_fmChipCount[0] | (m_fmChipCount[1] << 8)));
 
 	if(GetType() == MOD_TYPE_XM && m_nDefaultGlobalVolume != MAX_GLOBAL_VOLUME)
 	{
@@ -2864,6 +2867,14 @@ bool CSoundFile::LoadExtendedSongProperties(FileReader &file, bool ignoreChannel
 							}
 						}
 					}
+				}
+				break;
+			case MagicLE("FCCN"):
+				{
+					uint16 counts = 0;
+					ReadField(chunk, size, counts);
+					m_fmChipCount[0] = static_cast<uint8>(std::clamp(counts & 0xFF, 1, 4));
+					m_fmChipCount[1] = static_cast<uint8>(std::clamp(counts >> 8, 1, 4));
 				}
 				break;
 			case MagicLE("FCHV"):
