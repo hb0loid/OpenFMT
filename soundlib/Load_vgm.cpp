@@ -107,6 +107,11 @@ struct VgmEvent
 	uint8 volume = 0;       // 0–64, 255 — не менять
 	int patch = -1;         // индекс тембра, -1 — не менять
 	int pan = -1;           // 0 влево, 128 по центру, 255 вправо, -1 — не менять
+	// Высота внутри ноты. legato — нота без нового удара (портаменто, которое
+	// в режиме слайдов Furnace доезжает за тик), fine — подстройка канала
+	// E5xx: 0x80 ровно, шаг 1/128 полутона.
+	bool legato = false;
+	int fine = -1;
 };
 
 // Голоса микросхем в этой сборке живут по нотной шкале Furnace, где до первой
@@ -131,6 +136,18 @@ ModCommand::NOTE NoteFromFrequency(double hertz, int shift = FMOctave)
 	if(note < NOTE_MIN || note > NOTE_MAX)
 		return NOTE_NONE;
 	return static_cast<ModCommand::NOTE>(note);
+}
+
+// Нота с дробной частью, в той же шкале, что и NoteFromFrequency.
+double ExactNote(double hertz, int shift = FMOctave)
+{
+	return 12.0 * std::log2(hertz / MiddleC) + static_cast<int>(NOTE_MIDDLEC) - shift;
+}
+
+// Подстройка E5xx для отклонения от ноты в полутонах (±1).
+int FineFromOffset(double offset)
+{
+	return std::clamp(0x80 + static_cast<int>(std::lround(offset * 128.0)), 1, 0xFF);
 }
 
 ModCommand::NOTE ClampedNote(double hertz, int shift = FMOctave)
@@ -316,6 +333,17 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// чтобы ловить ведение уровня по ходу ноты, а не только в момент нажатия.
 	std::array<ModCommand::NOTE, FMChannels> fmSounding{};
 	std::array<uint8, FMChannels> fmLastVolume{};
+	// Подстройка канала, которую сейчас держит движок: E5xx переживает ноты,
+	// поэтому пишем её только когда она меняется.
+	std::array<int, FMChannels> fmFine;
+	fmFine.fill(0x80);
+	// Нота, от которой движок считает высоту. В отличие от fmSounding она
+	// переживает снятие ключа: Furnace ведёт слайды и вибрато и на затухании.
+	std::array<ModCommand::NOTE, FMChannels> fmPitchNote{};
+	const auto fmHertz = [&](uint8 channel)
+	{
+		return fnum[channel] ? fnum[channel] * static_cast<double>(header.opn2Clock) / (144.0 * std::pow(2.0, 20 - block[channel])) : 0.0;
+	};
 	// Панорама: микросхема умеет только «влево», «вправо» и «в оба», и драйверы
 	// ею пользуются вовсю — голос, уведённый в одну сторону, звучит на шесть
 	// децибел тише того же голоса по центру. Пока мы её не переносили, тихие
@@ -415,15 +443,16 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 					continue;
 				if(value & 0xF0)
 				{
-					const double hertz = fnum[channel]
-						? fnum[channel] * static_cast<double>(header.opn2Clock) / (144.0 * std::pow(2.0, 20 - block[channel]))
-						: 0.0;
+					const double hertz = fmHertz(channel);
 					const auto note = NoteFromFrequency(hertz);
 					if(note != NOTE_NONE)
 					{
 						const auto [patch, volume] = patchAndVolume(channel);
-						events.push_back({sample, channel, note, volume, patch});
+						const int fine = FineFromOffset(ExactNote(hertz) - note);
+						events.push_back({sample, channel, note, volume, patch, -1, false, fine != fmFine[channel] ? fine : -1});
+						fmFine[channel] = fine;
 						fmSounding[channel] = note;
+						fmPitchNote[channel] = note;
 						fmLastVolume[channel] = volume;
 					}
 				} else
@@ -474,6 +503,39 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			{
 				const uint8 channel = static_cast<uint8>((port ? 3 : 0) + reg - 0xA0);
 				fnum[channel] = static_cast<uint16>((fnum[channel] & 0x700) | value);
+				// Запись младших битов и есть момент смены высоты: старшие чип
+				// держит в защёлке до неё. Если нота звучит, это слайд, вибрато
+				// или подстройка: в пределах полутона от ноты строки пишем E5xx,
+				// дальше — новую ноту без удара.
+				if(fmPitchNote[channel] != NOTE_NONE && !(channel == 5 && dacEnabled))
+				{
+					const double hertz = fmHertz(channel);
+					const bool keyed = fmSounding[channel] != NOTE_NONE;
+					if(NoteFromFrequency(hertz) != NOTE_NONE)
+					{
+						const double exact = ExactNote(hertz);
+						VgmEvent event{sample, channel, NOTE_NONE, 255, -1};
+						const bool farAway = std::abs(exact - fmPitchNote[channel]) > 127.0 / 128.0;
+						// Легато только у нажатой ноты: на затухании новая нота
+						// заново нажала бы ключ. Там уходим не дальше полутона.
+						if(farAway && keyed)
+						{
+							event.note = NoteFromFrequency(hertz);
+							event.legato = true;
+							if(keyed)
+								fmSounding[channel] = event.note;
+							fmPitchNote[channel] = event.note;
+						}
+						const int fine = FineFromOffset(exact - fmPitchNote[channel]);
+						if(fine != fmFine[channel])
+						{
+							event.fine = fine;
+							fmFine[channel] = fine;
+						}
+						if(event.legato || event.fine >= 0)
+							events.push_back(event);
+					}
+				}
 			}
 		} else if(code == 0x50)
 		{
@@ -663,6 +725,14 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	m_nDefaultRowsPerBeat = 4;
 	m_nDefaultRowsPerMeasure = 16;
 	m_SongFlags.set(SONG_LINEARSLIDES);
+	// Слайды и подстройка по правилам Furnace: портаменто работает и на первом
+	// тике (строка здесь — один тик), а E5xx держится в канале через ноты.
+	// Остановка у цели обязательна: иначе портаменто Furnace остаётся
+	// включённым и после легато, и следующие настоящие ноты тоже становятся
+	// легато — голос FM не нажимается заново, громкость проседает (Lava Reef 2).
+	m_furnaceSlides = 4 | FurnaceStopAtTarget;
+	m_playBehaviour = GetDefaultPlaybackBehaviour(MOD_TYPE_MPT);
+	m_playBehaviour.set(kFurnacePersistentFinetune);
 
 	// Тембры FM становятся инструментами, каналы PSG — четырьмя своими.
 	for(size_t i = 0; i < patches.size() && m_nSamples < MAX_SAMPLES - 1; i++)
@@ -678,7 +748,10 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		m_szNames[smp] = "FM " + std::to_string(i + 1);
 		const INSTRUMENTINDEX ins = ++m_nInstruments;
 		if(auto *instrument = AllocateInstrument(ins, smp); instrument != nullptr)
+		{
 			instrument->name = m_szNames[smp];
+			instrument->midiPWD = 1;  // E5xx: шаг 1/128 полутона
+		}
 	}
 	// Удары ЦАПа, записанные побайтно: одинаковые куски становятся одним
 	// сэмплом (сравниваем содержимое: у прямых записей адреса в блоке нет), а
@@ -746,7 +819,10 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		m_szNames[smp] = std::move(name);
 		const INSTRUMENTINDEX ins = ++m_nInstruments;
 		if(auto *instrument = AllocateInstrument(ins, smp); instrument != nullptr)
+		{
 			instrument->name = m_szNames[smp];
+			instrument->midiPWD = 1;  // E5xx: шаг 1/128 полутона
+		}
 		return true;
 	};
 	size_t dacMade = 0;
@@ -838,7 +914,10 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		m_szNames[smp] = (lane == 3) ? "PSG noise" : ("PSG tone " + std::to_string(lane + 1));
 		const INSTRUMENTINDEX ins = ++m_nInstruments;
 		if(auto *instrument = AllocateInstrument(ins, smp); instrument != nullptr)
+		{
 			instrument->name = m_szNames[smp];
+			instrument->midiPWD = 1;  // E5xx: шаг 1/128 полутона
+		}
 	}
 
 	for(CHANNELINDEX chn = 0; chn < VgmChannels; chn++)
@@ -867,6 +946,17 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		Order()[pat] = index;
 	}
 
+	// Эффект в ячейку: тот же эффект заменяем, иначе берём свободную колонку.
+	const auto setEffect = [](ModCommand &cell, EffectCommand command, uint8 param)
+	{
+		uint8 slot = 0;
+		while(slot < ModCommand::Effects() && cell.GetEffect(slot).first != command)
+			slot++;
+		if(slot == ModCommand::Effects())
+			slot = cell.FreeEffectSlot();
+		if(slot < ModCommand::Effects())
+			cell.SetEffect(slot, command, param);
+	};
 	for(const auto &event : events)
 	{
 		const uint32 row = event.sample / samplesPerRow;
@@ -879,19 +969,34 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			cell.note = event.note;
 			if(event.patch >= 0)
 				cell.instr = static_cast<ModCommand::INSTR>(event.patch + 1);
-			else if(event.channel >= FMChannels)
+			else if(event.channel >= FMChannels && !event.legato)
 				cell.instr = static_cast<ModCommand::INSTR>(firstPSG + event.channel - FMChannels + 1);
+			// В одной строке-кадре легато может смениться настоящим ударом:
+			// тогда портаменто от него убираем, иначе удар потеряется.
+			for(uint8 slot = 0; slot < ModCommand::Effects(); slot++)
+			{
+				if(cell.GetEffect(slot).first == CMD_TONEPORTAMENTO)
+					cell.SetEffect(slot, CMD_NONE, 0);
+			}
+			if(event.legato && !cell.instr)
+			{
+				// Портаменто движок ищет только в первой колонке: что там было,
+				// переезжает в свободную.
+				const auto [oldCommand, oldParam] = cell.GetEffect(0);
+				cell.SetEffect(0, CMD_TONEPORTAMENTO, 0xFF);
+				if(oldCommand != CMD_NONE)
+					setEffect(cell, oldCommand, oldParam);
+			}
 		}
+		if(event.fine >= 0)
+			setEffect(cell, CMD_FINETUNE, static_cast<uint8>(event.fine));
 		if(event.volume != 255)
 		{
 			cell.volcmd = VOLCMD_VOLUME;
 			cell.vol = std::min<uint8>(event.volume, 64);
 		}
 		if(event.pan >= 0)
-		{
-			cell.command = CMD_PANNING8;
-			cell.param = static_cast<ModCommand::PARAM>(event.pan);
-		}
+			setEffect(cell, CMD_PANNING8, static_cast<uint8>(event.pan));
 	}
 
 	m_modFormat.formatName = UL_("VGM (register log)");
