@@ -62,6 +62,10 @@ def main():
     name = f'OpenFMT-{version()}-win64'
     out = target / name
     if out.exists():
+        # Если из этой папки уже запускали программу, в ней лежат чьи-то
+        # настройки — стирать её нельзя.
+        if (out / 'mptrack.ini').exists():
+            sys.exit(f'{out} is in use (mptrack.ini found) — not overwriting it. Pass another folder.')
         shutil.rmtree(out)
     out.mkdir(parents=True)
 
