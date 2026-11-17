@@ -439,12 +439,116 @@ LRESULT DrawTrackbar(HWND trackbar, NMCUSTOMDRAW &draw)
 
 // Обычные кнопки и кнопки-переключатели (Mute, Surround). Кнопки с картинкой
 // и самодельные (BS_OWNERDRAW) не трогаем.
+int ScaleForWindow(HWND window, int value)
+{
+	const UINT dpi = GetDpiForWindow(window);
+	return MulDiv(value, dpi ? static_cast<int>(dpi) : 96, 96);
+}
+
+LRESULT DrawCheckBox(HWND button, NMCUSTOMDRAW &draw, bool radio)
+{
+	const LONG_PTR style = GetWindowLongPtrW(button, GWL_STYLE);
+	const HDC dc = draw.hdc;
+	const bool enabled = IsWindowEnabled(button) != FALSE;
+	const auto check = SendMessageW(button, BM_GETCHECK, 0, 0);
+	const bool hot = (draw.uItemState & CDIS_HOT) != 0;
+	RECT client = draw.rc;
+	FillColor(dc, client, Surface);
+	const int box = ScaleForWindow(button, 13);
+	const bool rightAligned = (style & BS_LEFTTEXT) != 0;
+	RECT mark{};
+	mark.top = (client.top + client.bottom - box) / 2;
+	mark.bottom = mark.top + box;
+	mark.left = rightAligned ? client.right - box : client.left;
+	mark.right = mark.left + box;
+	const COLORREF frame = !enabled ? Border : hot ? ThumbHot : Thumb;
+	const int saved = SaveDC(dc);
+	SelectObject(dc, GetStockObject(DC_PEN));
+	SelectObject(dc, GetStockObject(DC_BRUSH));
+	if(radio)
+	{
+		SetDCPenColor(dc, frame);
+		SetDCBrushColor(dc, Canvas);
+		Ellipse(dc, mark.left, mark.top, mark.right, mark.bottom);
+		if(check == BST_CHECKED)
+		{
+			const int inset = box / 4 + 1;
+			SetDCPenColor(dc, enabled ? Text : Muted);
+			SetDCBrushColor(dc, enabled ? Text : Muted);
+			Ellipse(dc, mark.left + inset, mark.top + inset, mark.right - inset, mark.bottom - inset);
+		}
+	} else
+	{
+		FillColor(dc, mark, check == BST_CHECKED ? (enabled ? Thumb : Border) : Canvas);
+		FrameColor(dc, mark, frame);
+		if(check == BST_CHECKED)
+		{
+			// Галочка из двух отрезков, толщиной в два пикселя при 100%.
+			SetDCPenColor(dc, enabled ? Text : Muted);
+			const int w = box;
+			for(int t = 0; t < std::max(2, ScaleForWindow(button, 2)); t++)
+			{
+				MoveToEx(dc, mark.left + w * 3 / 13, mark.top + w * 6 / 13 + t, nullptr);
+				LineTo(dc, mark.left + w * 5 / 13, mark.top + w * 9 / 13 + t);
+				LineTo(dc, mark.left + w * 10 / 13, mark.top + w * 3 / 13 + t);
+			}
+		} else if(check == BST_INDETERMINATE)
+		{
+			RECT inner = mark;
+			InflateRect(&inner, -box / 4, -box / 4);
+			FillColor(dc, inner, enabled ? Muted : Border);
+		}
+	}
+	wchar_t label[256]{};
+	GetWindowTextW(button, label, static_cast<int>(std::size(label)));
+	if(const auto font = reinterpret_cast<HFONT>(SendMessageW(button, WM_GETFONT, 0, 0)))
+		SelectObject(dc, font);
+	SetBkMode(dc, TRANSPARENT);
+	SetTextColor(dc, enabled ? Text : Muted);
+	RECT textRect = client;
+	const int gap = ScaleForWindow(button, 4);
+	if(rightAligned)
+		textRect.right = mark.left - gap;
+	else
+		textRect.left = mark.right + gap;
+	UINT format = DT_VCENTER | DT_END_ELLIPSIS | ((style & BS_MULTILINE) ? DT_WORDBREAK : DT_SINGLELINE);
+	if(rightAligned)
+		format |= DT_RIGHT;
+	if(SendMessageW(button, WM_QUERYUISTATE, 0, 0) & UISF_HIDEACCEL)
+		format |= DT_HIDEPREFIX;
+	if(style & BS_MULTILINE)
+	{
+		// DT_VCENTER работает только с одной строкой: центрируем сами.
+		RECT measure = textRect;
+		DrawTextW(dc, label, -1, &measure, format | DT_CALCRECT);
+		const int height = measure.bottom - measure.top;
+		textRect.top = std::max(textRect.top, (client.top + client.bottom - height) / 2);
+	}
+	DrawTextW(dc, label, -1, &textRect, format);
+	if((draw.uItemState & CDIS_FOCUS) && !(SendMessageW(button, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS))
+	{
+		RECT focus = textRect;
+		DrawTextW(dc, label, -1, &focus, format | DT_CALCRECT);
+		InflateRect(&focus, 1, 0);
+		FrameColor(dc, focus, Border);
+	}
+	RestoreDC(dc, saved);
+	return CDRF_SKIPDEFAULT;
+}
+
 LRESULT DrawButton(HWND button, NMCUSTOMDRAW &draw)
 {
 	if(draw.dwDrawStage != CDDS_PREPAINT)
 		return CDRF_DODEFAULT;
 	const LONG_PTR style = GetWindowLongPtrW(button, GWL_STYLE);
 	const LONG_PTR type = style & BS_TYPEMASK;
+	if(!(style & (BS_PUSHLIKE | BS_BITMAP | BS_ICON)) && !SendMessageW(button, BM_GETIMAGE, IMAGE_BITMAP, 0) && !SendMessageW(button, BM_GETIMAGE, IMAGE_ICON, 0))
+	{
+		if(type == BS_CHECKBOX || type == BS_AUTOCHECKBOX || type == BS_3STATE || type == BS_AUTO3STATE)
+			return DrawCheckBox(button, draw, false);
+		if(type == BS_RADIOBUTTON || type == BS_AUTORADIOBUTTON)
+			return DrawCheckBox(button, draw, true);
+	}
 	const bool push = type == BS_PUSHBUTTON || type == BS_DEFPUSHBUTTON;
 	const bool pushLike = (style & BS_PUSHLIKE) && (type == BS_CHECKBOX || type == BS_AUTOCHECKBOX || type == BS_RADIOBUTTON || type == BS_AUTORADIOBUTTON || type == BS_3STATE || type == BS_AUTO3STATE);
 	if((!push && !pushLike) || (style & (BS_BITMAP | BS_ICON)) || SendMessageW(button, BM_GETIMAGE, IMAGE_BITMAP, 0) || SendMessageW(button, BM_GETIMAGE, IMAGE_ICON, 0))
@@ -885,7 +989,36 @@ LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, U
 					Fill(draw.nmcd.hdc, rect, COLOR_BTNFACE);
 				}
 				draw.clrText = (state & CDIS_DISABLED) ? Muted : Text;
-				return TBCDRF_NOBACKGROUND | TBCDRF_NOEDGES | TBCDRF_NOOFFSET;
+				return TBCDRF_NOBACKGROUND | TBCDRF_NOEDGES | TBCDRF_NOOFFSET | CDRF_NOTIFYPOSTPAINT;
+			}
+			if(draw.nmcd.dwDrawStage == CDDS_ITEMPOSTPAINT)
+			{
+				// Стрелку раскрывающегося меню тема рисует тёмной на тёмном —
+				// её почти не видно. Закрашиваем и рисуем свою.
+				const HWND toolbar = notification.hwndFrom;
+				TBBUTTONINFOW info{sizeof(info)};
+				info.dwMask = TBIF_STYLE;
+				if(SendMessageW(toolbar, TB_GETBUTTONINFOW, draw.nmcd.dwItemSpec, reinterpret_cast<LPARAM>(&info)) >= 0
+					&& (info.fsStyle & BTNS_DROPDOWN) && !(info.fsStyle & BTNS_WHOLEDROPDOWN)
+					&& (SendMessageW(toolbar, TB_GETEXTENDEDSTYLE, 0, 0) & TBSTYLE_EX_DRAWDDARROWS))
+				{
+					RECT arrow = draw.nmcd.rc;
+					arrow.left = arrow.right - ScaleForWindow(toolbar, 12);
+					const UINT state = draw.nmcd.uItemState;
+					Fill(draw.nmcd.hdc, arrow, (state & (CDIS_CHECKED | CDIS_SELECTED)) ? COLOR_HIGHLIGHT : (state & CDIS_HOT) ? COLOR_3DLIGHT : COLOR_BTNFACE);
+					const int cx = (arrow.left + arrow.right) / 2, cy = (arrow.top + arrow.bottom) / 2;
+					const int size = std::max(2, ScaleForWindow(toolbar, 3));
+					POINT points[3] = {{cx - size, cy - size / 2}, {cx + size + 1, cy - size / 2}, {cx, cy + size / 2 + 1}};
+					const int saved = SaveDC(draw.nmcd.hdc);
+					SelectObject(draw.nmcd.hdc, GetStockObject(DC_PEN));
+					SelectObject(draw.nmcd.hdc, GetStockObject(DC_BRUSH));
+					const COLORREF color = (state & CDIS_DISABLED) ? Border : Text;
+					SetDCPenColor(draw.nmcd.hdc, color);
+					SetDCBrushColor(draw.nmcd.hdc, color);
+					Polygon(draw.nmcd.hdc, points, 3);
+					RestoreDC(draw.nmcd.hdc, saved);
+				}
+				return CDRF_DODEFAULT;
 			}
 		}
 		break;
