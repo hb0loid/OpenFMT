@@ -1051,8 +1051,10 @@ void Apply(HWND window)
 		|| ClassIs(window, L"SysHeader32") || ClassIs(window, L"ScrollBar"))
 	{
 		SetWindowTheme(window, L"DarkMode_Explorer", nullptr);
-	} else if(kind == 0 && (style & WS_CHILD) && IsAfxClass(window))
+	} else if((style & WS_CHILD) && ((kind == 0 && IsAfxClass(window)) || ClassIs(window, L"#32770")))
 	{
+		// Полосы прокрутки окна берут его тему: самодельные окна (список
+		// паттернов, редакторы) и вложенные диалоги (вкладка General).
 		SetWindowTheme(window, L"DarkMode_Explorer", nullptr);
 	} else if(ClassIs(window, L"ReBarWindow32"))
 	{
