@@ -130,6 +130,9 @@ protected:
 
 	int m_nXScroll = 0, m_nYScroll = 0;
 	int m_ledWidth = 0, m_ledHeight = 0;
+	int m_vuMeterBaseWidth = 0;    // По какой ширине канала построены столбики громкости
+	int m_secondEffectWidth = 0;   // Ширина второй пары колонок эффектов (0, если она скрыта везде)
+	std::vector<uint8> m_channelLayout;  // Число колонок эффектов по каналам на момент последнего пересчёта
 	std::bitset<PatternCursor::numColumns> m_visibleColumns;
 
 	// Cursor and selection positions
@@ -221,7 +224,31 @@ public:
 
 	int GetXScrollPos() const { return m_nXScroll; }
 	int GetYScrollPos() const { return m_nYScroll; }
-	int GetChannelWidth() const { return m_szCell.cx; }
+	// Ширина канала на экране. У канала с одной колонкой эффектов она меньше
+	// полной (m_szCell.cx) на ширину второй пары колонок.
+	int GetChannelWidth(CHANNELINDEX chn) const { return HasSecondEffectColumn(chn) ? m_szCell.cx : m_szCell.cx - m_secondEffectWidth; }
+	// Суммарная ширина каналов [first, last). Для first > last — со знаком минус.
+	int GetChannelsWidth(CHANNELINDEX first, CHANNELINDEX last) const;
+	// Левый край канала в координатах окна (с учётом прокрутки и шапки строк).
+	int GetChannelLeft(CHANNELINDEX chn) const;
+	// Показывает ли канал вторую пару колонок эффектов.
+	bool HasSecondEffectColumn(CHANNELINDEX chn) const;
+	// Видна ли колонка в данном канале: общая видимость плюс число колонок канала.
+	bool IsColumnVisible(CHANNELINDEX chn, PatternCursor::Columns column) const
+	{
+		if(!m_visibleColumns[column])
+			return false;
+		if((column == PatternCursor::effectColumn2 || column == PatternCursor::paramColumn2) && !HasSecondEffectColumn(chn))
+			return false;
+		return true;
+	}
+	// Первый канал, начиная с которого каналы до lastChn включительно
+	// помещаются в availWidth. От самого lastChn нужно lastChannelWidth
+	// точек (по умолчанию — вся его ширина). Не больше lastChn.
+	CHANNELINDEX GetFirstChannelToFit(CHANNELINDEX lastChn, int availWidth, int lastChannelWidth = -1) const;
+	// Сменилось ли число колонок эффектов у каналов; если да — пересчитать вид.
+	void CheckChannelLayout();
+	void SetChannelEffectColumns(CHANNELINDEX chn, uint8 numColumns);
 	int GetRowHeight() const { return m_szCell.cy; }
 	int GetSmoothScrollOffset() const;
 
@@ -481,6 +508,8 @@ protected:
 	afx_msg LRESULT OnCustomKeyMsg(WPARAM, LPARAM);
 	afx_msg void OnClearSelectionFromMenu();
 	afx_msg void OnToggleChannelScope();
+	afx_msg void OnEffectColumns1() { SetChannelEffectColumns(m_MenuCursor.GetChannel(), 1); }
+	afx_msg void OnEffectColumns2() { SetChannelEffectColumns(m_MenuCursor.GetChannel(), 2); }
 	void ApplyChannelScope();
 	afx_msg void OnSelectInstrument(UINT nid);
 	afx_msg void OnSelectPCNoteParam(UINT nid);
@@ -572,6 +601,8 @@ private:
 	void CreateVUMeterBitmap();
 
 	PatternCursor::Columns LastVisibleColumn() const noexcept;
+	// Последняя видимая колонка в конкретном канале.
+	PatternCursor::Columns LastVisibleColumn(CHANNELINDEX chn) const noexcept;
 
 public:
 	afx_msg void OnRButtonUp(UINT nFlags, CPoint point);

@@ -83,6 +83,8 @@ BEGIN_MESSAGE_MAP(CViewPattern, CModScrollView)
 	ON_COMMAND(ID_EDIT_UNDO,		&CViewPattern::OnEditUndo)
 	ON_COMMAND(ID_EDIT_REDO,		&CViewPattern::OnEditRedo)
 	ON_COMMAND(ID_PATTERN_CHANNELSCOPE,			&CViewPattern::OnToggleChannelScope)
+	ON_COMMAND(ID_PATTERN_EFFECTCOLS_1,			&CViewPattern::OnEffectColumns1)
+	ON_COMMAND(ID_PATTERN_EFFECTCOLS_2,			&CViewPattern::OnEffectColumns2)
 	ON_COMMAND(ID_CHANNEL_SETTINGS,	&CViewPattern::OnChannelSettings)
 	ON_COMMAND(ID_PATTERN_CHNRESET,	&CViewPattern::OnChannelReset)
 	ON_COMMAND(ID_PATTERN_MUTE,		&CViewPattern::OnMuteFromClick)
@@ -404,8 +406,8 @@ bool CViewPattern::SetCurrentColumn(CHANNELINDEX channel, PatternCursor::Columns
 		return false;
 	}
 
-	LimitMax(column, LastVisibleColumn());
-	while(!m_visibleColumns[column])
+	LimitMax(column, LastVisibleColumn(channel));
+	while(!IsColumnVisible(channel, column))
 		column = static_cast<PatternCursor::Columns>(column + 1);
 	m_Cursor.SetColumn(channel, column);
 
@@ -431,6 +433,17 @@ PatternCursor::Columns CViewPattern::LastVisibleColumn() const noexcept
 	}
 	return PatternCursor::firstColumn;
 
+}
+
+
+PatternCursor::Columns CViewPattern::LastVisibleColumn(CHANNELINDEX chn) const noexcept
+{
+	for(size_t i = PatternCursor::lastColumn; i > PatternCursor::firstColumn; i--)
+	{
+		if(IsColumnVisible(chn, static_cast<PatternCursor::Columns>(i)))
+			return static_cast<PatternCursor::Columns>(i);
+	}
+	return PatternCursor::firstColumn;
 }
 
 
@@ -507,19 +520,17 @@ bool CViewPattern::UpdateScrollbarPositions(bool updateHorizontalScrollbar)
 
 	if(updateHorizontalScrollbar)
 	{
-		UINT xofs = GetXScrollPos();
+		// Полоса прокрутки считает в каналах полной ширины (см. UpdateScrollSize),
+		// а помещается ли канал в окно — решают настоящие ширины каналов.
+		const CHANNELINDEX xofs = static_cast<CHANNELINDEX>(GetXScrollPos());
 		const CHANNELINDEX nchn = GetCurrentChannel();
 		if(nchn < xofs)
 		{
-			scroll.cx = (int)(xofs - nchn) * m_szCell.cx;
-			scroll.cx *= -1;
-		} else if(nchn > xofs)
+			scroll.cx = -(int)(xofs - nchn) * m_szCell.cx;
+		} else if(nchn > xofs && GetChannelsWidth(xofs, nchn + 1) > rect.right - m_szHeader.cx)
 		{
-			int maxcol = (rect.right - m_szHeader.cx) / m_szCell.cx;
-			if((nchn >= (xofs + maxcol)) && (maxcol >= 0))
-			{
-				scroll.cx = (int)(nchn - xofs - maxcol + 1) * m_szCell.cx;
-			}
+			const CHANNELINDEX firstChn = std::max(GetFirstChannelToFit(nchn, rect.right - m_szHeader.cx), static_cast<CHANNELINDEX>(xofs + 1));
+			scroll.cx = (int)(firstChn - xofs) * m_szCell.cx;
 		}
 	}
 	if(scroll.cx != 0 || scroll.cy != 0)
@@ -538,8 +549,6 @@ DragItem CViewPattern::GetDragItem(CPoint point, RECT &outRect) const
 	CRect rcClient, rect, plugRect;
 
 	GetClientRect(&rcClient);
-	rect.SetRect(m_szHeader.cx, 0, m_szHeader.cx + GetChannelWidth(), m_szHeader.cy);
-	plugRect.SetRect(m_szHeader.cx, m_szHeader.cy - m_szPluginHeader.cy, m_szHeader.cx + GetChannelWidth(), m_szHeader.cy);
 
 	const auto xOffset = static_cast<CHANNELINDEX>(GetXScrollPos());
 	const CHANNELINDEX numChannels = pSndFile->GetNumChannels();
@@ -547,24 +556,30 @@ DragItem CViewPattern::GetDragItem(CPoint point, RECT &outRect) const
 	// Checking channel headers
 	if(m_Status[psShowPluginNames])
 	{
+		int left = m_szHeader.cx;
 		for(CHANNELINDEX n = xOffset; n < numChannels; n++)
 		{
+			plugRect.SetRect(left, m_szHeader.cy - m_szPluginHeader.cy, left + GetChannelWidth(n), m_szHeader.cy);
 			if(plugRect.PtInRect(point))
 			{
 				outRect = plugRect;
 				return {DragItem::PluginName, n};
 			}
-			plugRect.OffsetRect(GetChannelWidth(), 0);
+			left = plugRect.right;
 		}
 	}
-	for(CHANNELINDEX n = xOffset; n < numChannels; n++)
 	{
-		if(rect.PtInRect(point))
+		int left = m_szHeader.cx;
+		for(CHANNELINDEX n = xOffset; n < numChannels; n++)
 		{
-			outRect = rect;
-			return {DragItem::ChannelHeader, n};
+			rect.SetRect(left, 0, left + GetChannelWidth(n), m_szHeader.cy);
+			if(rect.PtInRect(point))
+			{
+				outRect = rect;
+				return {DragItem::ChannelHeader, n};
+			}
+			left = rect.right;
 		}
-		rect.OffsetRect(GetChannelWidth(), 0);
 	}
 	if(pSndFile->Patterns.IsValidPat(m_nPattern) && (pSndFile->GetType() & (MOD_TYPE_XM | MOD_TYPE_IT | MOD_TYPE_MPT)))
 	{
@@ -630,20 +645,24 @@ bool CViewPattern::DragToSel(const PatternCursor &cursor, bool scrollHorizontal,
 	col = cursor.GetChannel();
 	if(scrollHorizontal && col < (int)pSndFile->GetNumChannels())
 	{
-		int maxcol = (rect.right - m_szHeader.cx) - 4;
-		maxcol -= GetColumnOffset(cursor.GetColumnType());
-		maxcol /= GetChannelWidth();
+		// Каналы разной ширины: смотрим, помещается ли в окно колонка
+		// курсора, считая настоящие ширины каналов от первого видимого.
+		const int availWidth = (rect.right - m_szHeader.cx) - 4;
+		const int columnOffset = static_cast<int>(GetColumnOffset(cursor.GetColumnType()));
 		if(col < xofs)
 		{
 			CSize size(-m_szCell.cx, 0);
 			if(!noMove)
 				size.cx = (col - xofs) * (int)m_szCell.cx;
 			OnScrollBy(size, TRUE);
-		} else if((col > xofs + maxcol) && (maxcol > 0))
+		} else if(col > xofs && GetChannelsWidth(static_cast<CHANNELINDEX>(xofs), static_cast<CHANNELINDEX>(col)) + columnOffset > availWidth)
 		{
 			CSize size(m_szCell.cx, 0);
 			if(!noMove)
-				size.cx = (col - maxcol + 1) * (int)m_szCell.cx;
+			{
+				const int firstChn = std::max(static_cast<int>(GetFirstChannelToFit(static_cast<CHANNELINDEX>(col), availWidth, columnOffset)), xofs + 1);
+				size.cx = (firstChn - xofs) * (int)m_szCell.cx;
+			}
 			OnScrollBy(size, TRUE);
 		}
 	}
@@ -2896,10 +2915,29 @@ void CViewPattern::OnResetChannelColors()
 }
 
 
+// Сменить число колонок эффектов у канала (1 или 2). Данные второго слота
+// не трогаются: он лишь прячется в редакторе и по-прежнему играет.
+void CViewPattern::SetChannelEffectColumns(CHANNELINDEX chn, uint8 numColumns)
+{
+	CModDoc *modDoc = GetDocument();
+	if(modDoc == nullptr || chn >= modDoc->GetNumChannels())
+		return;
+	numColumns = (numColumns == 1) ? uint8(1) : uint8(2);
+	CSoundFile &sndFile = modDoc->GetSoundFile();
+	if(sndFile.ChnSettings[chn].effectColumns == numColumns)
+		return;
+	modDoc->GetPatternUndo().PrepareChannelUndo(chn, 1, "Effect Columns");
+	sndFile.ChnSettings[chn].effectColumns = numColumns;
+	modDoc->SetModified();
+	CheckChannelLayout();
+	modDoc->UpdateAllViews(nullptr, GeneralHint(chn).Channels(), nullptr);
+}
+
+
 void CViewPattern::OnChannelSettings()
 {
 	CPoint pt = GetPointFromPosition(m_MenuCursor);
-	pt.x += GetChannelWidth() / 2;
+	pt.x += GetChannelWidth(m_MenuCursor.GetChannel()) / 2;
 	pt.y = m_szHeader.cy / 2;
 	ClientToScreen(&pt);
 	m_quickChannelProperties.Show(GetDocument(), m_MenuCursor.GetChannel(), pt);
@@ -4088,6 +4126,8 @@ void CViewPattern::SanitizeCursor()
 	{
 		const auto &pattern = GetSoundFile()->Patterns[m_nPattern];
 		m_Cursor.Sanitize(pattern.GetNumRows(), pattern.GetNumChannels(), LastVisibleColumn());
+		if(m_Cursor.GetColumnType() > LastVisibleColumn(m_Cursor.GetChannel()))
+			m_Cursor.SetColumn(m_Cursor.GetChannel(), LastVisibleColumn(m_Cursor.GetChannel()));
 		m_Selection.Sanitize(pattern.GetNumRows(), pattern.GetNumChannels(), LastVisibleColumn());
 	}
 };
@@ -4778,8 +4818,8 @@ LRESULT CViewPattern::OnCustomKeyMsg(WPARAM wParam, LPARAM lParam)
 
 		case kcEndHorizontalSelect:
 		case kcEndHorizontal:
-			if(m_Cursor.CompareColumn(PatternCursor(0, sndFile.GetNumChannels() - 1, LastVisibleColumn())) < 0)
-				SetCurrentColumn(sndFile.GetNumChannels() - 1, LastVisibleColumn());
+			if(m_Cursor.CompareColumn(PatternCursor(0, sndFile.GetNumChannels() - 1, LastVisibleColumn(sndFile.GetNumChannels() - 1))) < 0)
+				SetCurrentColumn(sndFile.GetNumChannels() - 1, LastVisibleColumn(sndFile.GetNumChannels() - 1));
 			else if(GetCurrentRow() < pModDoc->GetPatternSize(m_nPattern) - 1)
 				SetCurrentRow(pModDoc->GetPatternSize(m_nPattern) - 1);
 			return wParam;
@@ -4787,12 +4827,12 @@ LRESULT CViewPattern::OnCustomKeyMsg(WPARAM wParam, LPARAM lParam)
 		case kcEndVertical:
 			if(GetCurrentRow() < pModDoc->GetPatternSize(m_nPattern) - 1)
 				SetCurrentRow(pModDoc->GetPatternSize(m_nPattern) - 1);
-			else if(m_Cursor.CompareColumn(PatternCursor(0, sndFile.GetNumChannels() - 1, LastVisibleColumn())) < 0)
-				SetCurrentColumn(sndFile.GetNumChannels() - 1, LastVisibleColumn());
+			else if(m_Cursor.CompareColumn(PatternCursor(0, sndFile.GetNumChannels() - 1, LastVisibleColumn(sndFile.GetNumChannels() - 1))) < 0)
+				SetCurrentColumn(sndFile.GetNumChannels() - 1, LastVisibleColumn(sndFile.GetNumChannels() - 1));
 			return wParam;
 		case kcEndAbsoluteSelect:
 		case kcEndAbsolute:
-			SetCurrentColumn(sndFile.GetNumChannels() - 1, LastVisibleColumn());
+			SetCurrentColumn(sndFile.GetNumChannels() - 1, LastVisibleColumn(sndFile.GetNumChannels() - 1));
 			if(GetCurrentRow() < pModDoc->GetPatternSize(m_nPattern) - 1)
 				SetCurrentRow(pModDoc->GetPatternSize(m_nPattern) - 1);
 			return wParam;
@@ -4901,7 +4941,7 @@ LRESULT CViewPattern::OnCustomKeyMsg(WPARAM wParam, LPARAM lParam)
 		case kcShowEditMenu:
 			{
 				CPoint pt = GetPointFromPosition(m_Cursor);
-				pt.x += GetChannelWidth() / 2;
+				pt.x += GetChannelWidth(m_Cursor.GetChannel()) / 2;
 				pt.y += GetRowHeight() / 2;
 				OnRButtonUp(0, pt);
 			}
@@ -4909,7 +4949,7 @@ LRESULT CViewPattern::OnCustomKeyMsg(WPARAM wParam, LPARAM lParam)
 		case kcShowChannelCtxMenu:
 			{
 				CPoint pt = GetPointFromPosition(m_Cursor);
-				pt.x += GetChannelWidth() / 2;
+				pt.x += GetChannelWidth(m_Cursor.GetChannel()) / 2;
 				pt.y = (m_szHeader.cy - m_szPluginHeader.cy) / 2;
 				OnRButtonUp(0, pt);
 			}
@@ -4917,7 +4957,7 @@ LRESULT CViewPattern::OnCustomKeyMsg(WPARAM wParam, LPARAM lParam)
 		case kcShowChannelPluginCtxMenu:
 			{
 				CPoint pt = GetPointFromPosition(m_Cursor);
-				pt.x += GetChannelWidth() / 2;
+				pt.x += GetChannelWidth(m_Cursor.GetChannel()) / 2;
 				pt.y = m_szHeader.cy - m_szPluginHeader.cy / 2;
 				OnRButtonUp(0, pt);
 			}
@@ -5166,19 +5206,19 @@ void CViewPattern::MoveCursor(bool moveRight)
 		if((TrackerSettings::Instance().patternSetup & PatternSetup::CursorWrap) && m_Cursor.IsInFirstColumn())
 		{
 			// Wrap around to last channel
-			SetCurrentColumn(GetDocument()->GetNumChannels() - 1, LastVisibleColumn());
+			SetCurrentColumn(GetDocument()->GetNumChannels() - 1, LastVisibleColumn(GetDocument()->GetNumChannels() - 1));
 		} else if(!m_Cursor.IsInFirstColumn())
 		{
 			do
 			{
 				m_Cursor.Move(0, 0, -1);
-			} while(!m_visibleColumns[m_Cursor.GetColumnType()]);
+			} while(!IsColumnVisible(m_Cursor.GetChannel(), m_Cursor.GetColumnType()));
 			SetCurrentColumn(m_Cursor);
 		}
 	} else
 	{
 		// Move cursor one column to the right
-		const PatternCursor rightmost(0, GetDocument()->GetNumChannels() - 1, LastVisibleColumn());
+		const PatternCursor rightmost(0, GetDocument()->GetNumChannels() - 1, LastVisibleColumn(GetDocument()->GetNumChannels() - 1));
 		if(m_Cursor.CompareColumn(rightmost) >= 0)
 		{
 			if((TrackerSettings::Instance().patternSetup & PatternSetup::CursorWrap))
@@ -5194,7 +5234,7 @@ void CViewPattern::MoveCursor(bool moveRight)
 			do
 			{
 				m_Cursor.Move(0, 0, 1);
-			} while(!m_visibleColumns[m_Cursor.GetColumnType()]);
+			} while(!IsColumnVisible(m_Cursor.GetChannel(), m_Cursor.GetColumnType()));
 			SetCurrentColumn(m_Cursor);
 		}
 	}
@@ -7094,6 +7134,15 @@ bool CViewPattern::BuildChannelControlCtxMenu(HMENU hMenu, CInputHandler *ih) co
 	// Шапка канала умеет показывать либо столбики громкости, либо осциллограф.
 	AppendMenu(hMenu, MF_STRING | (TrackerSettings::Instance().patternChannelScope ? MF_CHECKED : 0),
 		ID_PATTERN_CHANNELSCOPE, _T("&Oscilloscope in Channel Header"));
+	// Число колонок эффектов у этого канала.
+	{
+		const CHANNELINDEX chn = m_MenuCursor.GetChannel();
+		const bool twoColumns = chn >= numChannels || GetDocument()->GetSoundFile().ChnSettings[chn].effectColumns != 1;
+		HMENU effectColumnsMenu = ::CreatePopupMenu();
+		AppendMenu(hMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(effectColumnsMenu), _T("&Effect Columns"));
+		AppendMenu(effectColumnsMenu, MF_STRING | (twoColumns ? 0 : MF_CHECKED), ID_PATTERN_EFFECTCOLS_1, _T("&1"));
+		AppendMenu(effectColumnsMenu, MF_STRING | (twoColumns ? MF_CHECKED : 0), ID_PATTERN_EFFECTCOLS_2, _T("&2"));
+	}
 	AppendMenu(hMenu, MF_SEPARATOR, 0, _T(""));
 	AppendMenu(hMenu, MF_STRING, ID_CHANNEL_SETTINGS, ih->GetKeyTextFromCommand(kcChannelSettings, _T("C&hannel Settings")));
 	AppendMenu(hMenu, MF_SEPARATOR, 0, _T(""));

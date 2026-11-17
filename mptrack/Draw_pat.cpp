@@ -160,6 +160,10 @@ bool CViewPattern::UpdateSizes()
 			m_szCell.cx += pfnt->nEltWidths[i];
 	}
 	m_szCell.cy = pfnt->nHeight;
+	// Вторая пара колонок эффектов: столько точек теряет канал, где она скрыта.
+	m_secondEffectWidth = 0;
+	if(m_visibleColumns[PatternCursor::effectColumn2])
+		m_secondEffectWidth = pfnt->nEltWidths[PatternCursor::effectColumn2] + pfnt->nEltWidths[PatternCursor::paramColumn2];
 
 	m_szHeader.cx = MulDiv(m_szHeader.cx, m_dpi, 96);
 	m_szHeader.cy = MulDiv(m_szHeader.cy, m_dpi, 96);
@@ -170,12 +174,90 @@ bool CViewPattern::UpdateSizes()
 		m_Dib.SetSize(m_Dib.GetWidth(), m_szCell.cy);
 	}
 
-	if(oldx != m_szCell.cx || oldy != m_szCell.cy)
+	// Столбики громкости общие для всех каналов, поэтому строятся по самому
+	// узкому каналу: иначе в канале с одной колонкой эффектов они вылезут
+	// на соседа.
+	int vuWidth = m_szCell.cx;
+	if(const CSoundFile *sndFile = GetSoundFile(); sndFile != nullptr && m_secondEffectWidth > 0)
 	{
+		for(CHANNELINDEX chn = 0; chn < sndFile->GetNumChannels(); chn++)
+		{
+			if(!HasSecondEffectColumn(chn))
+			{
+				vuWidth -= m_secondEffectWidth;
+				break;
+			}
+		}
+	}
+	if(oldx != m_szCell.cx || oldy != m_szCell.cy || vuWidth != m_vuMeterBaseWidth)
+	{
+		m_vuMeterBaseWidth = vuWidth;
 		CreateVUMeterBitmap();
 	}
 
 	return (oldx != m_szCell.cx || oldy != m_szCell.cy);
+}
+
+
+bool CViewPattern::HasSecondEffectColumn(CHANNELINDEX chn) const
+{
+	const CSoundFile *sndFile = GetSoundFile();
+	if(sndFile == nullptr || chn >= sndFile->GetNumChannels())
+		return true;
+	return sndFile->ChnSettings[chn].effectColumns != 1;
+}
+
+
+int CViewPattern::GetChannelsWidth(CHANNELINDEX first, CHANNELINDEX last) const
+{
+	if(first > last)
+		return -GetChannelsWidth(last, first);
+	int width = 0;
+	for(CHANNELINDEX chn = first; chn < last; chn++)
+		width += GetChannelWidth(chn);
+	return width;
+}
+
+
+int CViewPattern::GetChannelLeft(CHANNELINDEX chn) const
+{
+	return m_szHeader.cx + GetChannelsWidth(static_cast<CHANNELINDEX>(GetXScrollPos()), chn);
+}
+
+
+CHANNELINDEX CViewPattern::GetFirstChannelToFit(CHANNELINDEX lastChn, int availWidth, int lastChannelWidth) const
+{
+	if(lastChannelWidth < 0)
+		lastChannelWidth = GetChannelWidth(lastChn);
+	CHANNELINDEX first = lastChn;
+	int width = lastChannelWidth;
+	while(first > 0 && width + GetChannelWidth(first - 1) <= availWidth)
+	{
+		width += GetChannelWidth(first - 1);
+		first--;
+	}
+	return first;
+}
+
+
+void CViewPattern::CheckChannelLayout()
+{
+	const CSoundFile *sndFile = GetSoundFile();
+	if(sndFile == nullptr || !m_hWnd)
+		return;
+	std::vector<uint8> layout(sndFile->GetNumChannels());
+	for(CHANNELINDEX chn = 0; chn < sndFile->GetNumChannels(); chn++)
+		layout[chn] = HasSecondEffectColumn(chn) ? 2 : 1;
+	if(layout == m_channelLayout)
+		return;
+	m_channelLayout = std::move(layout);
+	UpdateSizes();
+	UpdateScrollSize();
+	UpdateScrollPos();
+	// Курсор мог остаться в скрытой теперь колонке.
+	if(!IsColumnVisible(m_Cursor.GetChannel(), m_Cursor.GetColumnType()))
+		SetCurrentColumn(m_Cursor);
+	InvalidatePattern(true, true);
 }
 
 
@@ -227,6 +309,8 @@ void CViewPattern::UpdateView(UpdateHint hint, CObject *pObj)
 	{
 		InvalidateChannelsHeaders();
 		UpdateScrollSize();
+		// Число колонок эффектов могло смениться (в том числе отменой).
+		CheckChannelLayout();
 	}
 	if(generalHint.GetType()[HINT_MODTYPE])
 	{
@@ -272,11 +356,11 @@ POINT CViewPattern::GetPointFromPosition(PatternCursor cursor) const
 
 	PatternCursor::Columns imax = cursor.GetColumnType();
 	LimitMax(imax, PatternCursor::lastColumn);
-	pt.x = (cursor.GetChannel() - xofs) * GetChannelWidth();
+	pt.x = GetChannelsWidth(static_cast<CHANNELINDEX>(xofs), cursor.GetChannel());
 
 	for(int i = 0; i < imax; i++)
 	{
-		if(m_visibleColumns[static_cast<PatternCursor::Columns>(i)])
+		if(IsColumnVisible(cursor.GetChannel(), static_cast<PatternCursor::Columns>(i)))
 			pt.x += pfnt->nEltWidths[i];
 	}
 
@@ -297,20 +381,37 @@ PatternCursor CViewPattern::GetPositionFromPoint(POINT pt) const
 	const PATTERNFONT *pfnt = PatternFont::currentFont;
 	int xofs = GetXScrollPos();
 	int yofs = GetYScrollPos();
-	int x = xofs + (pt.x - m_szHeader.cx) / GetChannelWidth();
-	if (pt.x < m_szHeader.cx) x = (xofs) ? xofs - 1 : 0;
+	// Каналы бывают разной ширины, поэтому канал под точкой ищется проходом
+	// слева направо. За последним каналом ширина считается полной.
+	int x = xofs, xx = -1;
+	if(pt.x < m_szHeader.cx)
+	{
+		x = (xofs) ? xofs - 1 : 0;
+	} else
+	{
+		xx = pt.x - m_szHeader.cx;
+		while(xx >= GetChannelWidth(static_cast<CHANNELINDEX>(x)))
+		{
+			xx -= GetChannelWidth(static_cast<CHANNELINDEX>(x));
+			x++;
+		}
+	}
 
 	int y = yofs - m_nMidRow + (pt.y - m_szHeader.cy + GetSmoothScrollOffset()) / m_szCell.cy;
 	if (y < 0) y = 0;
-	int xx = (pt.x - m_szHeader.cx) % GetChannelWidth(), dx = 0;
+	int dx = 0;
 	size_t i = 0;
 	for(; i < PatternCursor::lastColumn; i++)
 	{
-		if(m_visibleColumns[static_cast<PatternCursor::Columns>(i)])
-		dx += pfnt->nEltWidths[i];
+		if(IsColumnVisible(static_cast<CHANNELINDEX>(x), static_cast<PatternCursor::Columns>(i)))
+			dx += pfnt->nEltWidths[i];
 		if(xx < dx)
 			break;
 	}
+	// На разделителе каналов цикл доходит до последней колонки, а она может
+	// быть скрыта — тогда берём последнюю видимую.
+	while(i > 0 && !IsColumnVisible(static_cast<CHANNELINDEX>(x), static_cast<PatternCursor::Columns>(i)))
+		i--;
 	return PatternCursor(static_cast<ROWINDEX>(y), static_cast<CHANNELINDEX>(x), static_cast<PatternCursor::Columns>(i));
 }
 
@@ -563,6 +664,7 @@ void CViewPattern::OnDraw(CDC *pDC)
 	UpdateSizes();
 	if ((pModDoc = GetDocument()) == nullptr)
 		return;
+	CheckChannelLayout();
 	m_chnState.resize(pModDoc->GetNumChannels());
 
 	FlagSet<PatternSetup> patternSetup = TrackerSettings::Instance().patternSetup;
@@ -614,8 +716,8 @@ void CViewPattern::OnDraw(CDC *pDC)
 	CHANNELINDEX xofs = static_cast<CHANNELINDEX>(GetXScrollPos());
 	ROWINDEX yofs = static_cast<ROWINDEX>(GetYScrollPos());
 	const CSoundFile &sndFile = pModDoc->GetSoundFile();
-	const UINT nColumnWidth = m_szCell.cx;
 	const UINT numChannels = sndFile.GetNumChannels();
+	const int allChannelsWidth = GetChannelsWidth(0, static_cast<CHANNELINDEX>(numChannels));
 	int ypaint = rcClient.top + m_szHeader.cy - GetSmoothScrollOffset();
 	const auto &order = Order();
 	const ORDERINDEX ordCount = Order().GetLength();
@@ -659,7 +761,7 @@ void CViewPattern::OnDraw(CDC *pDC)
 					ROWINDEX n = std::min(static_cast<ROWINDEX>(nSkip), nPrevRows);
 
 					ypaint += (nSkip - n) * m_szCell.cy;
-					rect.SetRect(0, m_szHeader.cy, nColumnWidth * numChannels + m_szHeader.cx, ypaint - 1);
+					rect.SetRect(0, m_szHeader.cy, allChannelsWidth + m_szHeader.cx, ypaint - 1);
 					m_Dib.SetBlendMode(true);
 					DrawPatternData(hdc, lineWidth, nPrevPat, false, false,
 							nPrevRows - n, nPrevRows, xofs, rcClient, &ypaint);
@@ -667,7 +769,7 @@ void CViewPattern::OnDraw(CDC *pDC)
 				} else
 				{
 					ypaint += nSkip * m_szCell.cy;
-					rect.SetRect(0, m_szHeader.cy, nColumnWidth * numChannels + m_szHeader.cx, ypaint - 1);
+					rect.SetRect(0, m_szHeader.cy, allChannelsWidth + m_szHeader.cx, ypaint - 1);
 				}
 				if ((rect.bottom > rect.top) && (rect.right > rect.left))
 				{
@@ -714,7 +816,7 @@ void CViewPattern::OnDraw(CDC *pDC)
 			}
 		}
 		// Drawing outside pattern area
-		xpaint = m_szHeader.cx + (numChannels - xofs) * nColumnWidth;
+		xpaint = GetChannelLeft(static_cast<CHANNELINDEX>(numChannels));
 		if ((xpaint < rcClient.right) && (ypaint > rcClient.top))
 		{
 			rc.SetRect(xpaint, rcClient.top, rcClient.right, ypaint);
@@ -754,19 +856,22 @@ void CViewPattern::OnDraw(CDC *pDC)
 		const int dropWidth = HighDPISupport::ScalePixels(2, m_hWnd);
 		UINT chn = xofs;
 		ypaint = rcClient.top;
-		for(xpaint = m_szHeader.cx; xpaint < clipRect.right; xpaint += nColumnWidth, chn++)
+		for(xpaint = m_szHeader.cx; xpaint < clipRect.right; xpaint += GetChannelWidth(static_cast<CHANNELINDEX>(chn)), chn++)
 		{
+			const int nColumnWidth = GetChannelWidth(static_cast<CHANNELINDEX>(chn));
 			rect.SetRect(xpaint, ypaint, xpaint + nColumnWidth, ypaint + m_szHeader.cy);
 			if(chn < numChannels)
 			{
 				if(!pDC->RectVisible(rect))
 					continue;
 				const auto &channel = sndFile.ChnSettings[chn];
+				// Узкий канал (одна колонка эффектов) получает подпись покороче.
+				const auto numVisibleColums = m_visibleColumns.count() - ((m_secondEffectWidth > 0 && !HasSecondEffectColumn(static_cast<CHANNELINDEX>(chn))) ? 2 : 0);
 				const auto recordGroup = pModDoc->GetChannelRecordGroup(static_cast<CHANNELINDEX>(chn));
 				const char *pszfmt = sndFile.m_bChannelMuteTogglePending[chn]? "[Channel %u]" : "Channel %u";
 				if(channel.szName[0] != 0)
 					pszfmt = sndFile.m_bChannelMuteTogglePending[chn] ? "%u: [%s]" : "%u: %s";
-				else if(const auto numVisibleColums = m_visibleColumns.count(); numVisibleColums < 2)
+				else if(numVisibleColums < 2)
 					pszfmt = sndFile.m_bChannelMuteTogglePending[chn] ? "[%u]" : "%u";
 				else if(numVisibleColums < 3)
 					pszfmt = sndFile.m_bChannelMuteTogglePending[chn] ? "[Ch%u]" : "Ch%u";
@@ -901,15 +1006,15 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 	int xpaint, ypaint = *pypaint;
 	
 	const CHANNELINDEX ncols = sndFile.GetNumChannels();
-	const UINT nColumnWidth = m_szCell.cx;
-	rect.SetRect(m_szHeader.cx, rcClient.top, m_szHeader.cx+nColumnWidth, rcClient.bottom);
+	// Ширина у каналов своя: у канала с одной колонкой эффектов она меньше.
+	rect.SetRect(m_szHeader.cx, rcClient.top, m_szHeader.cx, rcClient.bottom);
 	for(CHANNELINDEX cmk = startChan; cmk < ncols; cmk++)
 	{
+		rect.left = rect.right;
+		rect.right += GetChannelWidth(cmk);
 		m_chnState[cmk].selectedCols = selEnable ? m_Selection.GetSelectionBits(cmk) : 0;
 		if(!::RectVisible(hdc, &rect))
 			m_chnState[cmk].selectedCols |= COLUMN_BITS_INVISIBLE;
-		rect.left += nColumnWidth;
-		rect.right += nColumnWidth;
 	}
 	// Max Visible Column
 	CHANNELINDEX maxcol = ncols;
@@ -928,15 +1033,22 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 	}
 
 	// Init bitmap border
+	// Разделители стоят по правому краю каждого канала. Каналы рисуются в
+	// картинку строки начиная с первого видимого, поэтому и разделители
+	// расставляются от него же, с шириной каждого канала.
 	{
-		UINT maxndx = sndFile.GetNumChannels() * m_szCell.cx;
-		UINT ibmp = 0;
-		if (maxndx > (UINT)m_Dib.GetWidth()) maxndx = m_Dib.GetWidth();
-		do
+		CHANNELINDEX firstDrawn = startChan;
+		while(firstDrawn < maxcol && (m_chnState[firstDrawn].selectedCols & COLUMN_BITS_INVISIBLE))
+			firstDrawn++;
+		const int dibWidth = m_Dib.GetWidth();
+		int ibmp = 0;
+		for(CHANNELINDEX chn = firstDrawn; chn < ncols; chn++)
 		{
-			ibmp += nColumnWidth;
+			ibmp += GetChannelWidth(chn);
+			if(ibmp > dibWidth)
+				break;
 			m_Dib.TextBlt(ibmp - SEPARATOR_WIDTH, 0, SEPARATOR_WIDTH, m_szCell.cy, pfnt->nClrX + pfnt->nWidth - SEPARATOR_WIDTH, pfnt->nClrY, pfnt->dib);
-		} while (ibmp + nColumnWidth <= maxndx);
+		}
 	}
 
 	// Time signature highlighting
@@ -1047,8 +1159,8 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 		while((m_chnState[col].selectedCols & COLUMN_BITS_INVISIBLE) && (col < maxcol))
 		{
 			m_chnState[col].selectedCols &= ~COLUMN_BITS_SKIP;
+			xpaint += GetChannelWidth(static_cast<CHANNELINDEX>(col));
 			col++;
-			xpaint += nColumnWidth;
 		}
 		// Optimization: same row color ?
 		const bool useSpeedUpMask = (oldrowcolor == EncodeRowColor(row_bkcol, row_col, bRowSel)) && !blendModeChanged;
@@ -1056,6 +1168,9 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 		do
 		{
 			int x = 0, xClear = 0, bk_col, tx_col, col_sel, fx_col;
+			const UINT nColumnWidth = GetChannelWidth(static_cast<CHANNELINDEX>(col));
+			// Вторая пара колонок эффектов: видна ли она в этом канале.
+			const bool showSecondEffect = IsColumnVisible(static_cast<CHANNELINDEX>(col), PatternCursor::effectColumn2);
 
 			const ModCommand *m = pattern.GetpModCommand(row, static_cast<CHANNELINDEX>(col));
 
@@ -1088,7 +1203,7 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 						dwSpeedUpMask |= COLUMN_BITS_VOLUME;
 					if ((m->command == mold->command) || !m_visibleColumns[PatternCursor::effectColumn])
 						dwSpeedUpMask |= (m->command != CMD_NONE) ? COLUMN_BITS_FXCMD : COLUMN_BITS_FXCMDANDPARAM;
-					if ((m->GetEffect(1) == mold->GetEffect(1)) || !m_visibleColumns[PatternCursor::effectColumn2])
+					if ((m->GetEffect(1) == mold->GetEffect(1)) || !showSecondEffect)
 						dwSpeedUpMask |= (m->GetEffect(1).first != CMD_NONE) ? COLUMN_BITS_FXCMD2 : COLUMN_BITS_FXCMDANDPARAM2;
 				}
 				if (dwSpeedUpMask == COLUMN_BITS_ALLCOLUMNS) goto DoBlit;
@@ -1300,7 +1415,7 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 			// только берётся из дополнительного слота ячейки. Пустая ячейка
 			// берёт точки из той же части шрифта, что и первый эффект: дальше
 			// по строке "чистого" образца в картинке шрифта уже нет.
-			if (m_visibleColumns[PatternCursor::effectColumn2])
+			if (showSecondEffect)
 			{
 				const int xClearFx = static_cast<int>(pfnt->nEltWidths[0] + pfnt->nEltWidths[1] + pfnt->nEltWidths[2]);
 				const auto [command2, parameter2] = m->GetEffect(1);
@@ -1363,7 +1478,7 @@ void CViewPattern::DrawPatternData(HDC hdc, const int lineWidth, PATTERNINDEX nP
 			nbmp++;
 			xbmp += nColumnWidth;
 			xpaint += nColumnWidth;
-			if ((xbmp + nColumnWidth >= (UINT)m_Dib.GetWidth()) || (xpaint >= rcClient.right)) break;
+			if ((xbmp + static_cast<UINT>(m_szCell.cx) >= (UINT)m_Dib.GetWidth()) || (xpaint >= rcClient.right)) break;
 		} while (++col < maxcol);
 		m_Dib.Blit(hdc, xpaint-xbmp, ypaint, xbmp, m_szCell.cy);
 		// skip row
@@ -1511,7 +1626,7 @@ void CViewPattern::DrawChannelVUMeter(HDC hdc, int x, int y, UINT nChn)
 
 	const auto oldBitmap = m_vuMeterDC.SelectObject(m_vuMeterBitmap);
 	const int srcOffsetX = isSynth ? barWidth * 2 : 0;
-	x += (m_szCell.cx / 2);
+	x += (GetChannelWidth(static_cast<CHANNELINDEX>(nChn)) / 2);
 	BitBlt(hdc, x - barWidth - (midSpacer - midSpacer / 2), y, barWidth, m_ledHeight, m_vuMeterDC, srcOffsetX, vuL * m_ledHeight, SRCCOPY);
 	BitBlt(hdc, x + midSpacer / 2, y, barWidth, m_ledHeight, m_vuMeterDC, srcOffsetX + barWidth, vuR * m_ledHeight, SRCCOPY);
 	m_vuMeterDC.SelectObject(oldBitmap);
@@ -1651,13 +1766,25 @@ void CViewPattern::UpdateScrollSize()
 
 	CRect rect;
 	SIZE sizeTotal, sizePage, sizeLine;
-	sizeTotal.cx = m_szHeader.cx + numChannels * m_szCell.cx;
+	GetClientRect(&rect);
+	// Горизонтальная полоса прокрутки считает в "условных" каналах полной
+	// ширины (m_szCell.cx на канал): номер первого видимого канала по-прежнему
+	// равен позиции, делённой на m_szCell.cx. Настоящие каналы бывают уже,
+	// поэтому длина полосы подбирается так, чтобы при крайней правой позиции
+	// последний канал как раз помещался в окно.
+	sizeTotal.cx = m_szHeader.cx + GetChannelsWidth(0, numChannels);
+	if(numChannels > 0 && sizeTotal.cx > rect.Width())
+	{
+		const CHANNELINDEX firstChn = GetFirstChannelToFit(numChannels - 1, rect.Width() - m_szHeader.cx);
+		sizeTotal.cx = firstChn * m_szCell.cx + rect.Width();
+		if(firstChn == 0)
+			sizeTotal.cx = rect.Width();
+	}
 	sizeTotal.cy = m_szHeader.cy + numRows * m_szCell.cy;
 	sizeLine.cx = m_szCell.cx;
 	sizeLine.cy = m_szCell.cy;
 	sizePage.cx = sizeLine.cx * 2;
 	sizePage.cy = sizeLine.cy * 8;
-	GetClientRect(&rect);
 	m_nMidRow = 0;
 	if(TrackerSettings::Instance().patternSetup & PatternSetup::CenterActiveRow)
 		m_nMidRow = (rect.Height() - m_szHeader.cy) / (m_szCell.cy * 2);
@@ -1751,7 +1878,7 @@ BOOL CViewPattern::OnScrollBy(CSize sizeScroll, BOOL bDoScroll)
 				InvalidateRect(&rect, FALSE);
 			} else
 			{
-				ScrollWindow((m_nXScroll - x) * GetChannelWidth(), 0, &rect, &rect);
+				ScrollWindow(GetChannelsWidth(static_cast<CHANNELINDEX>(x), static_cast<CHANNELINDEX>(m_nXScroll)), 0, &rect, &rect);
 			}
 			m_nXScroll = x;
 		}
@@ -1919,7 +2046,7 @@ void CViewPattern::InvalidateChannelsHeaders(CHANNELINDEX chn)
 	if(chn != CHANNELINDEX_INVALID)
 	{
 		rect.left = GetPointFromPosition(PatternCursor{ 0u, chn }).x;
-		rect.right = rect.left + GetChannelWidth();
+		rect.right = rect.left + GetChannelWidth(chn);
 	}
 	InvalidateRect(&rect, FALSE);
 }
@@ -2122,8 +2249,8 @@ void CViewPattern::UpdateAllVUMeters(Notification *pnotify)
 		if(!isPlaying || pnotify->type[Notification::Stop])
 			m_chnState[nChn].vuMeter = 0;
 		DrawChannelVUMeter(hdc, x, rcClient.top + yPos, nChn);
+		x += GetChannelWidth(nChn);
 		nChn++;
-		x += m_szCell.cx;
 	}
 	::ReleaseDC(m_hWnd, hdc);
 }
@@ -2151,7 +2278,7 @@ void CViewPattern::CreateVUMeterBitmap()
 	m_vuMeterDC.DeleteDC();
 	m_vuMeterDC.CreateCompatibleDC(dc);
 
-	const int availableWidth = m_szCell.cx - HighDPISupport::ScalePixels(2, m_hWnd);
+	const int availableWidth = (m_vuMeterBaseWidth > 0 ? m_vuMeterBaseWidth : m_szCell.cx) - HighDPISupport::ScalePixels(2, m_hWnd);
 	m_ledWidth = static_cast<int>(availableWidth / (VUMETERS_LEDS_PER_SIDE * 2 + 0.5f));
 	if(m_ledWidth < 2)
 	{

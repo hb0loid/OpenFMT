@@ -2729,6 +2729,24 @@ void CSoundFile::SaveExtendedSongProperties(std::ostream &f) const
 			}
 		}
 	}
+
+	// Число колонок эффектов в каждом канале (OpenFMT): байт на канал, до
+	// последнего канала с одной колонкой. Старые сборки поле пропустят и
+	// покажут обе колонки везде.
+	{
+		CHANNELINDEX numChannels = 0;
+		for(CHANNELINDEX i = 0; i < GetNumChannels(); i++)
+		{
+			if(ChnSettings[i].effectColumns != 2)
+				numChannels = i + 1;
+		}
+		if(numChannels > 0)
+		{
+			WriteModularHeader(f, MagicLE("OFEC"), numChannels);
+			for(CHANNELINDEX i = 0; i < numChannels; i++)
+				mpt::IO::WriteIntLE<uint8>(f, ChnSettings[i].effectColumns);
+		}
+	}
 #endif
 }
 
@@ -2910,6 +2928,15 @@ bool CSoundFile::LoadExtendedSongProperties(FileReader &file, bool ignoreChannel
 						else
 							ChnSettings[i].color = rgb[0] | (rgb[1] << 8) | (rgb[2] << 16);
 					}
+				}
+				break;
+
+			case MagicLE("OFEC"):
+				// Число колонок эффектов по каналам (OpenFMT), байт на канал.
+				{
+					const CHANNELINDEX numChannels = std::min(static_cast<CHANNELINDEX>(std::min(size_t(size), size_t(MAX_BASECHANNELS))), GetNumChannels());
+					for(CHANNELINDEX i = 0; i < numChannels; i++)
+						ChnSettings[i].effectColumns = (chunk.ReadUint8() == 1) ? uint8(1) : uint8(2);
 				}
 				break;
 #endif
