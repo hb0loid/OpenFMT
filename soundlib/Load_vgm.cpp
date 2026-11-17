@@ -302,7 +302,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	struct Hit { uint32 start = 0, bytes = 0, first = 0, last = 0; };
 	Hit hit;
 	bool hitOpen = false;
-	uint32 silentRun = 0, silentFrom = 0;
+
 	std::vector<Hit> hits;
 	const auto flushHit = [&]()
 	{
@@ -310,37 +310,52 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			hits.push_back(hit);
 		hitOpen = false;
 	};
-	constexpr uint32 SilenceBytes = 1600;  // ~50 мс на 32 кГц
+	// ЦАП держит записанное значение до следующей записи, а пишут в него
+	// неравномерно: Furnace при прямых записях — то чаще, то реже. Поэтому
+	// поток снимается по времени лога, по значению на каждый его отсчёт
+	// (44100 Гц): тогда внутри длинного куска удары стоят там же, где в логе.
+	// Раньше частота куска считалась как «байты на время» по всему куску, и в
+	// Death Egg Robot (104 с одним куском) удары разъезжались.
+	// Кусок кончается, когда значение долго не меняется — тишина у ЦАПа не
+	// обязательно 128 (там же это 138).
+	constexpr uint32 SilenceSamples = VgmRate / 20;
+	uint8 dacLevel = 0x80;
+	uint32 dacSince = 0, lastChange = 0;
+	const auto closeHit = [&]()
+	{
+		if(!hitOpen)
+			return;
+		const uint32 keep = std::min<uint32>(hit.bytes, lastChange - hit.first + 1);
+		raw.resize(hit.start + keep);
+		hit.bytes = keep;
+		hit.last = hit.first + keep;
+		flushHit();
+	};
 	const auto appendDAC = [&](uint8 value, uint32 when)
 	{
-		const bool silent = value >= 127 && value <= 129;
-		if(hitOpen && when - hit.last > VgmRate / 20)
-			flushHit();
-		if(!hitOpen)
+		if(hitOpen)
 		{
-			if(silent)
-				return;
-			hit = Hit{static_cast<uint32>(raw.size()), 0, when, when};
-			hitOpen = true;
-			silentRun = 0;
-		}
-		raw.push_back(value);
-		hit.bytes++;
-		hit.last = when;
-		if(silent)
-		{
-			if(silentRun++ == 0)
-				silentFrom = when;
-			if(silentRun >= SilenceBytes)
+			if(when - lastChange > SilenceSamples)
 			{
-				hit.bytes -= silentRun;
-				hit.last = silentFrom;
-				flushHit();
+				closeHit();
+			} else if(when > dacSince)
+			{
+				raw.insert(raw.end(), when - dacSince, dacLevel);
+				hit.bytes += when - dacSince;
+				hit.last = when;
 			}
-		} else
-		{
-			silentRun = 0;
 		}
+		if(value != dacLevel)
+		{
+			if(!hitOpen)
+			{
+				hit = Hit{static_cast<uint32>(raw.size()), 0, when, when};
+				hitOpen = true;
+			}
+			lastChange = when;
+		}
+		dacLevel = value;
+		dacSince = when;
 	};
 	// Потоковый ЦАП (команды 0x90-0x95): так выгружает Furnace. Каждый блок
 	// данных типа 0 — один сэмпл, команда 0x95 запускает блок с частотой,
@@ -610,6 +625,8 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			registers[port][reg] = value;
 			if(code == 0x52 && reg == 0x2B)
 				dacEnabled = (value & 0x80) != 0;
+				if(!dacEnabled)
+					closeHit();
 			if(code == 0x52 && reg == 0x2A)
 			{
 				if(dacEnabled)
@@ -884,7 +901,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		{
 			if(pos + 4 > data.size())
 				break;
-			flushHit();
+			closeHit();
 			pcmPointer = ReadLE32(data, pos);
 			pos += 4;
 		} else if(code >= 0x90 && code <= 0x95)
@@ -1051,7 +1068,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		}
 	}
 
-	flushHit();
+	closeHit();
 	if(events.empty())
 		return false;
 
