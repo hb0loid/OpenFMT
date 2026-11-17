@@ -604,6 +604,88 @@ void RepaintListSelection(HWND list)
 	ReleaseDC(list, dc);
 }
 
+void DrawChevron(HDC dc, const RECT &area, COLORREF color)
+{
+	const int cx = (area.left + area.right) / 2, cy = (area.top + area.bottom) / 2;
+	const int saved = SaveDC(dc);
+	SelectObject(dc, GetStockObject(DC_PEN));
+	SetDCPenColor(dc, color);
+	for(int i = 0; i < 2; i++)
+	{
+		MoveToEx(dc, cx - 4, cy - 2 + i, nullptr);
+		LineTo(dc, cx, cy + 2 + i);
+		LineTo(dc, cx + 5, cy - 3 + i);
+	}
+	RestoreDC(dc, saved);
+}
+
+bool ComboIsHot(HWND combo)
+{
+	POINT mouse{};
+	GetCursorPos(&mouse);
+	RECT rect{};
+	GetWindowRect(combo, &rect);
+	return PtInRect(&rect, mouse) != FALSE;
+}
+
+// Список без своей строки ввода и без самодельной отрисовки — целиком сами.
+bool ComboFullyOurs(HWND combo)
+{
+	const LONG_PTR style = GetWindowLongPtrW(combo, GWL_STYLE);
+	return (style & 3) == CBS_DROPDOWNLIST && !(style & (CBS_OWNERDRAWFIXED | CBS_OWNERDRAWVARIABLE));
+}
+
+void DrawCombo(HWND combo, HDC dc)
+{
+	RECT client{};
+	GetClientRect(combo, &client);
+	const bool enabled = IsWindowEnabled(combo) != FALSE;
+	const bool dropped = SendMessageW(combo, CB_GETDROPPEDSTATE, 0, 0) != 0;
+	const bool hot = enabled && (dropped || ComboIsHot(combo));
+	FillColor(dc, client, hot ? ButtonHot : ButtonFace);
+	FrameColor(dc, client, ButtonBorder);
+	const int arrowWidth = GetSystemMetrics(SM_CXVSCROLL);
+	RECT arrow = client;
+	arrow.left = arrow.right - arrowWidth;
+	DrawChevron(dc, arrow, enabled ? Muted : Border);
+	RECT textRect = client;
+	textRect.right = arrow.left;
+	InflateRect(&textRect, -2, -2);
+	if(GetFocus() == combo && !dropped)
+		FillColor(dc, textRect, Selection);
+	wchar_t text[512]{};
+	GetWindowTextW(combo, text, static_cast<int>(std::size(text)));
+	const int saved = SaveDC(dc);
+	if(const auto font = reinterpret_cast<HFONT>(SendMessageW(combo, WM_GETFONT, 0, 0)))
+		SelectObject(dc, font);
+	SetBkMode(dc, TRANSPARENT);
+	SetTextColor(dc, enabled ? Text : Muted);
+	textRect.left += 2;
+	DrawTextW(dc, text, -1, &textRect, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+	RestoreDC(dc, saved);
+}
+
+// Список со строкой ввода или самодельной отрисовкой: содержимое рисует он
+// сам, а светлые рамку и кнопку со стрелкой перекрываем.
+void DrawComboFrame(HWND combo)
+{
+	RECT client{};
+	GetClientRect(combo, &client);
+	const HDC dc = GetDC(combo);
+	const int saved = SaveDC(dc);
+	if(COMBOBOXINFO info{sizeof(info)}; GetComboBoxInfo(combo, &info) && info.hwndItem && info.hwndItem != combo)
+		ExcludeWindow(dc, combo, info.hwndItem);
+	const bool enabled = IsWindowEnabled(combo) != FALSE;
+	FrameColor(dc, client, ButtonBorder);
+	RECT arrow = client;
+	InflateRect(&arrow, -1, -1);
+	arrow.left = arrow.right - GetSystemMetrics(SM_CXVSCROLL);
+	FillColor(dc, arrow, (enabled && ComboIsHot(combo)) ? ButtonHot : ButtonFace);
+	DrawChevron(dc, arrow, enabled ? Muted : Border);
+	RestoreDC(dc, saved);
+	ReleaseDC(combo, dc);
+}
+
 LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR id, DWORD_PTR kind)
 {
 	switch(msg)
@@ -656,7 +738,7 @@ LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, U
 		return reinterpret_cast<LRESULT>(Brush(color));
 	}
 	case WM_ERASEBKGND:
-		if(kind == 2 || kind == 3 || kind == 5 || kind == 6 || kind == 7)
+		if(kind == 2 || kind == 3 || kind == 5 || kind == 6 || kind == 7 || (kind == 9 && ComboFullyOurs(window)))
 			return TRUE;
 		if(kind == 1 || kind == 4)
 		{
@@ -684,6 +766,22 @@ LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, U
 		{
 			const LRESULT result = DefSubclassProc(window, msg, wParam, lParam);
 			PaintMessageBoxFooter(window);
+			return result;
+		}
+		if(kind == 9)
+		{
+			if(ComboFullyOurs(window))
+			{
+				PAINTSTRUCT paint{};
+				const HDC dc = msg == WM_PAINT ? BeginPaint(window, &paint) : reinterpret_cast<HDC>(wParam);
+				DrawCombo(window, dc);
+				if(msg == WM_PAINT)
+					EndPaint(window, &paint);
+				return 0;
+			}
+			const LRESULT result = DefSubclassProc(window, msg, wParam, lParam);
+			if(msg == WM_PAINT)
+				DrawComboFrame(window);
 			return result;
 		}
 		if(kind == 7)
@@ -812,6 +910,34 @@ LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, U
 	{
 		switch(msg)
 		{
+		case WM_MOUSEMOVE:
+		case WM_LBUTTONDOWN:
+		case WM_LBUTTONUP:
+		case WM_KEYDOWN:
+		case WM_MOUSEWHEEL:
+		case WM_VSCROLL:
+		case WM_TIMER:
+		case LB_SETCURSEL:
+		case LB_SETTOPINDEX:
+		{
+			const auto selected = SendMessageW(window, LB_GETCURSEL, 0, 0);
+			const auto top = SendMessageW(window, LB_GETTOPINDEX, 0, 0);
+			SendMessageW(window, WM_SETREDRAW, FALSE, 0);
+			const LRESULT quiet = DefSubclassProc(window, msg, wParam, lParam);
+			SendMessageW(window, WM_SETREDRAW, TRUE, 0);
+			if(selected != SendMessageW(window, LB_GETCURSEL, 0, 0) || top != SendMessageW(window, LB_GETTOPINDEX, 0, 0))
+			{
+				// Полоса прокрутки — часть рамки окна, её тоже обновить.
+				RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_UPDATENOW);
+			}
+			return quiet;
+		}
+		}
+	}
+	if(kind == 8)
+	{
+		switch(msg)
+		{
 		case WM_PAINT:
 		case WM_MOUSEMOVE:
 		case WM_LBUTTONDOWN:
@@ -826,9 +952,9 @@ LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, U
 			break;
 		}
 	}
-	if(kind == 7 && (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP || msg == WM_MOUSEMOVE || msg == WM_MOUSELEAVE || msg == WM_ENABLE))
+	if((kind == 7 || kind == 9) && (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP || msg == WM_MOUSEMOVE || msg == WM_MOUSELEAVE || msg == WM_ENABLE || msg == WM_SETFOCUS || msg == WM_KILLFOCUS))
 		InvalidateRect(window, nullptr, FALSE);
-	if((kind == 2 || kind == 7) && msg == WM_MOUSEMOVE)
+	if((kind == 2 || kind == 7 || kind == 9) && msg == WM_MOUSEMOVE)
 	{
 		TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, window, 0};
 		TrackMouseEvent(&tracking);
@@ -871,6 +997,8 @@ void Apply(HWND window)
 		kind = 7;
 	else if(ClassIs(window, L"ComboLBox"))
 		kind = 8;
+	else if(ClassIs(window, L"ComboBox"))
+		kind = 9;
 	else if(ClassIs(window, L"#32770") || ClassIs(window, L"ReBarWindow32")
 		|| (GetDlgCtrlID(window) >= AFX_IDW_DOCKBAR_TOP && GetDlgCtrlID(window) <= AFX_IDW_DOCKBAR_RIGHT))
 		kind = 4;
