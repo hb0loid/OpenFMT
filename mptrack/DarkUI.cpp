@@ -1179,6 +1179,21 @@ LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, U
 			RestoreDC(dc, saved);
 			return TRUE;
 		}
+		if(kind == 0)
+		{
+			// Фон из системного цвета класса Windows заливает сама, мимо
+			// GetSysColor. Подставляем свою кисть, но только на время заливки:
+			// навсегда менять класс нельзя — MFC строит из него новые классы
+			// окон, а при снятии класса Windows удаляет его кисть.
+			const auto classBrush = static_cast<UINT_PTR>(GetClassLongPtrW(window, GCLP_HBRBACKGROUND));
+			if(classBrush > 0 && classBrush <= COLOR_MENUBAR + 1)
+			{
+				SetClassLongPtrW(window, GCLP_HBRBACKGROUND, reinterpret_cast<LONG_PTR>(Brush(static_cast<int>(classBrush - 1))));
+				const LRESULT result = DefSubclassProc(window, msg, wParam, lParam);
+				SetClassLongPtrW(window, GCLP_HBRBACKGROUND, static_cast<LONG_PTR>(classBrush));
+				return result;
+			}
+		}
 		break;
 	case WM_PRINTCLIENT:
 	case WM_PAINT:
@@ -1475,15 +1490,6 @@ void Apply(HWND window)
 		|| (GetDlgCtrlID(window) >= AFX_IDW_DOCKBAR_TOP && GetDlgCtrlID(window) <= AFX_IDW_DOCKBAR_RIGHT))
 		kind = 4;
 
-	// Фон из системного цвета класса Windows заливает сама, мимо GetSysColor.
-	// Подставляем свою кисть (классы этого процесса, системе не мешает).
-	const auto classBrush = static_cast<UINT_PTR>(GetClassLongPtrW(window, GCLP_HBRBACKGROUND));
-	if(classBrush > 0 && classBrush <= COLOR_MENUBAR + 1
-		&& !ClassIs(window, L"Button") && !ClassIs(window, L"Static") && !ClassIs(window, L"Edit")
-		&& !ClassIs(window, L"ComboBox") && !ClassIs(window, L"ListBox") && !ClassIs(window, L"ScrollBar"))
-	{
-		SetClassLongPtrW(window, GCLP_HBRBACKGROUND, reinterpret_cast<LONG_PTR>(Brush(static_cast<int>(classBrush - 1))));
-	}
 	if((style & WS_CHILD) && ClassIs(window, L"#32770"))
 	{
 		const LONG_PTR exStyle = GetWindowLongPtrW(window, GWL_EXSTYLE);
@@ -1622,10 +1628,17 @@ HBRUSH Brush(int index)
 {
 	if(!active || index < 0 || index > COLOR_MENUBAR)
 		return realGetSysColorBrush(index);
+	// Системные кисти удалить нельзя, и кое-где код (MFC, OpenMPT) спокойно
+	// удаляет кисть, полученную из GetSysColorBrush. Наши — удаляются, после
+	// чего цвета превращаются в мусор, а Windows начинает отказывать в
+	// ресурсах. Поэтому каждую выдачу проверяем: кисть жива и того же цвета.
 	static std::array<HBRUSH, COLOR_MENUBAR + 1> brushes{};
-	if(!brushes[index])
-		brushes[index] = CreateSolidBrush(Color(index));
-	return brushes[index];
+	HBRUSH &brush = brushes[index];
+	const COLORREF color = Color(index);
+	LOGBRUSH info{};
+	if(!brush || GetObjectType(brush) != OBJ_BRUSH || !GetObjectW(brush, sizeof(info), &info) || info.lbStyle != BS_SOLID || info.lbColor != color)
+		brush = CreateSolidBrush(color);
+	return brush;
 }
 }
 OPENMPT_NAMESPACE_END
