@@ -1217,7 +1217,7 @@ bool CSoundFile::ReadIT(FileReader &file, ModLoadingFlags loadFlags)
 			if(chnMask[ch] & 8)
 			{
 				const auto [command, param] = patternData.ReadArray<uint8, 2>();
-				if((hasPSGHeader || GetType() == MOD_TYPE_MPT) && command >= 0x80 && command < 0x85)
+				if((hasPSGHeader || GetType() == MOD_TYPE_MPT) && command >= 0x80 && command < 0x86)
 				{
 					m.command = static_cast<ModCommand::COMMAND>(CMD_PSG_NOISE + command - 0x80);
 					m.param = param;
@@ -2014,7 +2014,7 @@ bool CSoundFile::SaveIT(std::ostream &f, const mpt::PathString &filename, bool c
 					b |= 4;
 				} else if(m->command != CMD_NONE)
 				{
-					if(chips && m->command >= CMD_PSG_NOISE && m->command <= CMD_FM_LEVEL4)
+					if(chips && m->command >= CMD_PSG_NOISE && m->command <= CMD_ARP_SPEED)
 					{
 						command = static_cast<uint8>(0x80 + m->command - CMD_PSG_NOISE);
 						param = m->param;

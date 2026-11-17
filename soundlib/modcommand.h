@@ -126,6 +126,7 @@ enum EffectCommand : uint8
 	CMD_FM_LEVEL2          = 60,
 	CMD_FM_LEVEL3          = 61,
 	CMD_FM_LEVEL4          = 62,
+	CMD_ARP_SPEED          = 63, // Furnace E0xx: скорость арпеджио, тиков на ступень
 	MAX_EFFECTS
 };
 

@@ -691,6 +691,57 @@ bool CSoundFile::ReadChipPresetSample(SAMPLEINDEX smp, FileReader &file)
 	}
 	if(!fm && !psg)
 	{
+		// DefleMask .dmp для SMS (PSG): версия 11, система 3, режим 0 (STD).
+		// Макросы громкости, арпеджио, «duty» (у SMS это режим шума) и волны:
+		// длина, значения по 4 байта, точка петли (только если длина не 0);
+		// у арпеджио ещё байт режима: 1 — фиксированные ноты.
+		FileReader dmp = file;
+		dmp.Rewind();
+		if(dmp.CanRead(3) && dmp.ReadUint8() == 11 && dmp.ReadUint8() == 3 && dmp.ReadUint8() == 0)
+		{
+			auto patch = std::make_shared<PSGPatch>();
+			bool ok = true;
+			const auto readMacro = [&](PSGSequence *target, bool hasMode)
+			{
+				if(!dmp.CanRead(1))
+				{
+					ok = false;
+					return false;
+				}
+				const auto length = dmp.ReadUint8();
+				if(!dmp.CanRead(length * 4u + (length ? 1u : 0u) + (hasMode ? 1u : 0u)))
+				{
+					ok = false;
+					return false;
+				}
+				std::vector<int32> values(length);
+				for(auto &value : values)
+					value = dmp.ReadInt32LE();
+				const uint8 loop = length ? dmp.ReadUint8() : uint8(255);
+				const bool fixed = hasMode && dmp.ReadUint8() == 1;
+				if(target)
+				{
+					for(auto &value : values)
+						if(fixed)
+							value ^= 0x40000000;
+					target->values = std::move(values);
+					target->loop = loop;
+				}
+				return true;
+			};
+			readMacro(&patch->macros[PSGPatch::Volume], false);
+			if(ok) readMacro(&patch->macros[PSGPatch::Arpeggio], true);
+			if(ok) readMacro(&patch->macros[PSGPatch::Duty], false);
+			if(ok) readMacro(nullptr, false);  // волна: у SMS её нет
+			if(ok)
+			{
+				patch->furnacePitch = true;
+				psg = std::move(patch);
+			}
+		}
+	}
+	if(!fm && !psg)
+	{
 		for(const auto format : {YM2612PresetFormat::OPNI, YM2612PresetFormat::DMP, YM2612PresetFormat::TFI})
 		{
 			FileReader presetFile = file;
@@ -1402,12 +1453,8 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		std::vector<uint8> volumeSlide(voices.size(), 0);
 		Order().resize(orders);
 		size_t phase = 0;
-		// Скорость арпеджио у этой версии Furnace общая на песню: `E0xx`
-		// меняет её всем каналам сразу (arpSpeedGlobal). Своей команды для
-		// этого у нас нет, поэтому смотрим, какая скорость действует там, где
-		// стоит арпеджио, проходя песню в порядке игры, и берём самую частую.
-		uint8 arpSpeedNow = std::max<uint8>(arpLength, 1);
-		std::map<uint8, unsigned> arpSpeedUse;
+		// Скорость арпеджио у этой версии Furnace общая на песню: `E0xx` меняет её
+		// всем каналам сразу (arpSpeedGlobal). У нас это команда `=xx` (CMD_ARP_SPEED).
 		for(ORDERINDEX order = 0; order < orders; order++)
 		{
 			const auto pat = Patterns.InsertAny(rows);
@@ -1530,14 +1577,6 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 							bank[c] = value;
 							continue;
 						}
-						if(fx == 0xe0)
-						{
-							if(value)
-								arpSpeedNow = value;
-							continue;
-						}
-						if(fx == 0x00 && value)
-							arpSpeedUse[arpSpeedNow]++;
 						if(fx == 0x17 && dacChannel)
 						{
 							legacyDAC[c] = value != 0;
@@ -1552,6 +1591,13 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 						{
 							command = CMD_PSG_NOISE;
 							argument = (value & 1) | ((value & 0x10) >> 3);
+						} else if(fx == 0xe0)
+						{
+							// E0xx — общая скорость арпеджио, может меняться посреди песни.
+							if(!value)
+								continue;
+							command = CMD_ARP_SPEED;
+							argument = value;
 						} else if(fx >= 0x12 && fx <= 0x15 && (voice == FurVoice::OPN2 || voice == FurVoice::OPM))
 						{
 							command = static_cast<EffectCommand>(CMD_FM_LEVEL1 + fx - 0x12);
@@ -1611,6 +1657,7 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 							case CMD_FM_LEVEL2:
 							case CMD_FM_LEVEL3:
 							case CMD_FM_LEVEL4:
+							case CMD_ARP_SPEED:
 								return 5;
 							case CMD_SPEED:
 							case CMD_TEMPO:
@@ -1785,15 +1832,6 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 			}
 		}
 		m_furnaceArpSpeed = std::max<uint8>(arpLength, 1);
-		unsigned bestUse = 0;
-		for(const auto &[speed, use] : arpSpeedUse)
-		{
-			if(use > bestUse)
-			{
-				bestUse = use;
-				m_furnaceArpSpeed = speed;
-			}
-		}
 	}
 	m_modFormat.formatName = UL_("Furnace (editable import)");
 	m_modFormat.type = UL_("fur");

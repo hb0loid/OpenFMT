@@ -65,6 +65,7 @@ public:
 	// Global volume
 public:
 	int32 m_nGlobalVolume = MAX_GLOBAL_VOLUME;  // Current global volume (0...MAX_GLOBAL_VOLUME)
+	uint8 m_furnaceArpSpeed = 0;  // Скорость арпеджио после `=xx` (E0xx Furnace); 0 — как в свойствах песни
 protected:
 	// Global volume ramping
 	int32 m_nSamplesToGlobalVolRampDest = 0, m_nGlobalVolumeRampAmount = 0;

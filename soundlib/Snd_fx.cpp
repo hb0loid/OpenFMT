@@ -95,6 +95,7 @@ public:
 		state->m_ppqPosFract = 0.0;
 		state->m_ppqPosBeat = 0;
 		state->m_nGlobalVolume = sndFile.m_nDefaultGlobalVolume;
+		state->m_furnaceArpSpeed = 0;
 		state->m_lastMovedChannel = CHANNELINDEX_INVALID;
 		state->m_globalScriptState.Initialize(sndFile);
 		chnSettings.assign(sndFile.GetNumChannels(), {});
@@ -1096,6 +1097,9 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 				} else if(chipCommand == CMD_PSG_NOISE)
 				{
 					chn.furnaceSlide.psgNoise = static_cast<int8>(chipParam & 3);
+				} else if(chipCommand == CMD_ARP_SPEED && chipParam)
+				{
+					playState.m_furnaceArpSpeed = chipParam;
 				} else if(chipCommand == CMD_ARPEGGIO && m_furnaceSlides)
 				{
 					// Арпеджио Furnace держится в канале до `J00`: после старта
@@ -1629,6 +1633,7 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 			m_PlayState.m_nMusicSpeed = Order(sequence).GetDefaultSpeed();
 			m_PlayState.m_nMusicTempo = Order(sequence).GetDefaultTempo();
 			m_PlayState.m_nGlobalVolume = m_nDefaultGlobalVolume;
+			m_PlayState.m_furnaceArpSpeed = 0;
 		}
 		// When adjusting the playback status, we will also want to update the visited rows vector according to the current position.
 		if(sequence != Order.GetCurrentSequenceIndex())
@@ -2837,6 +2842,21 @@ bool CSoundFile::ProcessEffects()
 	m_PlayState.m_breakRow = ROWINDEX_INVALID;    // Is changed if a break to row command is encountered
 	m_PlayState.m_patLoopRow = ROWINDEX_INVALID;  // Is changed if a pattern loop jump-back is executed
 	m_PlayState.m_posJump = ORDERINDEX_INVALID;
+
+	// Скорость арпеджио общая для всех каналов, и Furnace меняет её раньше,
+	// чем шагает арпеджио любого канала, — поэтому до основного прохода.
+	if(m_PlayState.m_flags[SONG_FIRSTTICK])
+	{
+		for(CHANNELINDEX nChn = 0; nChn < GetNumChannels(); nChn++)
+		{
+			for(uint8 slot = 0; slot < ModCommand::Effects(); slot++)
+			{
+				const auto [cmd, param] = m_PlayState.Chn[nChn].rowCommand.GetEffect(slot);
+				if(cmd == CMD_ARP_SPEED && param)
+					m_PlayState.m_furnaceArpSpeed = param;
+			}
+		}
+	}
 
 	for(CHANNELINDEX nChn = 0; nChn < GetNumChannels(); nChn++)
 	{
@@ -4097,6 +4117,10 @@ bool CSoundFile::ProcessEffects()
 				m_opl->FMOperatorLevel(nChn, static_cast<uint8>(cmd - CMD_FM_LEVEL1), static_cast<uint8>(param & 127));
 			break;
 
+		case CMD_ARP_SPEED:
+			// Уже учтено перед проходом по каналам.
+			break;
+
 		case CMD_TONEPORTA_DURATION:
 			if(chn.rowCommand.IsNote() && triggerNote)
 				TonePortamentoWithDuration(chn, static_cast<ModCommand::PARAM>(param));
@@ -4210,7 +4234,7 @@ bool CSoundFile::ProcessEffects()
 				{
 					if(--fs.arpTicks < 1)
 					{
-						fs.arpTicks = std::max<uint8>(m_furnaceArpSpeed, 1);
+						fs.arpTicks = std::max<uint8>(m_PlayState.m_furnaceArpSpeed ? m_PlayState.m_furnaceArpSpeed : m_furnaceArpSpeed, 1);
 						if(++fs.arpStage > 2)
 							fs.arpStage = 0;
 						fs.arpOffset = static_cast<int8>(fs.arpStage == 1 ? (fs.arp >> 4) : fs.arpStage == 2 ? (fs.arp & 0x0F) : 0);

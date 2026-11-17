@@ -920,6 +920,7 @@ void CSoundFile::ResetPlayPos()
 	m_PlayState.m_flags.reset(SONG_FADINGSONG | SONG_ENDREACHED);
 
 	m_PlayState.m_nGlobalVolume = m_nDefaultGlobalVolume;
+	m_PlayState.m_furnaceArpSpeed = 0;
 	m_PlayState.m_nMusicSpeed = Order().GetDefaultSpeed();
 	m_PlayState.m_nMusicTempo = Order().GetDefaultTempo();
 

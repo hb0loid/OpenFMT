@@ -142,6 +142,7 @@ static constexpr MPTEffectInfo gFXInfo[] =
 	{CMD_FM_LEVEL2, 0, 0, 127, MOD_TYPE_MPT, _T("FM Operator 2 Level")},
 	{CMD_FM_LEVEL3, 0, 0, 127, MOD_TYPE_MPT, _T("FM Operator 3 Level")},
 	{CMD_FM_LEVEL4, 0, 0, 127, MOD_TYPE_MPT, _T("FM Operator 4 Level")},
+	{CMD_ARP_SPEED, 0, 0, 255, MOD_TYPE_MPT, _T("Arpeggio Speed (ticks per step)")},
 };
 
 
