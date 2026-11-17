@@ -85,7 +85,8 @@ def main():
             if path.is_file():
                 z.write(path, Path(name) / path.relative_to(out))
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-    (target / f'{name}.zip.sha256').write_text(f'{digest}  {archive.name}\n', encoding='ascii')
+    # Перевод строки только LF: иначе `sha256sum -c` считает \r частью имени файла.
+    (target / f'{name}.zip.sha256').write_bytes(f'{digest}  {archive.name}\n'.encode('ascii'))
     print(archive, archive.stat().st_size, digest)
 
 
