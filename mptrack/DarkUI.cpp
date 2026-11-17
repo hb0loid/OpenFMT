@@ -33,9 +33,9 @@ constexpr COLORREF Track = RGB(50, 54, 60);
 constexpr COLORREF Thumb = RGB(80, 98, 120);
 constexpr COLORREF ThumbHot = RGB(98, 120, 146);
 constexpr COLORREF Tick = RGB(66, 70, 78);
-constexpr COLORREF ButtonFace = RGB(39, 42, 47);
-constexpr COLORREF ButtonHot = RGB(48, 52, 58);
-constexpr COLORREF ButtonBorder = RGB(56, 60, 67);
+constexpr COLORREF ButtonFace = RGB(35, 37, 42);
+constexpr COLORREF ButtonHot = RGB(45, 48, 54);
+constexpr COLORREF ButtonBorder = RGB(50, 53, 60);
 
 using GetSysColorFn = DWORD (WINAPI *)(int);
 using GetSysColorBrushFn = HBRUSH (WINAPI *)(int);
@@ -567,6 +567,43 @@ void DrawUpDown(HWND window, HDC dc)
 	RestoreDC(dc, saved);
 }
 
+// Выпадающая часть списка (ComboLBox): выделенную строку Windows рисует
+// системным цветом выделения прямо при движении мыши, мимо WM_PAINT и
+// любой темы, — у многих он белый. Перерисовываем её поверх своими цветами.
+void RepaintListSelection(HWND list)
+{
+	const LONG_PTR style = GetWindowLongPtrW(list, GWL_STYLE);
+	if((style & (LBS_OWNERDRAWFIXED | LBS_OWNERDRAWVARIABLE)) && !(style & LBS_HASSTRINGS))
+		return;
+	const auto selected = static_cast<int>(SendMessageW(list, LB_GETCURSEL, 0, 0));
+	if(selected < 0)
+		return;
+	RECT rect{};
+	if(SendMessageW(list, LB_GETITEMRECT, selected, reinterpret_cast<LPARAM>(&rect)) == LB_ERR)
+		return;
+	RECT client{};
+	GetClientRect(list, &client);
+	if(!IntersectRect(&rect, &rect, &client))
+		return;
+	const auto length = SendMessageW(list, LB_GETTEXTLEN, selected, 0);
+	if(length == LB_ERR || length > 1024)
+		return;
+	std::wstring text(static_cast<size_t>(length) + 1, L'\0');
+	SendMessageW(list, LB_GETTEXT, selected, reinterpret_cast<LPARAM>(text.data()));
+	const HDC dc = GetDC(list);
+	const int saved = SaveDC(dc);
+	if(const auto font = reinterpret_cast<HFONT>(SendMessageW(list, WM_GETFONT, 0, 0)))
+		SelectObject(dc, font);
+	Fill(dc, rect, COLOR_HIGHLIGHT);
+	SetBkMode(dc, TRANSPARENT);
+	SetTextColor(dc, Text);
+	RECT textRect = rect;
+	textRect.left += 2;
+	DrawTextW(dc, text.c_str(), -1, &textRect, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_EXPANDTABS);
+	RestoreDC(dc, saved);
+	ReleaseDC(list, dc);
+}
+
 LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR id, DWORD_PTR kind)
 {
 	switch(msg)
@@ -771,6 +808,24 @@ LRESULT CALLBACK DarkProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam, U
 	if((kind == 2 && (msg == TCM_SETCURSEL || msg == WM_SETFOCUS || msg == WM_KILLFOCUS || msg == WM_MOUSELEAVE || msg == WM_MOUSEMOVE))
 		|| (kind == 3 && (msg == SB_SETTEXTW || msg == SB_SETTEXTA)))
 		InvalidateRect(window, nullptr, FALSE);
+	if(kind == 8)
+	{
+		switch(msg)
+		{
+		case WM_PAINT:
+		case WM_MOUSEMOVE:
+		case WM_LBUTTONDOWN:
+		case WM_LBUTTONUP:
+		case WM_KEYDOWN:
+		case WM_MOUSEWHEEL:
+		case WM_VSCROLL:
+		case WM_TIMER:
+		case LB_SETCURSEL:
+		case WM_SHOWWINDOW:
+			RepaintListSelection(window);
+			break;
+		}
+	}
 	if(kind == 7 && (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP || msg == WM_MOUSEMOVE || msg == WM_MOUSELEAVE || msg == WM_ENABLE))
 		InvalidateRect(window, nullptr, FALSE);
 	if((kind == 2 || kind == 7) && msg == WM_MOUSEMOVE)
@@ -814,6 +869,8 @@ void Apply(HWND window)
 		kind = 6;
 	else if(ClassIs(window, L"msctls_updown32"))
 		kind = 7;
+	else if(ClassIs(window, L"ComboLBox"))
+		kind = 8;
 	else if(ClassIs(window, L"#32770") || ClassIs(window, L"ReBarWindow32")
 		|| (GetDlgCtrlID(window) >= AFX_IDW_DOCKBAR_TOP && GetDlgCtrlID(window) <= AFX_IDW_DOCKBAR_RIGHT))
 		kind = 4;
