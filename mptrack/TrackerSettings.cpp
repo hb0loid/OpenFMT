@@ -245,7 +245,7 @@ TrackerSettings::TrackerSettings(SettingsContainer &conf)
 	, MixerVolumeRampUpMicroseconds(conf, UL_("Sound Settings"), UL_("VolumeRampUpMicroseconds"), MixerSettings().GetVolumeRampUpMicroseconds())
 	, MixerVolumeRampDownMicroseconds(conf, UL_("Sound Settings"), UL_("VolumeRampDownMicroseconds"), MixerSettings().GetVolumeRampDownMicroseconds())
 	, MixerNumInputChannels(conf, UL_("Sound Settings"), UL_("NumInputChannels"), static_cast<uint32>(MixerSettings().NumInputChannels))
-	, ResamplerMode(conf, UL_("Sound Settings"), UL_("SrcMode"), CResamplerSettings().SrcMode)
+	, ResamplerMode(conf, UL_("Sound Settings"), UL_("SrcMode"), SRCMODE_NEAREST)  // OpenFMT: чиптюн звучит честнее без интерполяции
 	, ResamplerSubMode(conf, UL_("Sound Settings"), UL_("XMMSModplugResamplerWFIRType"), CResamplerSettings().gbWFIRType)
 	, ResamplerCutoffPercent(conf, UL_("Sound Settings"), UL_("ResamplerWFIRCutoff"), mpt::saturate_round<int32>(CResamplerSettings().gdWFIRCutoff * 100.0))
 	, ResamplerEmulateAmiga(conf, UL_("Sound Settings"), UL_("ResamplerEmulateAmiga"), Resampling::AmigaFilter::A1200)
