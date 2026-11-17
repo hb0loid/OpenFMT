@@ -9,6 +9,7 @@
 
 
 #include "stdafx.h"
+#include "OpenFMTVersion.h"
 #include "WelcomeDialog.h"
 #include "CommandSet.h"
 #include "InputHandler.h"
@@ -133,6 +134,33 @@ BOOL WelcomeDlg::OnInitDialog()
 	GetDlgItem(IDC_STATIC_WELCOME_STATISTICS)->SetWindowText(mpt::ToCString(mpt::replace(CUpdateCheck::GetStatisticsUserInformation(false), U_("\n"), U_(" "))));
 #endif // MPT_ENABLE_UPDATE
 	CheckDlgButton(IDC_CHECK2, (TrackerSettings::Instance().patternFont.Get().name == PATTERNFONT_LARGE) ? BST_CHECKED : BST_UNCHECKED);
+
+	SetWindowText(_T("Welcome to ") _T(OPENFMT_NAME) _T("!"));
+#if !defined(MPT_ENABLE_UPDATE)
+	// Проверки обновлений и статистики у OpenFMT нет: эти пункты прячем, а
+	// остальное поднимаем на их место, чтобы не оставалось дыры.
+	{
+		CRect first, below;
+		GetDlgItem(IDC_CHECK1)->GetWindowRect(first);
+		GetDlgItem(IDC_CHECK2)->GetWindowRect(below);
+		ScreenToClient(first);
+		ScreenToClient(below);
+		const int shift = below.top - first.top;
+		for(const UINT id : {IDC_CHECK1, IDC_CHECK3, IDC_STATIC_WELCOME_STATISTICS})
+			GetDlgItem(id)->ShowWindow(SW_HIDE);
+		for(CWnd *child = GetWindow(GW_CHILD); child != nullptr; child = child->GetWindow(GW_HWNDNEXT))
+		{
+			CRect rect;
+			child->GetWindowRect(rect);
+			ScreenToClient(rect);
+			if(rect.top >= below.top)
+				child->SetWindowPos(nullptr, rect.left, rect.top - shift, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+		}
+		CRect window;
+		GetWindowRect(window);
+		SetWindowPos(nullptr, 0, 0, window.Width(), window.Height() - shift, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+	}
+#endif // !MPT_ENABLE_UPDATE
 
 	ShowWindow(SW_SHOW);
 

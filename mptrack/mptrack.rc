@@ -349,7 +349,7 @@ END
 
 IDD_INPUT DIALOGEX 0, 0, 166, 66
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTERMOUSE | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "OpenMPT"
+CAPTION "OpenFMT"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
     LTEXT           "",IDC_PROMPT,6,6,156,12
@@ -402,7 +402,7 @@ END
 
 IDD_WECLOME DIALOGEX 0, 0, 257, 266
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "Welcome to OpenMPT!"
+CAPTION "Welcome to OpenFMT!"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
     DEFPUSHBUTTON   "&OK",IDOK,198,248,50,14
@@ -495,9 +495,9 @@ EXSTYLE WS_EX_CLIENTEDGE
 CAPTION "MIDI Input / Output"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    GROUPBOX        "MIDI Input Device (&Sends MIDI data to OpenMPT):",IDC_STATIC,6,7,239,32
+    GROUPBOX        "MIDI Input Device (&Sends MIDI data to OpenFMT):",IDC_STATIC,6,7,239,32
     COMBOBOX        IDC_COMBO1,12,18,228,12,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    GROUPBOX        "MIDI Output Device (&Receives MIDI data from OpenMPT):",IDC_STATIC,6,48,240,48
+    GROUPBOX        "MIDI Output Device (&Receives MIDI data from OpenFMT):",IDC_STATIC,6,48,240,48
     COMBOBOX        IDC_COMBO2,12,60,228,12,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     LTEXT           "Output &Latency:",IDC_STATIC,12,80,60,8
     EDITTEXT        IDC_EDIT1,72,78,36,12,ES_AUTOHSCROLL | ES_NUMBER
@@ -519,7 +519,7 @@ STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSM
 CAPTION "Wine"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    CONTROL         "Enable Wine native host support (requires restarting OpenMPT)",IDC_CHECK_WINE_ENABLE,
+    CONTROL         "Enable Wine native host support (requires restarting OpenFMT)",IDC_CHECK_WINE_ENABLE,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,6,6,275,10
     LTEXT           "P&ortAudio:",IDC_STATIC_WINE_PORTAUDIO,18,42,42,12,SS_CENTERIMAGE
     COMBOBOX        IDC_COMBO_WINE_PORTAUDIO,66,42,48,83,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
@@ -753,7 +753,7 @@ END
 IDD_MISSINGPLUGS DIALOGEX 0, 0, 307, 170
 STYLE DS_SETFONT | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME
 EXSTYLE WS_EX_APPWINDOW
-CAPTION "Plugins Not Found - OpenMPT"
+CAPTION "Plugins Not Found - OpenFMT"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
     DEFPUSHBUTTON   "&OK",IDOK,252,150,50,14
@@ -828,7 +828,7 @@ END
 
 IDD_ABOUTBOX DIALOGEX 0, 0, 340, 266
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
-CAPTION "About OpenMPT"
+CAPTION "About OpenFMT"
 FONT 8, "MS Shell Dlg", 0, 0, 0x1
 BEGIN
     DEFPUSHBUTTON   "OK",IDOK,264,78,66,14,WS_GROUP
@@ -1074,7 +1074,7 @@ BEGIN
     COMBOBOX        IDC_COMBO4,222,72,86,30,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     CONTROL         "&Pass MIDI to active instrument plugin",IDC_MIDI_TO_PLUGIN,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,18,84,204,12
-    CONTROL         "&Enable MIDI recording when OpenMPT starts",IDC_CHECK3,
+    CONTROL         "&Enable MIDI recording when OpenFMT starts",IDC_CHECK3,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,18,96,204,12
     GROUPBOX        "MIDI Recording - Volume and Controllers",IDC_STATIC,6,120,312,120
     CONTROL         "Record Note &Off",IDC_CHECK2,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,18,138,237,8
@@ -2961,7 +2961,7 @@ BEGIN
         MENUITEM "&Web Resources",              ID_NETLINK_TOP_PICKS
         MENUITEM SEPARATOR
         MENUITEM "Check for &Updates...",       ID_INTERNETUPDATE
-        MENUITEM "&About OpenMPT",              ID_APP_ABOUT
+        MENUITEM "&About OpenFMT",              ID_APP_ABOUT
     END
 END
 
@@ -3099,8 +3099,8 @@ END
 
 STRINGTABLE
 BEGIN
-    ID_APP_ABOUT            "About OpenMPT\nAbout"
-    ID_APP_EXIT             "Exit OpenMPT\nExit"
+    ID_APP_ABOUT            "About OpenFMT\nAbout"
+    ID_APP_EXIT             "Exit OpenFMT\nExit"
     ID_HELP_INDEX           "Opens Help\nHelp Topics"
     ID_HELP_FINDER          "List Help topics\nHelp Topics"
     ID_HELP_USING           "Display instructions about how to use help\nHelp"
