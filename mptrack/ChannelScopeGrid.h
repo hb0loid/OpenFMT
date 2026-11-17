@@ -31,7 +31,7 @@ public:
 	// Во весь экран и обратно: окно уходит из панели на отдельный слой поверх
 	// всего, а потом возвращается на своё место.
 	void ToggleFullScreen();
-	bool IsFullScreen() const { return m_fullScreen; }
+	bool IsFullScreen() const { return m_fullScreen || m_owner != nullptr; }
 	~ChannelScopeGrid();
 
 protected:
@@ -55,8 +55,16 @@ protected:
 	std::atomic<bool> m_ticking{false};
 	std::atomic<bool> m_pending{false};
 	int m_interval = 16;
-	// Положение в панели, чтобы вернуться из полного экрана.
+	// Полный экран — отдельное окно-копия поверх всего. Сама сетка остаётся в
+	// панели: раньше её вынимали из окна и вставляли обратно, и обратно она
+	// вставала на всё окно трека.
 	bool m_fullScreen = false;
+	ChannelScopeGrid *m_popup = nullptr;   // у сетки в панели — её копия на весь экран
+	ChannelScopeGrid *m_owner = nullptr;   // у копии — сетка, которой она принадлежит
+	bool CreatePopup(ChannelScopeGrid &owner, const CRect &screen);
+	void HideScopes();
+	void PostNcDestroy() override;
+	afx_msg LRESULT OnClosePopup(WPARAM, LPARAM);
 	CWnd *m_parent = nullptr;
 	CRect m_placed{0, 0, 0, 0};
 

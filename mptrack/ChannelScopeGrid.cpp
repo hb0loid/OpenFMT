@@ -19,11 +19,13 @@ OPENMPT_NAMESPACE_BEGIN
 
 // Свой номер сообщения: такт кадра приходит из отдельного потока.
 static constexpr UINT WM_GRID_FRAME = WM_APP + 2;
+static constexpr UINT WM_GRID_CLOSE = WM_APP + 3;
 static constexpr UINT ID_GRID_FULLSCREEN = 1;
 static constexpr UINT ID_GRID_HIDE = 2;
 
 BEGIN_MESSAGE_MAP(ChannelScopeGrid, CWnd)
 	ON_MESSAGE(WM_GRID_FRAME, &ChannelScopeGrid::OnFrame)
+	ON_MESSAGE(WM_GRID_CLOSE, &ChannelScopeGrid::OnClosePopup)
 	ON_WM_PAINT()
 	ON_WM_DESTROY()
 	ON_WM_RBUTTONUP()
@@ -105,6 +107,9 @@ LRESULT ChannelScopeGrid::OnFrame(WPARAM, LPARAM)
 
 ChannelScopeGrid::~ChannelScopeGrid()
 {
+	if(m_popup != nullptr && ::IsWindow(m_popup->m_hWnd))
+		m_popup->DestroyWindow();  // копия удаляет себя сама
+	m_popup = nullptr;
 	StopTicker();
 	if(m_running && CMainFrame::GetMainFrame() != nullptr)
 		CMainFrame::GetMainFrame()->GetChannelScopes().RemoveUser();
@@ -117,11 +122,8 @@ void ChannelScopeGrid::Place(const CRect &rect, bool visible)
 		return;
 	const bool show = visible && rect.Height() > HighDPISupport::ScalePixels(24, m_hWnd);
 	m_placed = rect;
-	if(!m_fullScreen)
-	{
-		SetWindowPos(nullptr, rect.left, rect.top, rect.Width(), rect.Height(),
-			SWP_NOZORDER | SWP_NOACTIVATE | (show ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
-	}
+	SetWindowPos(nullptr, rect.left, rect.top, rect.Width(), rect.Height(),
+		SWP_NOZORDER | SWP_NOACTIVATE | (show ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
 	if(show == m_running)
 		return;
 	m_running = show;
@@ -141,10 +143,17 @@ void ChannelScopeGrid::Place(const CRect &rect, bool visible)
 }
 
 
-// Во весь экран: окно уходит из панели на отдельный слой поверх всего. Назад —
-// тем же пунктом меню, двойным щелчком или клавишей Esc.
+// Во весь экран: поверх всего открывается копия сетки, сама сетка остаётся в
+// панели. Назад — тем же пунктом меню, двойным щелчком или клавишей Esc.
 void ChannelScopeGrid::ToggleFullScreen()
 {
+	if(m_owner != nullptr)
+	{
+		// Копия просит выйти свою сетку: закрывать себя из своего же
+		// обработчика нельзя.
+		m_owner->ToggleFullScreen();
+		return;
+	}
 	if(!m_hWnd)
 		return;
 	if(!m_fullScreen)
@@ -153,22 +162,74 @@ void ChannelScopeGrid::ToggleFullScreen()
 		monitor.cbSize = sizeof(monitor);
 		if(!::GetMonitorInfo(::MonitorFromWindow(m_hWnd, MONITOR_DEFAULTTONEAREST), &monitor))
 			return;
+		auto popup = new ChannelScopeGrid;
+		if(!popup->CreatePopup(*this, CRect(monitor.rcMonitor)))
+		{
+			delete popup;
+			return;
+		}
+		m_popup = popup;
 		m_fullScreen = true;
-		ModifyStyle(WS_CHILD, WS_POPUP);
-		::SetParent(m_hWnd, nullptr);
-		const CRect screen(monitor.rcMonitor);
-		SetWindowPos(&wndTopMost, screen.left, screen.top, screen.Width(), screen.Height(),
-			SWP_SHOWWINDOW | SWP_FRAMECHANGED);
-		SetFocus();
 	} else
 	{
 		m_fullScreen = false;
-		ModifyStyle(WS_POPUP, WS_CHILD);
-		::SetParent(m_hWnd, m_parent ? m_parent->m_hWnd : nullptr);
-		SetWindowPos(&wndNoTopMost, m_placed.left, m_placed.top, m_placed.Width(), m_placed.Height(),
-			SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+		if(m_popup != nullptr)
+		{
+			m_popup->m_owner = nullptr;
+			m_popup->PostMessage(WM_GRID_CLOSE);
+			m_popup = nullptr;
+		}
+		if(m_parent != nullptr)
+			m_parent->SetFocus();
 	}
-	Invalidate(FALSE);
+}
+
+
+bool ChannelScopeGrid::CreatePopup(ChannelScopeGrid &owner, const CRect &screen)
+{
+	m_gain.fill(1.0f);
+	m_owner = &owner;
+	const LPCTSTR windowClass = AfxRegisterWndClass(CS_DBLCLKS, ::LoadCursor(nullptr, IDC_ARROW));
+	if(!CreateEx(WS_EX_TOPMOST, windowClass, _T("OpenFMT"), WS_POPUP, screen, nullptr, 0))
+		return false;
+	Place(screen, true);
+	SetForegroundWindow();
+	SetFocus();
+	return true;
+}
+
+
+LRESULT ChannelScopeGrid::OnClosePopup(WPARAM, LPARAM)
+{
+	DestroyWindow();
+	return 0;
+}
+
+
+void ChannelScopeGrid::PostNcDestroy()
+{
+	CWnd::PostNcDestroy();
+	// Копию на весь экран создают через new, и после закрытия окна она уходит сама.
+	if(m_owner != nullptr || m_parent == nullptr)
+	{
+		if(m_owner != nullptr && m_owner->m_popup == this)
+		{
+			m_owner->m_popup = nullptr;
+			m_owner->m_fullScreen = false;
+		}
+		delete this;
+	}
+}
+
+
+void ChannelScopeGrid::HideScopes()
+{
+	ChannelScopeGrid &grid = m_owner != nullptr ? *m_owner : *this;
+	if(grid.m_fullScreen)
+		grid.ToggleFullScreen();
+	TrackerSettings::Instance().chipsShowScopes = false;
+	if(grid.m_parent != nullptr)
+		grid.m_parent->SendMessage(WM_SIZE, SIZE_RESTORED, 0);
 }
 
 
@@ -176,7 +237,7 @@ void ChannelScopeGrid::OnRButtonUp(UINT, CPoint point)
 {
 	CMenu menu;
 	menu.CreatePopupMenu();
-	menu.AppendMenu(MF_STRING | (m_fullScreen ? MF_CHECKED : 0), ID_GRID_FULLSCREEN, _T("&Full Screen	Esc"));
+	menu.AppendMenu(MF_STRING | (IsFullScreen() ? MF_CHECKED : 0), ID_GRID_FULLSCREEN, _T("&Full Screen	Esc"));
 	menu.AppendMenu(MF_STRING, ID_GRID_HIDE, _T("&Hide Oscilloscopes"));
 	CPoint screen = point;
 	ClientToScreen(&screen);
@@ -188,11 +249,7 @@ void ChannelScopeGrid::OnRButtonUp(UINT, CPoint point)
 		ToggleFullScreen();
 	} else if(choice == ID_GRID_HIDE)
 	{
-		if(m_fullScreen)
-			ToggleFullScreen();
-		TrackerSettings::Instance().chipsShowScopes = false;
-		if(m_parent != nullptr)
-			m_parent->SendMessage(WM_SIZE, SIZE_RESTORED, 0);
+		HideScopes();
 	}
 }
 
@@ -205,7 +262,7 @@ void ChannelScopeGrid::OnLButtonDblClk(UINT, CPoint)
 
 void ChannelScopeGrid::OnKeyDown(UINT key, UINT repeat, UINT flags)
 {
-	if(key == VK_ESCAPE && m_fullScreen)
+	if(key == VK_ESCAPE && IsFullScreen())
 		ToggleFullScreen();
 	else
 		CWnd::OnKeyDown(key, repeat, flags);
