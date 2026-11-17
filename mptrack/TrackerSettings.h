@@ -870,6 +870,8 @@ public:
 	Setting<uint32> midiImportPatternLen;
 	Setting<uint32> midiImportQuantize;
 	Setting<uint8> midiImportTicks;
+	// OpenFMT: импорт VGM строками из нескольких кадров (true) или кадр на строку.
+	Setting<bool> vgmCompactRows;
 
 	// Pattern Editor
 

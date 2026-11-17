@@ -148,6 +148,8 @@ BOOL COptionsGeneral::OnInitDialog()
 		const int check = patternSetup[opt.flag] ? BST_CHECKED : BST_UNCHECKED;
 		m_CheckList.SetCheck(idx, check);
 	}
+	// Свои пункты OpenFMT идут после флагов OpenMPT.
+	m_CheckList.SetCheck(m_CheckList.AddString(_T("Compact VGM import")), TrackerSettings::Instance().vgmCompactRows ? BST_CHECKED : BST_UNCHECKED);
 	m_CheckList.SetCurSel(0);
 	m_CheckList.SetItemHeight(0, 0);  // Workaround to force MFC to correctly compute the height of the first list item, in particular on high-DPI setups
 	OnOptionSelChanged();
@@ -181,6 +183,7 @@ void COptionsGeneral::OnOK()
 		patternSetup.set(generalOptionsList[i].flag, check);
 	}
 	TrackerSettings::Instance().patternSetup = patternSetup;
+	TrackerSettings::Instance().vgmCompactRows = m_CheckList.GetCheck(mpt::saturate_cast<int>(std::size(generalOptionsList))) != BST_UNCHECKED;
 
 	CMainFrame::GetMainFrame()->SetupMiscOptions();
 
@@ -202,6 +205,9 @@ void COptionsGeneral::OnOptionSelChanged()
 	if ((sel >= 0) && (sel < mpt::saturate_cast<int>(std::size(generalOptionsList))))
 	{
 		desc = generalOptionsList[sel].description;
+	} else if(sel == mpt::saturate_cast<int>(std::size(generalOptionsList)))
+	{
+		desc = "VGM files are imported with rows of several frames, as the song was written: note timing stays exact (note delays where needed), pitch and volume changes inside a row are smoothed. When off, every frame is its own row: exact, but long patterns.";
 	}
 	SetDlgItemText(IDC_TEXT1, mpt::ToCString(mpt::Charset::ASCII, desc));
 }

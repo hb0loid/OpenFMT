@@ -22,6 +22,10 @@
 
 #include "stdafx.h"
 #include "Loaders.h"
+#ifdef MODPLUG_TRACKER
+#include "../mptrack/TrackerSettings.h"
+#endif
+#include <cstdlib>
 #ifdef MPT_WITH_ZLIB
 #include "../common/zlib_helper.h"
 #include <zlib.h>
@@ -1426,18 +1430,85 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	if(!(loadFlags & loadPatternData))
 		return true;
 
-	const uint32 lastRow = events.back().sample / samplesPerRow;
+	// Сколько кадров в строке. Кадр на строку точен, но паттерны выходят в 2–3
+	// раза длиннее исходных. Компактный режим (по умолчанию) ищет шаг строки
+	// по моментам нажатий: самый крупный шаг, на сетку которого ложится
+	// большинство нот; остальные ноты получают задержку SDx, так что время
+	// нот остаётся точным. Сглаживаются только изменения внутри строки.
+#ifdef MODPLUG_TRACKER
+	const bool compact = TrackerSettings::Instance().vgmCompactRows;
+#else
+	const bool compact = (std::getenv("OPENFMT_VGM_FRAMES") == nullptr);  // Для сверок: кадр на строку
+#endif
+	uint32 framesPerRow = 1, phase = 0;
+	if(compact)
+	{
+		std::vector<uint32> noteFrames;
+		for(const auto &event : events)
+		{
+			if(ModCommand::IsNote(event.note) && !event.legato)
+				noteFrames.push_back(event.sample / samplesPerRow);
+		}
+		const auto bestPhase = [&](uint32 step) -> std::pair<double, uint32>
+		{
+			std::vector<uint32> count(step, 0);
+			for(uint32 frame : noteFrames)
+				count[frame % step]++;
+			const auto best = std::max_element(count.begin(), count.end());
+			return {noteFrames.empty() ? 0.0 : static_cast<double>(*best) / noteFrames.size(), static_cast<uint32>(std::distance(count.begin(), best))};
+		};
+		// Крупный шаг берём, только если он ловит почти столько же нот, сколько
+		// мелкий: шаг 6 при 85% попаданий хуже шага 3 при 98% — внутри строки
+		// громкость и высота сглаживаются, и чем строка длиннее, тем грубее.
+		framesPerRow = 2;
+		phase = bestPhase(2).second;
+		double bestRatio = bestPhase(2).first;
+		for(uint32 step = 3; step <= 8; step++)
+		{
+			const auto [ratio, stepPhase] = bestPhase(step);
+			if(ratio >= 0.9 && ratio >= bestRatio - 0.03)
+			{
+				framesPerRow = step;
+				phase = stepPhase;
+				bestRatio = std::max(bestRatio, ratio);
+			}
+		}
+		Order().SetDefaultSpeed(framesPerRow);
+	}
+	// Сетка начинается с кадра phase: первая строка — это он. Сдвигать весь
+	// трек позже нельзя — всё звучало бы на кадр-два позже лога; поэтому
+	// раньше сетки только самые первые события, и они встают на её начало.
+	const auto frameOf = [&](const VgmEvent &event) { return std::max(event.sample / samplesPerRow, phase) - phase; };
+
+	const uint32 lastRow = frameOf(events.back()) / framesPerRow;
 	const ROWINDEX totalRows = static_cast<ROWINDEX>(std::min<uint32>(lastRow + 2, MAX_PATTERN_ROWS * 1000u));
 	constexpr ROWINDEX RowsPerPattern = 64;
 	const PATTERNINDEX patternCount = static_cast<PATTERNINDEX>((totalRows + RowsPerPattern - 1) / RowsPerPattern);
 	Order().resize(patternCount);
 	for(PATTERNINDEX pat = 0; pat < patternCount; pat++)
 	{
-		const PATTERNINDEX index = Patterns.InsertAny(RowsPerPattern);
+		// Последний паттерн — ровно до конца трека, без хвоста тишины.
+		const ROWINDEX rows = (pat + 1 == patternCount && totalRows % RowsPerPattern) ? std::max<ROWINDEX>(totalRows % RowsPerPattern, 2) : RowsPerPattern;
+		const PATTERNINDEX index = Patterns.InsertAny(rows);
 		if(index == PATTERNINDEX_INVALID)
 			return false;
 		Order()[pat] = index;
 	}
+	const auto cellAt = [&](uint32 row, uint8 voice) -> ModCommand *
+	{
+		const PATTERNINDEX pat = static_cast<PATTERNINDEX>(row / RowsPerPattern);
+		if(pat >= patternCount || moduleChannel[voice] < 0)
+			return nullptr;
+		return Patterns[Order()[pat]].GetpModCommand(static_cast<ROWINDEX>(row % RowsPerPattern), static_cast<CHANNELINDEX>(moduleChannel[voice]));
+	};
+	const auto instrumentOf = [&](const VgmEvent &event) -> int
+	{
+		if(event.patch >= 0)
+			return event.patch + 1;
+		if(event.channel >= FMChannels && event.channel < OPMBase && !event.legato && ModCommand::IsNote(event.note))
+			return firstPSG + event.channel - FMChannels + 1;
+		return 0;
+	};
 
 	// Эффект в ячейку: тот же эффект заменяем, иначе берём свободную колонку.
 	const auto setEffect = [](ModCommand &cell, EffectCommand command, uint8 param)
@@ -1450,48 +1521,239 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		if(slot < ModCommand::Effects())
 			cell.SetEffect(slot, command, param);
 	};
-	for(const auto &event : events)
+	// Команда в первую колонку (портаменто и задержку движок ищет только
+	// там): что там было, переезжает в свободную.
+	const auto setFirstEffect = [&](ModCommand &cell, EffectCommand command, uint8 param)
 	{
-		const uint32 row = event.sample / samplesPerRow;
-		const PATTERNINDEX pat = static_cast<PATTERNINDEX>(row / RowsPerPattern);
-		if(pat >= patternCount)
-			break;
-		if(moduleChannel[event.channel] < 0)
-			continue;
-		ModCommand &cell = *Patterns[Order()[pat]].GetpModCommand(static_cast<ROWINDEX>(row % RowsPerPattern), static_cast<CHANNELINDEX>(moduleChannel[event.channel]));
-		if(event.note != NOTE_NONE)
+		const auto [oldCommand, oldParam] = cell.GetEffect(0);
+		cell.SetEffect(0, command, param);
+		if(oldCommand != CMD_NONE && oldCommand != command)
+			setEffect(cell, oldCommand, oldParam);
+	};
+
+	if(!compact)
+	{
+		for(const auto &event : events)
 		{
-			cell.note = event.note;
-			if(event.patch >= 0)
-				cell.instr = static_cast<ModCommand::INSTR>(event.patch + 1);
-			else if(event.channel >= FMChannels && event.channel < OPMBase && !event.legato)
-				cell.instr = static_cast<ModCommand::INSTR>(firstPSG + event.channel - FMChannels + 1);
-			// В одной строке-кадре легато может смениться настоящим ударом:
-			// тогда портаменто от него убираем, иначе удар потеряется.
-			for(uint8 slot = 0; slot < ModCommand::Effects(); slot++)
+			ModCommand *found = cellAt(frameOf(event), event.channel);
+			if(!found)
+				continue;
+			ModCommand &cell = *found;
+			if(event.note != NOTE_NONE)
 			{
-				if(cell.GetEffect(slot).first == CMD_TONEPORTAMENTO)
-					cell.SetEffect(slot, CMD_NONE, 0);
+				cell.note = event.note;
+				if(const int instr = instrumentOf(event); instr > 0)
+					cell.instr = static_cast<ModCommand::INSTR>(instr);
+				// В одной строке-кадре легато может смениться настоящим ударом:
+				// тогда портаменто от него убираем, иначе удар потеряется.
+				for(uint8 slot = 0; slot < ModCommand::Effects(); slot++)
+				{
+					if(cell.GetEffect(slot).first == CMD_TONEPORTAMENTO)
+						cell.SetEffect(slot, CMD_NONE, 0);
+				}
+				if(event.legato && !cell.instr)
+					setFirstEffect(cell, CMD_TONEPORTAMENTO, 0xFF);
 			}
-			if(event.legato && !cell.instr)
+			if(event.fine >= 0)
+				setEffect(cell, CMD_FINETUNE, static_cast<uint8>(event.fine));
+			if(event.volume != 255)
 			{
-				// Портаменто движок ищет только в первой колонке: что там было,
-				// переезжает в свободную.
-				const auto [oldCommand, oldParam] = cell.GetEffect(0);
-				cell.SetEffect(0, CMD_TONEPORTAMENTO, 0xFF);
-				if(oldCommand != CMD_NONE)
-					setEffect(cell, oldCommand, oldParam);
+				cell.volcmd = VOLCMD_VOLUME;
+				cell.vol = std::min<uint8>(event.volume, 64);
 			}
+			if(event.pan >= 0)
+				setEffect(cell, CMD_PANNING8, static_cast<uint8>(event.pan));
 		}
-		if(event.fine >= 0)
-			setEffect(cell, CMD_FINETUNE, static_cast<uint8>(event.fine));
-		if(event.volume != 255)
+	} else
+	{
+		// Что набралось у канала за строку. Ячейка вмещает одну ноту, одну
+		// громкость и по одному эффекту каждого вида, поэтому то, что пришло
+		// после ноты (второй удар, отпускание, громкость, подстройка), уезжает
+		// на первый тик следующей строки.
+		struct RowState
 		{
-			cell.volcmd = VOLCMD_VOLUME;
-			cell.vol = std::min<uint8>(event.volume, 64);
+			bool used = false;
+			uint32 row = 0;
+			ModCommand::NOTE note = NOTE_NONE;
+			uint32 noteTick = 0;
+			int instr = 0;
+			bool legato = false;
+			int volume = -1, fine = -1, pan = -1;
+			bool fineSmooth = false;
+			// Громкость по ходу строки (тик, значение): в ячейку идёт начало и
+			// плавный спад или подъём Dxy к концу строки.
+			std::vector<std::pair<uint32, int>> volumes;
+			std::vector<VgmEvent> carry;  // что переезжает в следующую строку
+		};
+		std::array<RowState, VgmChannels> rows;
+		std::array<int, VgmChannels> currentVolume;  // что держит канал, -1 — неизвестно
+		currentVolume.fill(-1);
+		const auto flush = [&](uint8 voice)
+		{
+			RowState &state = rows[voice];
+			if(!state.used)
+				return;
+			if(ModCommand *found = cellAt(state.row, voice); found != nullptr)
+			{
+				ModCommand &cell = *found;
+				if(state.note != NOTE_NONE)
+				{
+					cell.note = state.note;
+					if(state.instr > 0)
+						cell.instr = static_cast<ModCommand::INSTR>(state.instr);
+					if(state.legato && !state.instr)
+						setFirstEffect(cell, CMD_TONEPORTAMENTO, 0xFF);
+					else if(state.noteTick > 0)
+						setFirstEffect(cell, CMD_S3MCMDEX, static_cast<uint8>(0xD0 | std::min<uint32>(state.noteTick, 15)));
+				}
+				// Громкость строки. В ячейку влезает одно значение, а огибающие
+				// меняют её каждый кадр. Dxy не годится: в режиме слайдов Furnace
+				// он тянется через строки. Поэтому берём значение из середины
+				// строки — для затухания оно ближе всего к среднему.
+				const bool noteRow = ModCommand::IsNote(state.note) && !state.legato;
+				if(noteRow)
+				{
+					currentVolume[voice] = state.volume;
+					if(state.volume >= 0)
+					{
+						cell.volcmd = VOLCMD_VOLUME;
+						cell.vol = static_cast<ModCommand::VOL>(std::min(state.volume, 64));
+					}
+				} else if(!state.volumes.empty())
+				{
+					const uint32 middle = (framesPerRow - 1) / 2;
+					int value = -1;
+					for(const auto &[tick, volume] : state.volumes)
+					{
+						if(tick <= middle || value < 0)
+							value = volume;
+					}
+					if(value >= 0 && value != currentVolume[voice])
+					{
+						cell.volcmd = VOLCMD_VOLUME;
+						cell.vol = static_cast<ModCommand::VOL>(std::min(value, 64));
+						currentVolume[voice] = value;
+					}
+				}
+				// Что громкость сделала после ноты в той же строке — в начало
+				// следующей строки (если та не задаст свою).
+				if(noteRow && !state.volumes.empty())
+				{
+					VgmEvent late{};
+					late.channel = voice;
+					late.volume = static_cast<uint8>(state.volumes.back().second);
+					state.carry.insert(state.carry.begin(), late);
+				}
+				if(state.fine >= 0)
+					setEffect(cell, state.fineSmooth ? CMD_FINETUNE_SMOOTH : CMD_FINETUNE, static_cast<uint8>(state.fine));
+				if(state.pan >= 0)
+					setEffect(cell, CMD_PANNING8, static_cast<uint8>(state.pan));
+			}
+			std::vector<VgmEvent> carry = std::move(state.carry);
+			const uint32 nextRow = state.row + 1;
+			state = RowState{};
+			if(!carry.empty())
+			{
+				state.used = true;
+				state.row = nextRow;
+				for(auto &event : carry)
+				{
+					// Переехавшее встаёт на начало строки; второй раз уже не
+					// переезжает, а уступает тому, что придёт в эту строку.
+					const bool realNote = ModCommand::IsNote(event.note) && !event.legato;
+					if(event.note != NOTE_NONE)
+					{
+						state.note = event.note;
+						state.noteTick = 0;
+						state.instr = instrumentOf(event);
+						state.legato = event.legato;
+					}
+					if(event.volume != 255)
+					{
+						if(realNote)
+							state.volume = event.volume;
+						else
+							state.volumes.emplace_back(0, event.volume);
+					}
+					if(event.fine >= 0)
+					{
+						state.fine = event.fine;
+						state.fineSmooth = !realNote && event.note == NOTE_NONE;
+					}
+					if(event.pan >= 0)
+						state.pan = event.pan;
+				}
+			}
+		};
+		for(const auto &event : events)
+		{
+			if(moduleChannel[event.channel] < 0)
+				continue;
+			const uint32 frame = frameOf(event);
+			const uint32 row = frame / framesPerRow;
+			const uint32 tick = frame % framesPerRow;
+			RowState &state = rows[event.channel];
+			if(state.used && state.row != row)
+			{
+				flush(event.channel);
+				// Переехавшее из прошлой строки могло лечь не в эту строку, а
+				// раньше неё: тогда его надо записать отдельно.
+				if(state.used && state.row != row)
+					flush(event.channel);
+			}
+			if(!state.used)
+			{
+				state.used = true;
+				state.row = row;
+			}
+			const bool hasRealNote = ModCommand::IsNote(state.note) && !state.legato;
+			const bool realNote = ModCommand::IsNote(event.note) && !event.legato;
+			// Нота строки уже есть, а пришло событие позже неё: в ячейку оно не
+			// поместится, переезжает в следующую строку целиком.
+			// Громкость после ноты в той же строке не переезжает, а становится
+			// спадом Dxy — если нота на первом тике (с задержкой Dxy не годится).
+			if(hasRealNote && tick > state.noteTick && event.note == NOTE_NONE && event.fine < 0 && event.pan < 0
+				&& event.volume != 255 && state.noteTick == 0)
+			{
+				state.volumes.emplace_back(tick, event.volume);
+				continue;
+			}
+			if(hasRealNote && tick > state.noteTick && (event.note != NOTE_NONE || event.volume != 255 || event.fine >= 0))
+			{
+				state.carry.push_back(event);
+				continue;
+			}
+			if(event.note != NOTE_NONE)
+			{
+				state.note = event.note;
+				state.noteTick = (realNote || event.note == NOTE_KEYOFF || event.note == NOTE_NOTECUT) ? tick : 0;
+				state.instr = instrumentOf(event);
+				state.legato = event.legato;
+				if(realNote)
+					state.volumes.clear();  // громкости до удара относились к прошлой ноте
+			}
+			if(event.volume != 255)
+			{
+				if(realNote)
+					state.volume = event.volume;
+				else
+					state.volumes.emplace_back(tick, event.volume);
+			}
+			if(event.fine >= 0)
+			{
+				state.fine = event.fine;
+				// Подстройка без ноты в строке — это вибрато или слайд: доводим
+				// её плавно к концу строки, а не прыжком на первом тике.
+				state.fineSmooth = !realNote && !hasRealNote;
+			}
+			if(event.pan >= 0)
+				state.pan = event.pan;
 		}
-		if(event.pan >= 0)
-			setEffect(cell, CMD_PANNING8, static_cast<uint8>(event.pan));
+		for(uint8 voice = 0; voice < VgmChannels; voice++)
+		{
+			flush(voice);
+			flush(voice);  // и то, что переехало
+		}
 	}
 
 	m_modFormat.formatName = UL_("VGM (register log)");
