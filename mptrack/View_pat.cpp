@@ -2519,6 +2519,74 @@ PatternRect CViewPattern::SweepPattern(bool(*startCond)(const ModCommand &), boo
 }
 
 
+void CViewPattern::OnInterpolateEffect()
+{
+	std::vector<CHANNELINDEX> first, firstParam, second, secondParam;
+	ListChansWhereColSelected(PatternCursor::effectColumn, first);
+	ListChansWhereColSelected(PatternCursor::paramColumn, firstParam);
+	ListChansWhereColSelected(PatternCursor::effectColumn2, second);
+	ListChansWhereColSelected(PatternCursor::paramColumn2, secondParam);
+	const bool wantFirst = !first.empty() || !firstParam.empty();
+	const bool wantSecond = !second.empty() || !secondParam.empty();
+	if(wantFirst || !wantSecond)
+		Interpolate(PatternCursor::effectColumn);
+	if(wantSecond)
+		InterpolateSecondEffect();
+}
+
+
+void CViewPattern::InterpolateSecondEffect()
+{
+	CSoundFile *sndFile = GetSoundFile();
+	if(sndFile == nullptr || !sndFile->Patterns.IsValidPat(m_nPattern) || !IsEditingEnabled())
+		return;
+	std::vector<CHANNELINDEX> effectChans, paramChans;
+	ListChansWhereColSelected(PatternCursor::effectColumn2, effectChans);
+	ListChansWhereColSelected(PatternCursor::paramColumn2, paramChans);
+	std::vector<CHANNELINDEX> chans(effectChans.size() + paramChans.size());
+	chans.resize(std::set_union(effectChans.begin(), effectChans.end(), paramChans.begin(), paramChans.end(), chans.begin()) - chans.begin());
+	if(chans.empty())
+		return;
+
+	CPattern &pattern = sndFile->Patterns[m_nPattern];
+	const ROWINDEX numRows = pattern.GetNumRows();
+	const auto swapColumns = [&]()
+	{
+		for(const CHANNELINDEX chn : chans)
+		{
+			for(ROWINDEX row = 0; row < numRows; row++)
+			{
+				ModCommand &m = *pattern.GetpModCommand(row, chn);
+				const auto a = m.GetEffect(0), b = m.GetEffect(1);
+				m.SetEffect(0, b.first, b.second);
+				m.SetEffect(1, a.first, a.second);
+			}
+		}
+	};
+	// Интерполяция может расшириться до ближайших значений, поэтому undo
+	// снимаем со всего столбца этих каналов до перестановки.
+	PrepareUndo(PatternRect(PatternCursor(0, chans.front(), PatternCursor::firstColumn), PatternCursor(numRows - 1, chans.back(), PatternCursor::lastColumn)), "Interpolate Effect Column 2");
+	const PatternRect oldSelection = m_Selection;
+	const auto toFirst = [](const PatternCursor &c)
+	{
+		PatternCursor::Columns col = c.GetColumnType();
+		if(col == PatternCursor::effectColumn2)
+			col = PatternCursor::effectColumn;
+		else if(col == PatternCursor::paramColumn2)
+			col = PatternCursor::paramColumn;
+		return PatternCursor(c.GetRow(), c.GetChannel(), col);
+	};
+	m_Selection = PatternRect(toFirst(oldSelection.GetUpperLeft()), toFirst(oldSelection.GetLowerRight()));
+	swapColumns();
+	m_interpolateNoUndo = true;
+	Interpolate(PatternCursor::effectColumn);
+	m_interpolateNoUndo = false;
+	swapColumns();
+	m_Selection = oldSelection;
+	InvalidatePattern(false, true);
+}
+
+
 void CViewPattern::Interpolate(PatternCursor::Columns type)
 {
 	CSoundFile *sndFile = GetSoundFile();
@@ -2616,7 +2684,8 @@ void CViewPattern::Interpolate(PatternCursor::Columns type)
 				MPT_ASSERT_NOTREACHED();
 				break;
 			}
-			PrepareUndo(m_Selection, description);
+			if(!m_interpolateNoUndo)
+				PrepareUndo(m_Selection, description);
 		}
 
 		bool doPCinterpolation = false;
@@ -6891,6 +6960,13 @@ bool CViewPattern::BuildInterpolationCtxMenu(HMENU hMenu, PatternCursor::Columns
 	{
 		// Extend search to param column
 		addSeparator = IsInterpolationPossible(PatternCursor::paramColumn);
+	}
+	if(!addSeparator && colType == PatternCursor::effectColumn)
+	{
+		// Вторая колонка эффектов интерполируется тем же пунктом.
+		std::vector<CHANNELINDEX> chans;
+		addSeparator = ListChansWhereColSelected(PatternCursor::effectColumn2, chans) > 0
+			|| ListChansWhereColSelected(PatternCursor::paramColumn2, chans) > 0;
 	}
 
 	if(addSeparator || !(TrackerSettings::Instance().patternSetup & PatternSetup::HideUnavailableMenuEntries))

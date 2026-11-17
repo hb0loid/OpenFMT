@@ -445,7 +445,11 @@ protected:
 	afx_msg void OnNextInstrument();
 	afx_msg void OnPatternRecord();
 	afx_msg void OnInterpolateVolume() { Interpolate(PatternCursor::volumeColumn); }
-	afx_msg void OnInterpolateEffect() { Interpolate(PatternCursor::effectColumn); }
+	afx_msg void OnInterpolateEffect();
+	// Вторая колонка эффектов: столбцы на время меняются местами, и работает
+	// обычная интерполяция первой колонки.
+	void InterpolateSecondEffect();
+	bool m_interpolateNoUndo = false;
 	afx_msg void OnInterpolateNote() { Interpolate(PatternCursor::noteColumn); }
 	afx_msg void OnInterpolateInstr() { Interpolate(PatternCursor::instrColumn); }
 	afx_msg void OnVisualizeEffect();

@@ -188,12 +188,35 @@ void CViewPattern::OnEditFindNext()
 					continue;
 				}
 
+				// Эффект ищется в обеих колонках: запоминаем, в какой нашёлся,
+				// замена потом правит ту же колонку.
+				uint8 effectSlot = 0;
+				bool effectMatched = true;
+				if(!m->IsPcNote() && FindReplace::instance.findFlags[FindReplace::Command | FindReplace::Param])
+				{
+					effectMatched = false;
+					for(uint8 slot = 0; slot < ModCommand::Effects() && !effectMatched; slot++)
+					{
+						const auto [cmd, prm] = m->GetEffect(slot);
+						const auto effectCol = slot ? PatternCursor::effectColumn2 : PatternCursor::effectColumn;
+						const auto paramCol = slot ? PatternCursor::paramColumn2 : PatternCursor::paramColumn;
+						if(FindReplace::instance.findFlags[FindReplace::Command] && (!findWhere[effectCol] || cmd != FindReplace::instance.findCommand))
+							continue;
+						if(FindReplace::instance.findFlags[FindReplace::Param] && (!findWhere[paramCol] || cmd == CMD_NONE || prm < FindReplace::instance.findParamMin || prm > FindReplace::instance.findParamMax))
+							continue;
+						if((FindReplace::instance.findFlags & (FindReplace::Command | FindReplace::Param)) == FindReplace::Command && isExtendedEffect
+							&& (prm & 0xF0) != (FindReplace::instance.findParamMin & 0xF0))
+							continue;
+						effectSlot = slot;
+						effectMatched = true;
+					}
+				}
+
 				if(!m->IsPcNote())
 				{
 					if((FindReplace::instance.findFlags[FindReplace::VolCmd] && (!findWhere[PatternCursor::volumeColumn] || m->volcmd != FindReplace::instance.findVolCmd))
 						|| (FindReplace::instance.findFlags[FindReplace::Volume] && (!findWhere[PatternCursor::volumeColumn] || m->volcmd == VOLCMD_NONE || m->vol < FindReplace::instance.findVolumeMin || m->vol > FindReplace::instance.findVolumeMax))
-						|| (FindReplace::instance.findFlags[FindReplace::Command] && (!findWhere[PatternCursor::effectColumn] || m->command != FindReplace::instance.findCommand))
-						|| (FindReplace::instance.findFlags[FindReplace::Param] && (!findWhere[PatternCursor::paramColumn] || m->command == CMD_NONE ||  m->param < FindReplace::instance.findParamMin || m->param > FindReplace::instance.findParamMax))
+						|| !effectMatched
 						|| FindReplace::instance.findFlags[FindReplace::PCParam]
 						|| FindReplace::instance.findFlags[FindReplace::PCValue])
 					{
@@ -212,11 +235,6 @@ void CViewPattern::OnEditFindNext()
 					}
 				}
 
-				if((FindReplace::instance.findFlags & (FindReplace::Command | FindReplace::Param)) == FindReplace::Command && isExtendedEffect)
-				{
-					if((m->param & 0xF0) != (FindReplace::instance.findParamMin & 0xF0))
-						continue;
-				}
 
 				// Found!
 				
@@ -262,9 +280,9 @@ void CViewPattern::OnEditFindNext()
 				else if(FindReplace::instance.findFlags[FindReplace::VolCmd | FindReplace::Volume | FindReplace::PCParam])
 					foundCol = PatternCursor::volumeColumn;
 				else if(FindReplace::instance.findFlags[FindReplace::Command | FindReplace::PCValue])
-					foundCol = PatternCursor::effectColumn;
+					foundCol = effectSlot ? PatternCursor::effectColumn2 : PatternCursor::effectColumn;
 				else if(FindReplace::instance.findFlags[FindReplace::Param])
-					foundCol = PatternCursor::paramColumn;
+					foundCol = effectSlot ? PatternCursor::paramColumn2 : PatternCursor::paramColumn;
 
 				if(updatePos)
 				{
@@ -378,6 +396,15 @@ void CViewPattern::OnEditFindNext()
 						}
 					}
 
+					// Найденный во второй колонке эффект на время переносится в
+					// первую: дальше замена работает как обычно, а потом всё
+					// возвращается на места. Undo уже снят выше.
+					const auto mainEffect = m->GetEffect(0);
+					if(effectSlot > 0)
+					{
+						const auto found = m->GetEffect(effectSlot);
+						m->SetEffect(0, found.first, found.second);
+					}
 					hadVolume = (m->command == CMD_VOLUME);
 					if(FindReplace::instance.replaceFlags[FindReplace::Command])
 					{
@@ -412,6 +439,12 @@ void CViewPattern::OnEditFindNext()
 							m->param = static_cast<ModCommand::PARAM>((m->param & 0xF0) | (param & 0x0F));
 						else
 							m->param = mpt::saturate_cast<ModCommand::PARAM>(param);
+					}
+					if(effectSlot > 0)
+					{
+						const auto replaced = m->GetEffect(0);
+						m->SetEffect(effectSlot, replaced.first, replaced.second);
+						m->SetEffect(0, mainEffect.first, mainEffect.second);
 					}
 
 					if(FindReplace::instance.replaceFlags[FindReplace::PCParam])
