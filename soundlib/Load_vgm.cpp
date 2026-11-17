@@ -255,9 +255,16 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	std::vector<uint8> pcm;
 	uint32 pcmPointer = 0;
 	bool dacEnabled = false;
+	// Всё, что ушло в ЦАП побайтно (командами 0x8n или прямой записью в
+	// регистр 0x2A), копится в raw, а удар — это кусок raw. Furnace при
+	// выгрузке без потоков пишет в 0x2A уже готовую смесь всех своих
+	// PCM-каналов, непрерывно и около 32 кГц, поэтому кусок режется не только
+	// по паузе в записях, но и по тишине внутри них.
+	std::vector<uint8> raw;
 	struct Hit { uint32 start = 0, bytes = 0, first = 0, last = 0; };
 	Hit hit;
 	bool hitOpen = false;
+	uint32 silentRun = 0, silentFrom = 0;
 	std::vector<Hit> hits;
 	const auto flushHit = [&]()
 	{
@@ -265,6 +272,46 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			hits.push_back(hit);
 		hitOpen = false;
 	};
+	constexpr uint32 SilenceBytes = 1600;  // ~50 мс на 32 кГц
+	const auto appendDAC = [&](uint8 value, uint32 when)
+	{
+		const bool silent = value >= 127 && value <= 129;
+		if(hitOpen && when - hit.last > VgmRate / 20)
+			flushHit();
+		if(!hitOpen)
+		{
+			if(silent)
+				return;
+			hit = Hit{static_cast<uint32>(raw.size()), 0, when, when};
+			hitOpen = true;
+			silentRun = 0;
+		}
+		raw.push_back(value);
+		hit.bytes++;
+		hit.last = when;
+		if(silent)
+		{
+			if(silentRun++ == 0)
+				silentFrom = when;
+			if(silentRun >= SilenceBytes)
+			{
+				hit.bytes -= silentRun;
+				hit.last = silentFrom;
+				flushHit();
+			}
+		} else
+		{
+			silentRun = 0;
+		}
+	};
+	// Потоковый ЦАП (команды 0x90-0x95): так выгружает Furnace. Каждый блок
+	// данных типа 0 — один сэмпл, команда 0x95 запускает блок с частотой,
+	// заданной перед ней командой 0x92, а 0x94 останавливает.
+	struct DataBlock { uint32 start = 0, size = 0; };
+	std::vector<DataBlock> dataBlocks;
+	std::array<uint32, 256> streamFrequency{};
+	struct BlockStart { uint32 sample = 0, block = 0, frequency = 0; bool loop = false, stop = false; };
+	std::vector<BlockStart> blockStarts;
 	// То же, что у PSG: что звучит на голосе FM и с какой громкостью. Нужно,
 	// чтобы ловить ведение уровня по ходу ноты, а не только в момент нажатия.
 	std::array<ModCommand::NOTE, FMChannels> fmSounding{};
@@ -352,6 +399,12 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			registers[port][reg] = value;
 			if(code == 0x52 && reg == 0x2B)
 				dacEnabled = (value & 0x80) != 0;
+			if(code == 0x52 && reg == 0x2A)
+			{
+				if(dacEnabled)
+					appendDAC(value, sample);
+				continue;
+			}
 			if(code == 0x52 && reg == 0x28)
 			{
 				const uint8 channel = static_cast<uint8>((value & 3) + ((value & 4) ? 3 : 0));
@@ -522,19 +575,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		} else if(code >= 0x80 && code <= 0x8F)
 		{
 			// Байт из блока в ЦАП и пауза. Из таких команд и состоит удар.
-			if(!hitOpen)
-			{
-				hit = Hit{pcmPointer, 0, sample, sample};
-				hitOpen = true;
-			} else if(sample - hit.last > VgmRate / 20)
-			{
-				// Долгая тишина между записями: это уже следующий удар.
-				flushHit();
-				hit = Hit{pcmPointer, 0, sample, sample};
-				hitOpen = true;
-			}
-			hit.bytes++;
-			hit.last = sample;
+			appendDAC(pcmPointer < pcm.size() ? pcm[pcmPointer] : uint8(0x80), sample);
 			pcmPointer++;
 			sample += code & 15;
 		} else if(code == 0x67)
@@ -547,6 +588,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			{
 				// Тип 0 — сэмплы для ЦАПа YM2612. Блоков бывает несколько, и
 				// указатель потока считает их как один непрерывный кусок.
+				dataBlocks.push_back({static_cast<uint32>(pcm.size()), size});
 				pcm.insert(pcm.end(), data.begin() + pos + 6, data.begin() + pos + 6 + size);
 			}
 			pos += 6 + size;
@@ -557,6 +599,36 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			flushHit();
 			pcmPointer = ReadLE32(data, pos);
 			pos += 4;
+		} else if(code >= 0x90 && code <= 0x95)
+		{
+			static constexpr uint8 StreamCommandSize[] = {4, 4, 5, 10, 1, 4};
+			const uint8 size = StreamCommandSize[code - 0x90];
+			if(pos + size > data.size())
+				break;
+			const uint8 stream = data[pos];
+			if(code == 0x92)
+			{
+				streamFrequency[stream] = ReadLE32(data, pos + 1);
+			} else if(code == 0x95)
+			{
+				const uint32 blockID = data[pos + 1] | (data[pos + 2] << 8);
+				if(blockID < dataBlocks.size())
+					blockStarts.push_back({sample, blockID, streamFrequency[stream], (data[pos + 3] & 1) != 0, false});
+			} else if(code == 0x93)
+			{
+				// Запуск с произвольного места. Furnace так не пишет, но если
+				// место совпадает с началом блока, это тот же удар.
+				const uint32 offset = ReadLE32(data, pos + 1);
+				const auto found = std::find_if(dataBlocks.begin(), dataBlocks.end(),
+					[offset](const DataBlock &b) { return b.start == offset; });
+				if(found != dataBlocks.end())
+					blockStarts.push_back({sample, static_cast<uint32>(std::distance(dataBlocks.begin(), found)), streamFrequency[stream], false, false});
+			} else if(code == 0x94)
+			{
+				if(!blockStarts.empty() && !blockStarts.back().stop)
+					blockStarts.push_back({sample, 0, 0, false, true});
+			}
+			pos += size;
 		} else if(code == 0x4F || code == 0x54 || (code >= 0x30 && code <= 0x3F))
 		{
 			pos += (code == 0x54) ? 2 : 1;
@@ -608,85 +680,134 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		if(auto *instrument = AllocateInstrument(ins, smp); instrument != nullptr)
 			instrument->name = m_szNames[smp];
 	}
-	// Удары ЦАПа: одинаковые куски блока становятся одним сэмплом, а каждый
-	// удар — нотой на шестом канале. Частота считается по самому удару: сколько
-	// байт он занял и сколько времени играл.
+	// Удары ЦАПа, записанные побайтно: одинаковые куски становятся одним
+	// сэмплом (сравниваем содержимое: у прямых записей адреса в блоке нет), а
+	// каждый удар — нотой на шестом канале. Частота считается по самому удару:
+	// сколько байт он занял и сколько времени играл.
 	const INSTRUMENTINDEX firstDAC = m_nInstruments;
-	std::vector<std::pair<uint32, uint32>> dacSamples;  // начало и длина в блоке
-	if(!pcm.empty() && !hits.empty())
+	constexpr size_t MaxDacSamples = 200;
+	struct DacSample { uint32 start = 0, length = 0; double rate = 0.0; int count = 0; };
+	std::vector<DacSample> dacSamples;
+	std::vector<int> hitSample(hits.size(), -1);
+	for(size_t i = 0; i < hits.size(); i++)
 	{
-		for(const auto &h : hits)
+		const Hit &h = hits[i];
+		int match = -1;
+		for(size_t s = 0; s < dacSamples.size() && match < 0; s++)
 		{
-			if(h.start >= pcm.size())
-				continue;
-			const uint32 length = std::min<uint32>(h.bytes, static_cast<uint32>(pcm.size() - h.start));
-			if(length < 64)
-				continue;
-			auto found = std::find_if(dacSamples.begin(), dacSamples.end(),
-				[&](const auto &known) { return known.first == h.start && known.second >= length; });
-			if(found != dacSamples.end())
-				continue;
-			// Тот же кусок, но длиннее — заменяем, короче — пропускаем.
-			found = std::find_if(dacSamples.begin(), dacSamples.end(),
-				[&](const auto &known) { return known.first == h.start; });
-			if(found != dacSamples.end())
-				found->second = length;
-			else if(dacSamples.size() < 64)
-				dacSamples.emplace_back(h.start, length);
-		}
-		for(const auto &[start, length] : dacSamples)
-		{
-			if(m_nSamples >= MAX_SAMPLES - 1 || m_nInstruments >= MAX_INSTRUMENTS - 1)
-				break;
-			const SAMPLEINDEX smp = ++m_nSamples;
-			ModSample &smpl = Samples[smp];
-			smpl.Initialize(MOD_TYPE_MPT);
-			smpl.nLength = length;
-			smpl.nC5Speed = 16000;  // Уточняется ниже по времени самого удара
-			if(smpl.AllocateSample())
+			DacSample &known = dacSamples[s];
+			const uint32 common = std::min(h.bytes, known.length);
+			if(!std::memcmp(raw.data() + h.start, raw.data() + known.start, common))
 			{
-				int8 *target = smpl.sample8();
-				for(uint32 i = 0; i < length; i++)
-					target[i] = static_cast<int8>(static_cast<int>(pcm[start + i]) - 128);
-				smpl.PrecomputeLoops(*this, false);
-			}
-			m_szNames[smp] = "DAC " + std::to_string(start);
-			const INSTRUMENTINDEX ins = ++m_nInstruments;
-			if(auto *instrument = AllocateInstrument(ins, smp); instrument != nullptr)
-				instrument->name = m_szNames[smp];
-		}
-		// Частота: у одинаковых кусков берём среднюю по всем их ударам.
-		for(size_t i = 0; i < dacSamples.size(); i++)
-		{
-			double rate = 0.0;
-			int count = 0;
-			for(const auto &h : hits)
-			{
-				if(h.start != dacSamples[i].first || h.last <= h.first)
-					continue;
-				rate += static_cast<double>(h.bytes) * VgmRate / (h.last - h.first);
-				count++;
-			}
-			if(count && firstDAC + i + 1 <= m_nInstruments)
-			{
-				const SAMPLEINDEX smp = static_cast<SAMPLEINDEX>(firstDAC + i + 1);
-				if(smp <= m_nSamples)
-					Samples[smp].nC5Speed = mpt::saturate_round<uint32>(std::clamp(rate / count, 4000.0, 44100.0));
+				match = static_cast<int>(s);
+				if(h.bytes > known.length)
+				{
+					known.start = h.start;
+					known.length = h.bytes;
+				}
 			}
 		}
-		for(const auto &h : hits)
+		if(match < 0 && dacSamples.size() < MaxDacSamples)
 		{
-			const auto found = std::find_if(dacSamples.begin(), dacSamples.end(),
-				[&](const auto &known) { return known.first == h.start; });
-			if(found == dacSamples.end())
-				continue;
-			const int index = static_cast<int>(std::distance(dacSamples.begin(), found));
-			events.push_back({h.first, 5, static_cast<ModCommand::NOTE>(NOTE_MIDDLEC), 64,
-				static_cast<int>(firstDAC) + index});
+			match = static_cast<int>(dacSamples.size());
+			dacSamples.push_back({h.start, h.bytes});
 		}
-		std::stable_sort(events.begin(), events.end(),
-			[](const VgmEvent &a, const VgmEvent &b) { return a.sample < b.sample; });
+		if(match < 0)
+			continue;
+		hitSample[i] = match;
+		if(h.last > h.first)
+		{
+			dacSamples[match].rate += static_cast<double>(h.bytes) * VgmRate / (h.last - h.first);
+			dacSamples[match].count++;
+		}
 	}
+	const auto addDacSample = [&](const uint8 *source, uint32 length, uint32 rate, bool loop, std::string name) -> bool
+	{
+		if(m_nSamples >= MAX_SAMPLES - 1 || m_nInstruments >= MAX_INSTRUMENTS - 1)
+			return false;
+		const SAMPLEINDEX smp = ++m_nSamples;
+		ModSample &smpl = Samples[smp];
+		smpl.Initialize(MOD_TYPE_MPT);
+		smpl.nLength = length;
+		smpl.nC5Speed = std::clamp<uint32>(rate, 1000, 96000);
+		if(loop)
+		{
+			smpl.nLoopStart = 0;
+			smpl.nLoopEnd = length;
+			smpl.uFlags.set(CHN_LOOP);
+		}
+		if(smpl.AllocateSample())
+		{
+			int8 *target = smpl.sample8();
+			for(uint32 i = 0; i < length; i++)
+				target[i] = static_cast<int8>(static_cast<int>(source[i]) - 128);
+			smpl.PrecomputeLoops(*this, false);
+		}
+		m_szNames[smp] = std::move(name);
+		const INSTRUMENTINDEX ins = ++m_nInstruments;
+		if(auto *instrument = AllocateInstrument(ins, smp); instrument != nullptr)
+			instrument->name = m_szNames[smp];
+		return true;
+	};
+	size_t dacMade = 0;
+	for(const auto &known : dacSamples)
+	{
+		const uint32 rate = known.count ? mpt::saturate_round<uint32>(known.rate / known.count) : 16000;
+		if(!addDacSample(raw.data() + known.start, known.length, rate, false, "DAC " + std::to_string(dacMade + 1)))
+			break;
+		dacMade++;
+	}
+	for(size_t i = 0; i < hits.size(); i++)
+	{
+		if(hitSample[i] < 0 || static_cast<size_t>(hitSample[i]) >= dacMade)
+			continue;
+		events.push_back({hits[i].first, 5, static_cast<ModCommand::NOTE>(NOTE_MIDDLEC), 64,
+			static_cast<int>(firstDAC) + hitSample[i]});
+	}
+
+	// Потоковый ЦАП: сэмпл на каждый использованный блок. Его частота — та,
+	// с которой блок запускали чаще всего; другие частоты становятся другой
+	// нотой того же сэмпла.
+	{
+		std::vector<int> blockInstrument(dataBlocks.size(), -1);
+		std::vector<uint32> blockRate(dataBlocks.size(), 0);
+		for(size_t b = 0; b < dataBlocks.size(); b++)
+		{
+			std::map<uint32, int> rates;
+			bool loop = false;
+			for(const auto &start : blockStarts)
+			{
+				if(!start.stop && start.block == b && start.frequency)
+				{
+					rates[start.frequency]++;
+					loop = loop || start.loop;
+				}
+			}
+			if(rates.empty() || !dataBlocks[b].size)
+				continue;
+			const uint32 rate = std::max_element(rates.begin(), rates.end(),
+				[](const auto &x, const auto &y) { return x.second < y.second; })->first;
+			if(!addDacSample(pcm.data() + dataBlocks[b].start, dataBlocks[b].size, rate, loop, "DAC block " + std::to_string(b)))
+				break;
+			blockInstrument[b] = static_cast<int>(m_nInstruments) - 1;
+			blockRate[b] = rate;
+		}
+		for(const auto &start : blockStarts)
+		{
+			if(start.stop)
+			{
+				events.push_back({start.sample, 5, NOTE_NOTECUT, 255, -1});
+				continue;
+			}
+			if(blockInstrument[start.block] < 0 || !start.frequency)
+				continue;
+			const int shift = mpt::saturate_round<int>(12.0 * std::log2(static_cast<double>(start.frequency) / blockRate[start.block]));
+			const int note = std::clamp(NOTE_MIDDLEC + shift, int(NOTE_MIN), int(NOTE_MAX));
+			events.push_back({start.sample, 5, static_cast<ModCommand::NOTE>(note), 64, blockInstrument[start.block]});
+		}
+	}
+	std::stable_sort(events.begin(), events.end(),
+		[](const VgmEvent &a, const VgmEvent &b) { return a.sample < b.sample; });
 
 	const INSTRUMENTINDEX firstPSG = m_nInstruments;
 	for(uint8 lane = 0; lane < PSGChannels; lane++)
