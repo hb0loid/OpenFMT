@@ -73,6 +73,9 @@ struct PatternEditPos
 	ORDERINDEX order = ORDERINDEX_INVALID;
 	PATTERNINDEX pattern = PATTERNINDEX_INVALID;
 	CHANNELINDEX channel = CHANNELINDEX_INVALID;
+	// Слот эффекта под курсором (0..3), если курсор стоит в колонке эффекта
+	// или параметра. Вставка одних только эффектов сдвигается в этот слот.
+	uint8 effectSlot = PatternCursor::NoEffectSlot;
 };
 
 
@@ -135,7 +138,7 @@ protected:
 	std::vector<uint8> m_channelLayout;  // Число колонок эффектов по каналам на момент последнего пересчёта
 	// Перетаскивание правого края шапки канала: меняет число колонок эффектов.
 	CHANNELINDEX m_resizeChannel = CHANNELINDEX_INVALID;
-	uint8 m_resizeStartColumns = 0;
+	std::vector<uint8> m_resizeStartLayout;  // Число колонок всех каналов в начале перетаскивания
 	std::bitset<PatternCursor::numColumns> m_visibleColumns;
 
 	// Cursor and selection positions

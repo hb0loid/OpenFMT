@@ -404,8 +404,99 @@ bool PatternClipboard::Paste(CSoundFile &sndFile, PATTERNINDEX pattern, CHANNELI
 
 
 // Parse clipboard string and perform the pasting operation.
-bool PatternClipboard::HandlePaste(CSoundFile &sndFile, PatternEditPos &pastePos, PasteModes mode, const std::string &data, PatternRect &pasteRect, bool &orderChanged)
+// Если в буфере одни эффекты (у всех ячеек пусты нота, инструмент и
+// громкость), а курсор стоит в колонке эффекта, слоты сдвигаются так, чтобы
+// первый скопированный слот лёг в слот курсора. Слоты дальше четвёртого
+// отбрасываются. Иначе текст возвращается как есть.
+static std::string ShiftEffectSlots(const std::string &data, uint8 targetSlot)
 {
+	if(targetSlot >= ModCommand::NumEffects)
+		return data;
+	constexpr size_t cellHead = 8, group = 3;  // ноты+инструмент+громкость, затем группы эффектов по три символа
+	const auto isBlank = [](std::string_view s) { return s.find_first_not_of(' ') == std::string_view::npos; };
+
+	// Строки ячеек начинаются с '|'. Ячейка — от '|' до следующего '|' или конца строки.
+	struct Cell { size_t begin, end; };
+	std::vector<std::vector<Cell>> lines;
+	std::vector<std::pair<size_t, size_t>> lineSpans;
+	size_t pos = 0;
+	uint8 firstSlot = ModCommand::NumEffects;
+	while(pos < data.size())
+	{
+		size_t eol = data.find_first_of("\r\n", pos);
+		if(eol == std::string::npos)
+			eol = data.size();
+		if(eol > pos && data[pos] == '|')
+		{
+			std::vector<Cell> cells;
+			for(size_t c = pos; c < eol;)
+			{
+				size_t next = data.find('|', c + 1);
+				if(next == std::string::npos || next > eol)
+					next = eol;
+				const std::string_view cell(data.data() + c + 1, next - c - 1);
+				if(cell.size() < cellHead || !isBlank(cell.substr(0, cellHead)))
+					return data;  // есть нота, инструмент или громкость — обычная вставка
+				for(uint8 slot = 0; slot < ModCommand::NumEffects; slot++)
+				{
+					const size_t at = cellHead + slot * group;
+					if(at < cell.size() && !isBlank(cell.substr(at, std::min(group, cell.size() - at))))
+					{
+						firstSlot = std::min(firstSlot, slot);
+						break;
+					}
+				}
+				cells.push_back({c + 1, next});
+				c = next;
+			}
+			lines.push_back(std::move(cells));
+			lineSpans.push_back({pos, eol});
+		}
+		pos = eol + 1;
+	}
+	if(firstSlot >= ModCommand::NumEffects || firstSlot == targetSlot)
+		return data;
+
+	const int shift = static_cast<int>(targetSlot) - static_cast<int>(firstSlot);
+	std::string result;
+	size_t copied = 0;
+	for(size_t l = 0; l < lines.size(); l++)
+	{
+		result.append(data, copied, lineSpans[l].first - copied);
+		for(const Cell &cell : lines[l])
+		{
+			const std::string_view text(data.data() + cell.begin, cell.end - cell.begin);
+			std::array<std::string, ModCommand::NumEffects> slots;
+			slots.fill(std::string(group, ' '));
+			for(uint8 slot = 0; slot < ModCommand::NumEffects; slot++)
+			{
+				const size_t at = cellHead + slot * group;
+				const int dest = slot + shift;
+				if(at + group > text.size() || dest < 0 || dest >= ModCommand::NumEffects)
+					continue;
+				slots[dest] = std::string(text.substr(at, group));
+			}
+			int last = 0;
+			for(int slot = 1; slot < ModCommand::NumEffects; slot++)
+			{
+				if(!isBlank(slots[slot]))
+					last = slot;
+			}
+			result += '|';
+			result.append(cellHead, ' ');
+			for(int slot = 0; slot <= last; slot++)
+				result += slots[slot];
+		}
+		copied = lineSpans[l].second;
+	}
+	result.append(data, copied, std::string::npos);
+	return result;
+}
+
+
+bool PatternClipboard::HandlePaste(CSoundFile &sndFile, PatternEditPos &pastePos, PasteModes mode, const std::string &rawData, PatternRect &pasteRect, bool &orderChanged)
+{
+	const std::string data = ShiftEffectSlots(rawData, pastePos.effectSlot);
 	const std::string whitespace(" \n\r\t");
 	PATTERNINDEX pattern = pastePos.pattern;
 	ORDERINDEX &curOrder = pastePos.order;

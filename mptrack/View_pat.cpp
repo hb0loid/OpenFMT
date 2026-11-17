@@ -1224,9 +1224,13 @@ void CViewPattern::OnLButtonDown(UINT nFlags, CPoint point)
 	{
 		if(const CHANNELINDEX chn = GetResizeEdgeChannel(point); chn != CHANNELINDEX_INVALID)
 		{
+			// Снимок всех каналов: если колонки скрыты, расширение канала
+			// ставит остальным по одной (см. SetChannelEffectColumns).
 			m_resizeChannel = chn;
-			m_resizeStartColumns = sndFile.ChnSettings[chn].effectColumns;
-			GetDocument()->GetPatternUndo().PrepareChannelUndo(chn, 1, "Effect Columns");
+			m_resizeStartLayout.resize(sndFile.GetNumChannels());
+			for(CHANNELINDEX i = 0; i < sndFile.GetNumChannels(); i++)
+				m_resizeStartLayout[i] = sndFile.ChnSettings[i].effectColumns;
+			GetDocument()->GetPatternUndo().PrepareChannelUndo(0, sndFile.GetNumChannels(), "Effect Columns");
 			SetCapture();
 			return;
 		}
@@ -1727,7 +1731,11 @@ void CViewPattern::FinishChannelResize()
 	CModDoc *modDoc = GetDocument();
 	if(modDoc == nullptr || chn >= modDoc->GetNumChannels())
 		return;
-	if(modDoc->GetSoundFile().ChnSettings[chn].effectColumns == m_resizeStartColumns)
+	const CSoundFile &sndFile = modDoc->GetSoundFile();
+	bool changed = m_resizeStartLayout.size() != sndFile.GetNumChannels();
+	for(CHANNELINDEX i = 0; i < sndFile.GetNumChannels() && !changed; i++)
+		changed = sndFile.ChnSettings[i].effectColumns != m_resizeStartLayout[i];
+	if(!changed)
 		modDoc->GetPatternUndo().RemoveLastUndoStep();
 }
 
@@ -3020,15 +3028,26 @@ void CViewPattern::SetChannelEffectColumns(CHANNELINDEX chn, uint8 numColumns, b
 	if(modDoc == nullptr || chn >= modDoc->GetNumChannels())
 		return;
 	numColumns = std::clamp(numColumns, uint8(1), ModCommand::NumEffects);
-	// Выбрано больше одной колонки, а дополнительные скрыты: включаем их,
-	// иначе выбор ничего не покажет.
+	CSoundFile &sndFile = modDoc->GetSoundFile();
+	// Выбрано больше одной колонки, а дополнительные скрыты: их надо
+	// включить, иначе выбор ничего не покажет. Но тогда остальные каналы
+	// развернулись бы до своих прежних чисел; им ставится одна колонка —
+	// ровно то, что на экране и было. Всё это один шаг отмены.
 	if(numColumns > 1 && !ExtraEffectsShown())
 	{
+		if(prepareUndo)
+			modDoc->GetPatternUndo().PrepareChannelUndo(0, sndFile.GetNumChannels(), "Effect Columns");
+		for(CHANNELINDEX other = 0; other < sndFile.GetNumChannels(); other++)
+			sndFile.ChnSettings[other].effectColumns = 1;
+		sndFile.ChnSettings[chn].effectColumns = numColumns;
 		auto visible = m_visibleColumns;
 		visible.set(PatternCursor::effectColumn2);
 		UpdateVisibileColumns(visible);
+		modDoc->SetModified();
+		CheckChannelLayout();
+		modDoc->UpdateAllViews(nullptr, GeneralHint().Channels(), nullptr);
+		return;
 	}
-	CSoundFile &sndFile = modDoc->GetSoundFile();
 	if(sndFile.ChnSettings[chn].effectColumns == numColumns)
 		return;
 	if(prepareUndo)
@@ -7981,6 +8000,7 @@ bool CViewPattern::PastePattern(PATTERNINDEX nPattern, const PatternCursor &past
 	pos.row = pastePos.GetRow();
 	pos.channel = pastePos.GetChannel();
 	pos.order = GetCurrentOrder();
+	pos.effectSlot = PatternCursor::EffectSlot(pastePos.GetColumnType());
 	PatternRect rect;
 	const bool patternExisted = GetSoundFile()->Patterns.IsValidPat(nPattern);
 	bool orderChanged = false;

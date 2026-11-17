@@ -93,7 +93,7 @@ protected:
 	static std::string CreateClipboardString(const CSoundFile &sndFile, PATTERNINDEX pattern, PatternRect selection);
 
 	// Parse clipboard string and perform the pasting operation.
-	static bool HandlePaste(CSoundFile &sndFile, PatternEditPos &pastePos, PasteModes mode, const std::string &data, PatternRect &pasteRect, bool &orderChanged);
+	static bool HandlePaste(CSoundFile &sndFile, PatternEditPos &pastePos, PasteModes mode, const std::string &rawData, PatternRect &pasteRect, bool &orderChanged);
 
 	// System-specific clipboard functions
 	static bool ToSystemClipboard(const PatternClipboardElement &clipboard) { return ToSystemClipboard(clipboard.content); };
