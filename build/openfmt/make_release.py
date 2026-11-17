@@ -20,7 +20,7 @@ BIN = ROOT / 'bin/release/vs2022-win10-static/amd64'
 # Лицензии компонентов: тот же список, что у OpenMPT
 # (build/auto/update_package_template.cmd), без UnRAR и с ymfm.
 LICENSES = {
-    'LICENSE': 'License.OpenMPT.txt',
+    'LICENSE.OpenMPT': 'License.OpenMPT.txt',
     'include/ymfm/LICENSE': 'License.ymfm.txt',
     'src/mpt/LICENSE.BSD-3-Clause.txt': 'License.mpt.BSD-3-Clause.txt',
     'src/mpt/LICENSE.BSL-1.0.txt': 'License.mpt.BSL-1.0.txt',

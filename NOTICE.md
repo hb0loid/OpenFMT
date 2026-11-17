@@ -17,7 +17,7 @@ OpenMPT code is used under its BSD 3-Clause license:
     Copyright (c) 2004-2026, OpenMPT Project Developers and Contributors
     Copyright (c) 1997-2003, Olivier Lapicque
 
-The license text is in `LICENSE` (repository) / `Licenses/License.OpenMPT.txt`
+The license text is in `LICENSE.OpenMPT` (repository) / `Licenses/License.OpenMPT.txt`
 (package). OpenMPT's name is used only to state where OpenFMT comes from;
 OpenFMT is not endorsed by the OpenMPT project.
 

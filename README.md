@@ -73,7 +73,7 @@ OpenFMT as a whole is distributed under the **GNU General Public License,
 version 3 or (at your option) any later version** — see `COPYING`.
 
 It is a modified version of OpenMPT, whose code is under the BSD 3-Clause
-license (`LICENSE`, its original readme is `README.OpenMPT.md`), and parts of its chip playback behaviour are adapted from
+license (`LICENSE.OpenMPT`, its original readme is `README.OpenMPT.md`), and parts of its chip playback behaviour are adapted from
 Furnace (GPL-2.0-or-later). Third-party components and their licenses are
 listed in `NOTICE.md` and the `Licenses` folder.
 
@@ -136,7 +136,7 @@ OpenFMT сохраняет обычные `.mptm` с дополнительны�
 
 OpenFMT целиком распространяется по **GNU GPL версии 3 или (на ваш выбор)
 любой более поздней** — см. `COPYING`. Это изменённая версия OpenMPT (код
-OpenMPT под лицензией BSD 3-Clause, `LICENSE`); часть логики воспроизведения
+OpenMPT под лицензией BSD 3-Clause, `LICENSE.OpenMPT`); часть логики воспроизведения
 чипов перенесена из Furnace (GPL-2.0-or-later). Остальные компоненты и их
 лицензии — в `NOTICE.md` и папке `Licenses`.
 
