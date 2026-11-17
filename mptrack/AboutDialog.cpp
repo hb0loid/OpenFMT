@@ -9,6 +9,7 @@
 
 
 #include "stdafx.h"
+#include "OpenFMTVersion.h"
 #include "AboutDialog.h"
 #include "HighDPISupport.h"
 #include "Image.h"
@@ -353,10 +354,11 @@ mpt::ustring CAboutDlg::GetTabText(int tab)
 	switch(tab)
 	{
 		case 0:
-			text = mpt::ustring(UL_("OpenFMT - OpenMPT fork with native chip support (YM2612, YM2151, SN76489, Furnace and VGM import)\n"))
+			// Версия — своя. Об OpenMPT остаётся одна строка: этого требует его
+			// лицензия (BSD), номер версии основы там не нужен.
+			text = mpt::ustring(UL_("OpenFMT - tracker with native chip support (YM2612, YM2151, SN76489, Furnace and VGM import)\n"))
 				+ UL_("Based on OpenMPT - Open ModPlug Tracker. Not affiliated with the OpenMPT or Furnace developers.\n\n")
-				+ MPT_UFORMAT("Version: {}\n")(Build::GetVersionStringExtended())
-				+ MPT_UFORMAT("Source Code: {}\n")(SourceInfo::Current().GetUrlWithRevision() + UL_(" ") + SourceInfo::Current().GetStateString())
+				+ UL_("Version: " OPENFMT_VERSION_A "\n")
 				+ MPT_UFORMAT("Build Date: {}\n")(Build::GetBuildDateString())
 				+ MPT_UFORMAT("Compiler: {}\n")(Build::GetBuildCompilerString())
 				+ MPT_UFORMAT("Architecture: {}\n")(mpt::OS::Windows::Name(mpt::OS::Windows::GetProcessArchitecture()))

@@ -304,7 +304,8 @@ void DebugReporter::ReportError(mpt::ustring errorMessage)
 	}
 
 	errorMessage += UL_("\n\n");
-	errorMessage += MPT_UFORMAT("OpenMPT {} {} ({} ({}))")
+	// В отчёте о падении версия основы нужна для разбора, поэтому она здесь есть.
+	errorMessage += MPT_UFORMAT("OpenFMT " OPENFMT_VERSION_A ", OpenMPT base {} {} ({} ({}))")
 		( Build::GetVersionStringExtended()
 		, mpt::OS::Windows::Name(mpt::OS::Windows::GetProcessArchitecture())
 		, SourceInfo::Current().GetUrlWithRevision()

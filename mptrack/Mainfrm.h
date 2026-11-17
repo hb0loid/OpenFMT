@@ -49,9 +49,9 @@ class Base;
 class ICallback;
 } // namerspace SoundDevice
 
-#define MAINFRAME_TITLE _T("OpenFMT")
-// Версия форка; в скобках — версия OpenMPT, на которой он основан.
-#define OPENFMT_VERSION _T("0.1")
+#include "OpenFMTVersion.h"
+#define MAINFRAME_TITLE _T(OPENFMT_NAME)
+#define OPENFMT_VERSION _T(OPENFMT_VERSION_A)
 
 
 #define NUM_VUMETER_PENS		32

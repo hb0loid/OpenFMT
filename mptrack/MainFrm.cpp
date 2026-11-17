@@ -219,10 +219,9 @@ CMainFrame::CMainFrame()
 void CMainFrame::Initialize()
 {
 	//Adding version number to the frame title
-	// «OpenFMT 0.1 (OpenMPT 1.33…)»: форк со своей версией, но видно, на
-	// какой версии OpenMPT он основан.
+	// OpenFMT — самостоятельный трекер: в заголовке только его имя и версия.
 	CString title = GetTitle();
-	title += _T(" ") OPENFMT_VERSION _T(" (OpenMPT ") + mpt::cfmt::val(Version::Current()) + _T(")");
+	title += _T(" ") OPENFMT_VERSION;
 	title += mpt::ToCString(mpt::Charset::ASCII, OPENMPT_BUILD_VARIANT_MONIKER);
 	if(Build::IsDebugBuild())
 	{
