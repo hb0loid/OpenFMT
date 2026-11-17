@@ -1494,10 +1494,46 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 						break;
 					}
 				}
+				// Перемотка не всегда проигрывает ноты по-настоящему: без
+				// синхронизации сэмплов у канала нет ни ноты, ни периода. Тогда
+				// скольжение не двигается, не доходит до цели и не выключается —
+				// и после старта с середины тянет вниз все следующие ноты
+				// (mushroom hill alt, канал 6: `0230` на паттерне 8 при старте с
+				// паттерна 9). Для такого канала скольжение ведём по условной
+				// высоте ноты: её хватает, чтобы понять, когда оно доедет до цели.
+				auto &fs = chn.furnaceSlide;
+				const bool virtualPitch = chn.nPeriod <= 0;
+				if(virtualPitch && chn.rowCommand.IsNote())
+				{
+					const bool tonePorta = slideCommand == CMD_TONEPORTAMENTO || slideCommand == CMD_TONEPORTAVOL
+						|| (fs.mode == CMD_TONEPORTAMENTO && slideCommand != CMD_PORTAMENTOUP && slideCommand != CMD_PORTAMENTODOWN);
+					fs.seekNote = chn.rowCommand.note;
+					if(!tonePorta || fs.seekPeriod <= 0)
+						fs.seekPeriod = static_cast<int32>(GetPeriodFromNote(chn.rowCommand.note, 0, 8363));
+				}
 				for(uint32 tick = 0; tick < numTicks; tick++)
 				{
 					chn.isFirstTick = (tick == 0);
+					const bool useVirtual = virtualPitch && fs.seekPeriod > 0;
+					const auto oldNote = chn.nNote;
+					const auto oldC5Speed = chn.nC5Speed;
+					const auto oldFineTune = chn.nFineTune;
+					if(useVirtual)
+					{
+						chn.nPeriod = fs.seekPeriod;
+						chn.nNote = fs.seekNote;
+						chn.nC5Speed = 8363;
+						chn.nFineTune = 0;
+					}
 					ProcessFurnaceSlide(chn, slideCommand, slideParam, tick == 0);
+					if(useVirtual)
+					{
+						fs.seekPeriod = chn.nPeriod;
+						chn.nPeriod = 0;
+						chn.nNote = oldNote;
+						chn.nC5Speed = oldC5Speed;
+						chn.nFineTune = oldFineTune;
+					}
 				}
 				chn.isFirstTick = true;
 			}
