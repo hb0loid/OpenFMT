@@ -78,6 +78,8 @@ class CVstPluginManager;
 #endif
 
 
+struct FurSong;
+
 using PlayBehaviourSet = std::bitset<kMaxPlayBehaviours>;
 
 #ifdef MODPLUG_TRACKER
@@ -849,6 +851,7 @@ public:
 	static ProbeResult ProbeFileHeaderFC(MemoryFileReader file, const uint64 *pfilesize);
 	static ProbeResult ProbeFileHeaderFMT(MemoryFileReader file, const uint64 *pfilesize);
 	static ProbeResult ProbeFileHeaderFUR(MemoryFileReader file, const uint64 *pfilesize);
+	static ProbeResult ProbeFileHeaderDefleMask(MemoryFileReader file, const uint64 *pfilesize);
 	static ProbeResult ProbeFileHeaderVGM(MemoryFileReader file, const uint64 *pfilesize);
 	static ProbeResult ProbeFileHeaderFTM(MemoryFileReader file, const uint64 *pfilesize);
 	static ProbeResult ProbeFileHeaderGDM(MemoryFileReader file, const uint64 *pfilesize);
@@ -918,6 +921,8 @@ public:
 	bool ReadFC(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
 	bool ReadFMT(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
 	bool ReadFUR(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
+	bool ReadDefleMask(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
+	bool BuildFurSong(FurSong &song, ModLoadingFlags loadFlags);
 	bool ReadVGM(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
 	bool ReadFTM(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
 	bool ReadGDM(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);

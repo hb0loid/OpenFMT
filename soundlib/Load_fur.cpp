@@ -10,8 +10,8 @@
 #ifdef MPT_WITH_ZLIB
 #include "../common/zlib_helper.h"
 #include <zlib.h>
-#include <map>
 #endif
+#include <map>
 
 OPENMPT_NAMESPACE_BEGIN
 namespace
@@ -27,8 +27,10 @@ bool IsZlib(Reader file)
 }
 
 #ifdef MPT_WITH_ZLIB
+// Сжатые zlib модули Furnace и DefleMask различаются только сигнатурой после
+// распаковки: у обоих она шестнадцатибайтная.
 template<typename Reader>
-bool InflateFur(Reader file, std::vector<uint8> &output, bool prefixOnly)
+bool InflateFur(Reader file, std::vector<uint8> &output, bool prefixOnly, std::string_view magic = FurMagic)
 {
 	if(!IsZlib(file) || file.GetLength() > MaxFurBytes)
 		return false;
@@ -47,16 +49,16 @@ bool InflateFur(Reader file, std::vector<uint8> &output, bool prefixOnly)
 			stream->avail_in = static_cast<uInt>(length);
 		}
 		stream->next_out = block.data();
-		stream->avail_out = static_cast<uInt>(prefixOnly ? sizeof(FurMagic) - 1 : block.size());
+		stream->avail_out = static_cast<uInt>(prefixOnly ? magic.size() : block.size());
 		const auto capacity = stream->avail_out;
 		result = inflate(&*stream, Z_NO_FLUSH);
 		const auto produced = capacity - stream->avail_out;
 		if(produced > MaxFurBytes - output.size())
 			return false;
 		output.insert(output.end(), block.begin(), block.begin() + produced);
-		if(output.size() >= sizeof(FurMagic) - 1 && std::memcmp(output.data(), FurMagic, sizeof(FurMagic) - 1))
+		if(output.size() >= magic.size() && std::memcmp(output.data(), magic.data(), magic.size()))
 			return false;
-		if(prefixOnly && output.size() == sizeof(FurMagic) - 1)
+		if(prefixOnly && output.size() == magic.size())
 			return true;
 	}
 	return result == Z_STREAM_END && output.size() >= 32;
@@ -582,9 +584,22 @@ void SetFurEnvelope(ModInstrument &ins, const FurInstrument &fur, int maxVolume,
 	}
 }
 
-bool LoadFurSample(ModSample &sample, FileReader data, bool modern, std::string &name, bool decode)
+// Сэмпл, разобранный из файла, но ещё не положенный в модуль. Данные остаются
+// в исходном файле (или в буфере песни, если их пришлось пересчитать), а в
+// ModSample переносятся при построении модуля.
+struct FurSample
 {
-	if(!FurString(data, name) || !data.CanRead(modern ? 40 : 20))
+	std::string name;
+	uint32 length = 0, rate = 0;
+	int32 loopStart = -1, loopEnd = -1;
+	uint8 loopMode = 1;  // 0 — вперёд, 1 — без петли, 2 — туда-обратно
+	bool is16Bit = false;
+	FileReader data;
+};
+
+bool ParseFurSample(FileReader data, bool modern, FurSample &out)
+{
+	if(!FurString(data, out.name) || !data.CanRead(modern ? 40 : 20))
 		return false;
 	const auto length = data.ReadUint32LE();
 	auto rate = data.ReadUint32LE();
@@ -606,6 +621,18 @@ bool LoadFurSample(ModSample &sample, FileReader data, bool modern, std::string 
 	const size_t width = depth == 16 ? 2 : 1;
 	if(length > MaxFurBytes / width || !data.CanRead(length * width))
 		return false;
+	out.length = length;
+	out.rate = rate;
+	out.loopStart = begin;
+	out.loopEnd = end;
+	out.loopMode = loopMode;
+	out.is16Bit = depth == 16;
+	out.data = data;
+	return true;
+}
+
+void ApplyFurSample(ModSample &sample, const FurSample &fur, bool decode)
+{
 	sample.Initialize(MOD_TYPE_MPT);
 	// Громкость канала у Furnace одинаково живёт у всех чипов, сэмплерных тоже:
 	// нота без громкости наследует текущую. Без этого флага на сэмплах каждая
@@ -613,20 +640,63 @@ bool LoadFurSample(ModSample &sample, FileReader data, bool modern, std::string 
 	// YMZ280B, из-за этого вылезло 88 лишних расхождений: флаг стоял только у
 	// FM и PSG, а подстановку громкости я убрал у всех разом.
 	sample.uFlags.set(SMP_NODEFAULTVOLUME);
-	sample.nC5Speed = rate ? rate : 8363;
-	sample.nLength = length;
-	if(begin >= 0 && end > begin && static_cast<uint32>(end) <= length && loopMode != 1)
+	sample.nC5Speed = fur.rate ? fur.rate : 8363;
+	sample.nLength = fur.length;
+	if(fur.loopStart >= 0 && fur.loopEnd > fur.loopStart && static_cast<uint32>(fur.loopEnd) <= fur.length && fur.loopMode != 1)
 	{
-		sample.nLoopStart = begin;
-		sample.nLoopEnd = end;
+		sample.nLoopStart = fur.loopStart;
+		sample.nLoopEnd = fur.loopEnd;
 		sample.uFlags.set(CHN_LOOP);
-		sample.uFlags.set(CHN_PINGPONGLOOP, loopMode == 2);
+		sample.uFlags.set(CHN_PINGPONGLOOP, fur.loopMode == 2);
 	}
 	if(decode)
-		SampleIO(depth == 16 ? SampleIO::_16bit : SampleIO::_8bit, SampleIO::mono, SampleIO::littleEndian, SampleIO::signedPCM).ReadSample(sample, data);
-	return true;
+	{
+		FileReader data = fur.data;
+		SampleIO(fur.is16Bit ? SampleIO::_16bit : SampleIO::_8bit, SampleIO::mono, SampleIO::littleEndian, SampleIO::signedPCM).ReadSample(sample, data);
+	}
 }
 } // namespace
+
+// Песня Furnace в том виде, в каком её прочитал разборщик файла (.fur или
+// DefleMask .dmf), но ещё не превращённая в модуль. Построение модуля по ней
+// одно на оба формата: BuildFurSong.
+struct FurSong
+{
+	unsigned timeBase = 1;
+	std::vector<uint8> speeds;
+	std::vector<std::vector<uint8>> grooves;
+	// Скорость арпеджио песни: столько тиков держится каждая ступень.
+	uint8 arpLength = 1;
+	double tickRate = 60.0;
+	double virtualTempo = 1.0;
+	ROWINDEX rows = 64;
+	ORDERINDEX orders = 1;
+	uint8 highlight1 = 0, highlight2 = 0;
+	std::vector<FurVoice> voices;
+	std::vector<std::pair<uint8, uint8>> psgLanes;
+	std::vector<std::string> channelNames;
+	std::array<bool, 32> noEasyNoise{}, noPhaseReset{};
+	std::string title, author, comment;
+	double tuningRatio = 1.0;
+	float master = 1.0f;
+	// Флаги совместимости в раскладке блока INFO файла .fur.
+	std::array<uint8, 20> compat{};
+	std::array<uint8, 28> extraCompat{};
+	uint8 delayBehavior = 1;
+	// Карта нот у сэмплерных инструментов задаёт и ноту, а не только сэмпл.
+	bool noteMapNotes = false;
+	uint8 extraSubsongs = 0;
+	size_t unsupported = 0;
+	std::vector<FurSample> samples;
+	std::vector<FurInstrument> instruments;
+	// Номер паттерна канала на позиции: [канал * orders + позиция].
+	std::vector<uint8> arrangement;
+	std::map<std::pair<uint16, uint16>, std::vector<FurRow>> patterns;
+	// Паттерны в порядке файла: в нём их просматривает предварительный проход.
+	std::vector<std::pair<uint16, uint16>> patternSequence;
+	// Пересчитанные при разборе данные сэмплов, на которые смотрят FurSample::data.
+	std::vector<std::vector<std::byte>> storage;
+};
 
 #ifdef MODPLUG_TRACKER
 
@@ -915,25 +985,11 @@ CSoundFile::ProbeResult CSoundFile::ProbeFileHeaderFUR(MemoryFileReader file, co
 	return ProbeFailure;
 }
 
-bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
+namespace
 {
-	source.Rewind();
-	FileReader file = source;
-	std::vector<uint8> unpacked;
-	if(!file.ReadMagic(FurMagic))
-	{
-#ifdef MPT_WITH_ZLIB
-		if(!InflateFur(source, unpacked, flags == onlyVerifyHeader))
-			return false;
-		file = FileReader(mpt::as_span(unpacked));
-		if(!file.ReadMagic(FurMagic))
-			return false;
-#else
-		return false;
-#endif
-	}
-	if(flags == onlyVerifyHeader)
-		return true;
+// Разбор .fur в FurSong. Сам модуль строит BuildFurSong.
+bool ParseFUR(FileReader &file, FurSong &song, bool loadPatterns)
+{
 	if(!file.CanRead(16))
 		return false;
 	const uint16 version = file.ReadUint16LE();
@@ -943,24 +999,22 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 	auto info = FurBlock(file, infoPointer, id);
 	if(version < 95 || version >= 240 || id != "INFO" || !info.CanRead(248))
 		return false;
-	const unsigned timeBase = info.ReadUint8() + 1u;
+	song.timeBase = info.ReadUint8() + 1u;
 	const unsigned firstSpeed = info.ReadUint8(), secondSpeed = info.ReadUint8();
-	// Скорость арпеджио песни: столько тиков держится каждая ступень.
-	const uint8 arpLength = info.ReadUint8();
-	const double tickRate = info.ReadFloatLE();
-	const ROWINDEX rows = info.ReadUint16LE();
-	const ORDERINDEX orders = info.ReadUint16LE();
-	const auto highlight1 = info.ReadUint8(), highlight2 = info.ReadUint8();
+	song.arpLength = info.ReadUint8();
+	song.tickRate = info.ReadFloatLE();
+	song.rows = info.ReadUint16LE();
+	song.orders = info.ReadUint16LE();
+	song.highlight1 = info.ReadUint8();
+	song.highlight2 = info.ReadUint8();
 	const auto instrumentCount = info.ReadUint16LE(), waveCount = info.ReadUint16LE(), sampleCount = info.ReadUint16LE();
 	const auto patternCount = info.ReadUint32LE();
-	if(!rows || rows > 256 || !orders || orders > 256 || instrumentCount > 255 || sampleCount > 256 || waveCount > 256
-		|| patternCount > 65536 || !std::isfinite(tickRate) || tickRate <= 0)
+	if(!song.rows || song.rows > 256 || !song.orders || song.orders > 256 || instrumentCount > 255 || sampleCount > 256 || waveCount > 256
+		|| patternCount > 65536 || !std::isfinite(song.tickRate) || song.tickRate <= 0)
 		return false;
 
-	std::vector<FurVoice> voices;
-	std::vector<std::pair<uint8, uint8>> psgLanes;
+	auto &voices = song.voices;
 	std::vector<uint8> chipSlots;
-	std::vector<std::string> channelNames;
 	for(size_t i = 0; i < 32; i++)
 	{
 		const auto chip = info.ReadUint8();
@@ -982,8 +1036,8 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		{
 			const bool noise = voice == FurVoice::PSG && c == 3;
 			voices.push_back(noise ? FurVoice::Noise : voice);
-			psgLanes.emplace_back(static_cast<uint8>(i), c);
-			channelNames.push_back(noise ? "PSG Noise" : std::string(name) + " " + std::to_string(c + 1));
+			song.psgLanes.emplace_back(static_cast<uint8>(i), c);
+			song.channelNames.push_back(noise ? "PSG Noise" : std::string(name) + " " + std::to_string(c + 1));
 		}
 	}
 	if(voices.empty() || voices.size() + 1 > MAX_BASECHANNELS)
@@ -996,7 +1050,6 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 	std::array<uint32, 32> chipFlags{};
 	for(auto &offset : chipFlags)
 		offset = info.ReadUint32LE();
-	std::array<bool, 32> noEasyNoise{}, noPhaseReset{};
 	if(version >= 119)
 	{
 		for(size_t chip = 0; chip < chipFlags.size(); chip++)
@@ -1008,32 +1061,30 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 				continue;
 			std::string settings;
 			FurString(data, settings);
-			noEasyNoise[chip] = settings.find("noEasyNoise=true") != std::string::npos;
-			noPhaseReset[chip] = settings.find("noPhaseReset=true") != std::string::npos;
+			song.noEasyNoise[chip] = settings.find("noEasyNoise=true") != std::string::npos;
+			song.noPhaseReset[chip] = settings.find("noPhaseReset=true") != std::string::npos;
 		}
 	}
-	std::string title, author;
-	if(!FurString(info, title) || !FurString(info, author) || !info.CanRead(4))
+	if(!FurString(info, song.title) || !FurString(info, song.author) || !info.CanRead(4))
 		return false;
 	// Строй песни: частота A4. Он раньше пропускался, а у Furnace он двигает
 	// все голоса микросхем — в `death egg alt 2` стоит 448 Гц, и каждый голос FM
 	// и PSG звучал у нас на 31 цент ниже, в `athletic rrt` 435 Гц — на 20 выше.
 	// Сэмплов строй не касается: их высоту задаёт их собственная частота.
 	const float furTuning = info.ReadFloatLE();
-	const double tuningRatio = (furTuning >= 300.0f && furTuning <= 600.0f) ? furTuning / 440.0 : 1.0;
-	std::array<uint8, 20> compat{};
-	if(!info.ReadArray(compat))
+	song.tuningRatio = (furTuning >= 300.0f && furTuning <= 600.0f) ? furTuning / 440.0 : 1.0;
+	if(!info.ReadArray(song.compat))
 		return false;
 	std::vector<uint32> instrumentOffsets, waveOffsets, sampleOffsets, patternOffsets;
 	if(!ReadPointers(info, instrumentOffsets, instrumentCount) || !ReadPointers(info, waveOffsets, waveCount)
 		|| !ReadPointers(info, sampleOffsets, sampleCount) || !ReadPointers(info, patternOffsets, patternCount))
 		return false;
-	std::vector<uint8> arrangement, columns;
-	if(!info.ReadVector(arrangement, voices.size() * orders) || !info.ReadVector(columns, voices.size()))
+	std::vector<uint8> columns;
+	if(!info.ReadVector(song.arrangement, voices.size() * song.orders) || !info.ReadVector(columns, voices.size()))
 		return false;
 	if(!info.Skip(voices.size() * 2))
 		return false;
-	for(auto &name : channelNames)
+	for(auto &name : song.channelNames)
 	{
 		std::string custom;
 		if(!FurString(info, custom))
@@ -1047,24 +1098,23 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		if(!FurString(info, shortName))
 			return false;
 	}
-	std::string comment;
-	FurString(info, comment);
-	const float master = info.ReadFloatLE();
-	std::array<uint8, 28> extraCompat{};
-	info.ReadArray(extraCompat);
+	FurString(info, song.comment);
+	song.master = info.ReadFloatLE();
+	info.ReadArray(song.extraCompat);
 	const auto virtualNumerator = info.ReadUint16LE(), virtualDenominator = info.ReadUint16LE();
+	song.virtualTempo = virtualNumerator && virtualDenominator ? double(virtualNumerator) / virtualDenominator : 1.0;
 	std::string subsongName, subsongComment;
 	FurString(info, subsongName);
 	FurString(info, subsongComment);
-	const uint8 extraSubsongs = info.ReadUint8();
-	info.Skip(3 + 4 * extraSubsongs);
+	song.extraSubsongs = info.ReadUint8();
+	info.Skip(3 + 4 * song.extraSubsongs);
 	if(version >= 103)
 		for(int i = 0; i < 6; i++)
 		{
 			std::string metadata;
 			FurString(info, metadata);
 		}
-	std::vector<uint8> speeds{static_cast<uint8>(std::max(1u, firstSpeed)), static_cast<uint8>(std::max(1u, secondSpeed))};
+	song.speeds = {static_cast<uint8>(std::max(1u, firstSpeed)), static_cast<uint8>(std::max(1u, secondSpeed))};
 	// INFO includes a speed sequence and groove table in newer Furnace revisions.
 	if(version >= 135)
 	{
@@ -1084,23 +1134,132 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 	if(version >= 136) info.Skip(1);
 	if(version >= 138 && !info.Skip(8))
 		return false;
-	std::vector<std::vector<uint8>> grooves;
 	if(version >= 139)
 	{
 		const auto count = info.ReadUint8();
 		std::array<uint8, 16> sequence{};
 		if(!count || count > sequence.size() || !info.ReadArray(sequence) || !info.CanRead(1))
 			return false;
-		speeds.assign(sequence.begin(), sequence.begin() + count);
+		song.speeds.assign(sequence.begin(), sequence.begin() + count);
 		const auto grooveCount = info.ReadUint8();
 		for(size_t i = 0; i < grooveCount; i++)
 		{
 			const auto length = info.ReadUint8();
 			if(!length || length > sequence.size() || !info.ReadArray(sequence))
 				return false;
-			grooves.emplace_back(sequence.begin(), sequence.begin() + length);
+			song.grooves.emplace_back(sequence.begin(), sequence.begin() + length);
 		}
 	}
+	// Поведение задержки ноты Furnace выбирает по файлу: 0 отбрасывает задержку
+	// от скорости и больше, 1 только больше скорости, 2 не отбрасывает ничего.
+	// У версий ниже 110 он принудительно ставит 1, у остальных читает байт из
+	// блока совместимости. Отброшенная задержка не роняет ноту: она играет на
+	// своей строке сразу, потому что Furnace просто не откладывает строку.
+	song.delayBehavior = (version >= 110) ? song.extraCompat[22] : 1;
+	// fbPortaPause и oldOctaveBoundary у старых версий Furnace включает сам.
+	if(version < 85)
+		song.extraCompat[10] = 1;
+	if(version < 97)
+		song.extraCompat[14] = 1;
+	song.noteMapNotes = version >= 152;
+
+	song.samples.resize(sampleCount);
+	for(size_t i = 0; i < sampleOffsets.size(); i++)
+	{
+		auto data = FurBlock(file, sampleOffsets[i], id);
+		if((id != "SMP2" && id != "SMPL") || !ParseFurSample(data, id == "SMP2", song.samples[i]))
+			return false;
+	}
+	song.instruments.resize(instrumentCount);
+	for(size_t i = 0; i < instrumentOffsets.size(); i++)
+	{
+		auto data = FurBlock(file, instrumentOffsets[i], id);
+		if(!ReadFurInstrument(data, id, song.instruments[i], song.unsupported))
+			return false;
+	}
+	if(loadPatterns)
+	{
+		for(auto offset : patternOffsets)
+		{
+			auto pattern = FurBlock(file, offset, id);
+			const bool packed = id == "PATN";
+			if(!packed && id != "PATR")
+				return false;
+			const auto subsong = packed ? pattern.ReadUint8() : 0;
+			const uint16 channel = packed ? pattern.ReadUint8() : pattern.ReadUint16LE();
+			const uint16 index = pattern.ReadUint16LE();
+			const uint16 oldSubsong = packed ? 0 : pattern.ReadUint16LE();
+			if(!packed) pattern.Skip(2);
+			if(subsong || oldSubsong)
+				continue;
+			if(channel >= voices.size() || index >= 256)
+				return false;
+			auto &data = song.patterns[{channel, index}];
+			data.resize(song.rows);
+			if(!ReadFurPattern(pattern, packed, data, columns[channel]))
+				return false;
+			song.patternSequence.emplace_back(channel, index);
+		}
+	}
+	return true;
+}
+} // namespace
+
+bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
+{
+	source.Rewind();
+	FileReader file = source;
+	std::vector<uint8> unpacked;
+	if(!file.ReadMagic(FurMagic))
+	{
+#ifdef MPT_WITH_ZLIB
+		if(!InflateFur(source, unpacked, flags == onlyVerifyHeader))
+			return false;
+		file = FileReader(mpt::as_span(unpacked));
+		if(!file.ReadMagic(FurMagic))
+			return false;
+#else
+		return false;
+#endif
+	}
+	if(flags == onlyVerifyHeader)
+		return true;
+	FurSong song;
+	if(!ParseFUR(file, song, (flags & loadPatternData) != 0) || !BuildFurSong(song, flags))
+		return false;
+	m_modFormat.formatName = UL_("Furnace (editable import)");
+	m_modFormat.type = UL_("fur");
+	m_modFormat.madeWithTracker = UL_("Furnace");
+	m_modFormat.charset = mpt::Charset::UTF8;
+	return true;
+}
+
+// Построение модуля по разобранной песне, общее для .fur и .dmf.
+bool CSoundFile::BuildFurSong(FurSong &song, ModLoadingFlags flags)
+{
+	const auto &voices = song.voices;
+	const auto &psgLanes = song.psgLanes;
+	const auto &channelNames = song.channelNames;
+	const auto &noEasyNoise = song.noEasyNoise;
+	const auto &noPhaseReset = song.noPhaseReset;
+	const auto &compat = song.compat;
+	const auto &extraCompat = song.extraCompat;
+	const auto &grooves = song.grooves;
+	const auto &arrangement = song.arrangement;
+	const auto &patterns = song.patterns;
+	auto &speeds = song.speeds;
+	auto &furInstruments = song.instruments;
+	const unsigned timeBase = song.timeBase;
+	const ROWINDEX rows = song.rows;
+	const ORDERINDEX orders = song.orders;
+	const uint8 arpLength = song.arpLength;
+	const uint16 instrumentCount = static_cast<uint16>(furInstruments.size());
+	const uint16 sampleCount = static_cast<uint16>(song.samples.size());
+	const double tuningRatio = song.tuningRatio;
+	[[maybe_unused]] const uint8 extraSubsongs = song.extraSubsongs;
+	size_t unsupported = song.unsupported;
+	if(voices.empty() || speeds.empty() || arrangement.size() < voices.size() * orders)
+		return false;
 	// Furnace держит набор скоростей и чередует их по строкам, а эффекты 09xx и
 	// 0Fxx меняют их по отдельности. Если песня начинается с равных скоростей,
 	// а эффект потом их разводит, чередование обязан вести служебный канал: без
@@ -1117,25 +1276,10 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 	std::vector<bool> instrumentOnDac(instrumentCount, false);
 	if(flags & loadPatternData)
 	{
-		std::vector<FurRow> scan;
-		for(auto offset : patternOffsets)
+		for(const auto &key : song.patternSequence)
 		{
-			std::string blockID;
-			auto block = FurBlock(file, offset, blockID);
-			const bool packed = blockID == "PATN";
-			if(!packed && blockID != "PATR")
-				continue;
-			const auto subsong = packed ? block.ReadUint8() : 0;
-			const uint16 channel = packed ? block.ReadUint8() : block.ReadUint16LE();
-			block.Skip(2);
-			const uint16 oldSubsong = packed ? 0 : block.ReadUint16LE();
-			if(!packed)
-				block.Skip(2);
-			if(subsong || oldSubsong || channel >= voices.size())
-				continue;
-			scan.assign(rows, FurRow{});
-			if(!ReadFurPattern(block, packed, scan, columns[channel]))
-				continue;
+			const auto channel = key.first;
+			const auto &scan = song.patterns.at(key);
 			for(const auto &row : scan)
 			{
 				if(row.instrument >= 0 && static_cast<size_t>(row.instrument) < instrumentVoice.size())
@@ -1155,12 +1299,7 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 				break;
 		}
 	}
-	// Поведение задержки ноты Furnace выбирает по файлу: 0 отбрасывает задержку
-	// от скорости и больше, 1 только больше скорости, 2 не отбрасывает ничего.
-	// У версий ниже 110 он принудительно ставит 1, у остальных читает байт из
-	// блока совместимости. Отброшенная задержка не роняет ноту: она играет на
-	// своей строке сразу, потому что Furnace просто не откладывает строку.
-	const uint8 delayBehavior = (version >= 110) ? extraCompat[22] : 1;
+	const uint8 delayBehavior = song.delayBehavior;
 	const bool timing = !grooves.empty() || speedEffects
 		|| std::adjacent_find(speeds.begin(), speeds.end(), std::not_equal_to<uint8>()) != speeds.end();
 	InitializeGlobals(MOD_TYPE_MPT, static_cast<CHANNELINDEX>(voices.size() + (timing ? 1 : 0)));
@@ -1193,9 +1332,9 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 			m_furnaceSlides = 1 | FurnaceChipUnits;
 			// Флаги из того же блока совместимости: 10 — fbPortaPause,
 			// 14 — oldOctaveBoundary. У старых версий Furnace включает их сам.
-			if(extraCompat[10] || version < 85)
+			if(extraCompat[10])
 				m_furnaceSlides |= FurnacePortaPause;
-			if(extraCompat[14] || version < 97)
+			if(extraCompat[14])
 				m_furnaceSlides |= FurnaceOldOctaveBoundary;
 		}
 		if(compat[0]) m_furnaceSlides |= FurnaceLimitSlides;
@@ -1208,18 +1347,18 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 	// E5xx у Furnace — не разовая правка ноты, а подстройка канала.
 	m_playBehaviour.set(kFurnacePersistentFinetune);
 
-	Order().SetDefaultTempo(TEMPO(std::clamp(tickRate * 2.5 * (virtualNumerator && virtualDenominator ? double(virtualNumerator) / virtualDenominator : 1.0), 32.0, 512.0)));
+	Order().SetDefaultTempo(TEMPO(std::clamp(song.tickRate * 2.5 * song.virtualTempo, 32.0, 512.0)));
 	Order().SetDefaultSpeed(std::clamp<unsigned>(speeds.front() * timeBase, 1, 255));
-	if(highlight1 && highlight2 >= highlight1)
+	if(song.highlight1 && song.highlight2 >= song.highlight1)
 	{
-		m_nDefaultRowsPerBeat = highlight1;
-		m_nDefaultRowsPerMeasure = highlight2;
+		m_nDefaultRowsPerBeat = song.highlight1;
+		m_nDefaultRowsPerMeasure = song.highlight2;
 	}
-	m_songName = title;
-	m_songArtist = mpt::ToUnicode(mpt::Charset::UTF8, author);
-	m_songMessage.Read(reinterpret_cast<const std::byte *>(comment.data()), comment.size(), SongMessage::leAutodetect);
-	if(std::isfinite(master) && master >= 0)
-		m_nDefaultGlobalVolume = static_cast<uint16>(std::clamp(master, 0.0f, 1.0f) * MAX_GLOBAL_VOLUME);
+	m_songName = song.title;
+	m_songArtist = mpt::ToUnicode(mpt::Charset::UTF8, song.author);
+	m_songMessage.Read(reinterpret_cast<const std::byte *>(song.comment.data()), song.comment.size(), SongMessage::leAutodetect);
+	if(std::isfinite(song.master) && song.master >= 0)
+		m_nDefaultGlobalVolume = static_cast<uint16>(std::clamp(song.master, 0.0f, 1.0f) * MAX_GLOBAL_VOLUME);
 #ifdef MODPLUG_TRACKER
 	// Цвет шапки канала по микросхеме. Радужная раскладка OpenMPT красит каналы
 	// по именам, а у нас все имена разные, поэтому получался бледный градиент,
@@ -1257,18 +1396,13 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 	if(timing)
 		ChnSettings[static_cast<CHANNELINDEX>(voices.size())].szName = "Furnace timing";
 
-	size_t unsupported = 0;
-	for(SAMPLEINDEX i = 0; i < sampleOffsets.size(); i++)
+	for(SAMPLEINDEX i = 0; i < sampleCount; i++)
 	{
-		auto data = FurBlock(file, sampleOffsets[i], id);
-		std::string name;
-		if((id != "SMP2" && id != "SMPL") || !LoadFurSample(Samples[i + 1], data, id == "SMP2", name, (flags & loadSampleData) != 0))
-			return false;
-		m_szNames[i + 1] = name;
+		ApplyFurSample(Samples[i + 1], song.samples[i], (flags & loadSampleData) != 0);
+		m_szNames[i + 1] = song.samples[i].name;
 	}
 	m_nSamples = sampleCount;
 
-	std::vector<FurInstrument> furInstruments(instrumentCount);
 	std::map<std::pair<CHANNELINDEX, int>, INSTRUMENTINDEX> psgInstruments;
 	std::vector<bool> usedPSGInstrument(instrumentCount);
 	std::vector<INSTRUMENTINDEX> rawSamples(sampleCount);
@@ -1285,10 +1419,7 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 	};
 	for(INSTRUMENTINDEX i = 0; i < instrumentCount; i++)
 	{
-		auto data = FurBlock(file, instrumentOffsets[i], id);
-		auto &fur = furInstruments[i];
-		if(!ReadFurInstrument(data, id, fur, unsupported))
-			return false;
+		const auto &fur = furInstruments[i];
 		SAMPLEINDEX mappedSample = 0;
 		if(fur.type == 1 || fur.type == 33)
 		{
@@ -1346,7 +1477,7 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 			{
 				const auto [note, smp] = fur.noteMap[n];
 				ins->Keyboard[n + 12] = (smp >= 0 && smp < sampleCount) ? static_cast<SAMPLEINDEX>(smp + 1) : 0;
-				if(version >= 152 && note >= 0 && note < 108)
+				if(song.noteMapNotes && note >= 0 && note < 108)
 					ins->NoteMap[n + 12] = static_cast<ModCommand::NOTE>(ConvertNote(note));
 			}
 		}
@@ -1401,27 +1532,6 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 
 	if(flags & loadPatternData)
 	{
-		std::map<std::pair<uint16, uint16>, std::vector<FurRow>> patterns;
-		for(auto offset : patternOffsets)
-		{
-			auto pattern = FurBlock(file, offset, id);
-			const bool packed = id == "PATN";
-			if(!packed && id != "PATR")
-				return false;
-			const auto subsong = packed ? pattern.ReadUint8() : 0;
-			const uint16 channel = packed ? pattern.ReadUint8() : pattern.ReadUint16LE();
-			const uint16 index = pattern.ReadUint16LE();
-			const uint16 oldSubsong = packed ? 0 : pattern.ReadUint16LE();
-			if(!packed) pattern.Skip(2);
-			if(subsong || oldSubsong)
-				continue;
-			if(channel >= voices.size() || index >= 256)
-				return false;
-			auto &data = patterns[{channel, index}];
-			data.resize(rows);
-			if(!ReadFurPattern(pattern, packed, data, columns[channel]))
-				return false;
-		}
 		std::vector<int> currentInstrument(voices.size(), -1);
 		std::vector<unsigned> bank(voices.size(), 0);
 		std::vector<bool> legacyDAC(voices.size(), false);
@@ -1834,10 +1944,6 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 		}
 		m_furnaceArpSpeed = std::max<uint8>(arpLength, 1);
 	}
-	m_modFormat.formatName = UL_("Furnace (editable import)");
-	m_modFormat.type = UL_("fur");
-	m_modFormat.madeWithTracker = UL_("Furnace");
-	m_modFormat.charset = mpt::Charset::UTF8;
 	// Строй у Furnace двигает и сэмплы, которые звучат по ноте: на YMZ280B в
 	// `athletic rrt` без этого все шестнадцать сэмплерных голосов шли на 20
 	// центов выше. Сэмплы ЦАПа в старом режиме играются на собственной частоте,
@@ -1855,6 +1961,406 @@ bool CSoundFile::ReadFUR(FileReader &source, ModLoadingFlags flags)
 	if(unsupported || extraSubsongs || std::find(voices.begin(), voices.end(), FurVoice::PCM) != voices.end())
 		AddToLog(LogWarning, MPT_UFORMAT("Furnace import is approximate. {} unsupported effects or macros, {} extra subsongs. YMZ280B is represented by PCM samples.")(unsupported, extraSubsongs));
 #endif
+	return true;
+}
+
+// DefleMask .dmf. Разбор повторяет загрузчик Furnace (`fileOps/dmf.cpp`):
+// Furnace открывает такие файлы сам, и эталоны к ним выгружены им же, поэтому
+// и флаги совместимости, и пересчёт сэмплов берутся оттуда. Песня ложится в ту
+// же FurSong, что и .fur, и модуль строит тот же BuildFurSong.
+namespace
+{
+constexpr char DefleMaskMagic[] = ".DelekDefleMask.";
+
+bool DefleMaskString(FileReader &file, std::string &value)
+{
+	const uint8 length = file.ReadUint8();
+	return file.ReadString<mpt::String::maybeNullTerminated>(value, length);
+}
+
+bool ParseDefleMask(FileReader &file, FurSong &song, bool loadPatterns)
+{
+	if(!file.CanRead(2))
+		return false;
+	const uint8 version = file.ReadUint8();
+	// Ниже 0x0E значения макросов и волн хранились байтами, а Genesis до 0x0E
+	// ещё и путал октавы PSG. Таких файлов в обиходе почти нет.
+	if(version < 0x0e || version > 0x1b)
+		return false;
+	const uint8 system = file.ReadUint8();
+	// 0x02 — Genesis (YM2612 + SN76489), 0x03 — Master System (SN76489).
+	// Genesis с расширенным третьим каналом (0x42) пока не поддерживается.
+	if(system != 0x02 && system != 0x03)
+		return false;
+	const bool genesis = system == 0x02;
+	if(!DefleMaskString(file, song.title) || !DefleMaskString(file, song.author))
+		return false;
+	song.highlight1 = file.ReadUint8();
+	song.highlight2 = file.ReadUint8();
+	const uint8 oldTimeBase = file.ReadUint8();
+	const uint8 speed1 = file.ReadUint8(), speed2 = file.ReadUint8();
+	const bool pal = file.ReadUint8() != 0;
+	const bool customTempo = file.ReadUint8() != 0;
+	// Так у DefleMask и записано: флаг «PAL» означает 60 Гц.
+	song.tickRate = pal ? 60.0 : 50.0;
+	std::string hz;
+	file.ReadString<mpt::String::maybeNullTerminated>(hz, 3);
+	if(customTempo)
+	{
+		int value = 0;
+		size_t digits = 0;
+		for(char c : hz)
+		{
+			if(c < '0' || c > '9')
+				break;
+			value = value * 10 + (c - '0');
+			digits++;
+		}
+		song.tickRate = (digits && value > 0) ? value : 60.0;
+	}
+	const int32 patternLength = version > 0x17 ? file.ReadInt32LE() : file.ReadUint8();
+	const uint8 orders = file.ReadUint8();
+	if(patternLength <= 0 || patternLength > 256 || !orders || orders > 127)
+		return false;
+	song.rows = static_cast<ROWINDEX>(patternLength);
+	song.orders = orders;
+	song.arpLength = version < 20 ? std::max<uint8>(file.ReadUint8(), 1) : 1;
+	// Time base у Furnace при загрузке .dmf вносится прямо в скорости и в
+	// эффекты 09xx и 0Fxx, а собственный time base песни остаётся нулевым.
+	const unsigned timeBase = oldTimeBase + 1u;
+	song.timeBase = 1;
+	// Скорости у Furnace байтовые, произведение обрезается так же.
+	const auto scaledSpeed = [timeBase](uint8 speed) { return std::max<uint8>(1, static_cast<uint8>(speed * timeBase)); };
+	song.speeds = {scaledSpeed(speed1), scaledSpeed(speed2)};
+
+	const size_t channels = genesis ? 10 : 4;
+	auto &voices = song.voices;
+	for(size_t c = 0; c < channels; c++)
+	{
+		const bool fm = genesis && c < 6;
+		const uint8 lane = static_cast<uint8>(fm ? c : c - (genesis ? 6 : 0));
+		const uint8 chip = (genesis && !fm) ? 1 : 0;
+		const bool noise = !fm && lane == 3;
+		voices.push_back(fm ? FurVoice::OPN2 : noise ? FurVoice::Noise : FurVoice::PSG);
+		song.psgLanes.emplace_back(chip, lane);
+		song.channelNames.push_back(fm ? "YM2612 " + std::to_string(lane + 1) : noise ? std::string("PSG Noise") : "PSG " + std::to_string(lane + 1));
+	}
+	// У отдельной Master System Furnace выключает «удобный» шум.
+	song.noEasyNoise[0] = !genesis;
+
+	song.arrangement.resize(channels * orders);
+	for(size_t c = 0; c < channels; c++)
+	{
+		for(size_t o = 0; o < orders; o++)
+		{
+			const uint8 index = file.ReadUint8();
+			if(index > 0x7f)
+				return false;
+			song.arrangement[c * orders + o] = index;
+			if(version > 0x18)
+			{
+				std::string patternName;
+				DefleMaskString(file, patternName);
+			}
+		}
+	}
+
+	const uint8 instrumentCount = file.ReadUint8();
+	song.instruments.resize(instrumentCount);
+	for(auto &ins : song.instruments)
+	{
+		if(!DefleMaskString(file, ins.name) || !file.CanRead(1))
+			return false;
+		const uint8 mode = file.ReadUint8();
+		if(mode)
+		{
+			ins.type = 1;
+			ins.hasFMPatch = true;
+			const uint8 algorithm = file.ReadUint8();
+			if(version < 0x13) file.Skip(1);
+			const uint8 feedback = file.ReadUint8();
+			if(version < 0x13) file.Skip(1);
+			const uint8 fms = file.ReadUint8();
+			if(version < 0x13) file.Skip(2);
+			const uint8 ams = file.ReadUint8();
+			ins.patch[0] = static_cast<uint8>(((feedback & 7) << 3) | (algorithm & 7));
+			ins.lfo[FMLfoFMS] = static_cast<uint8>(fms & 7);
+			ins.lfo[FMLfoAMS] = static_cast<uint8>(ams & 3);
+			// Операторы лежат в порядке Furnace, слоты патча — в порядке регистров.
+			constexpr uint8 map[] = {0, 2, 1, 3};
+			for(uint8 op : map)
+			{
+				const uint8 am = file.ReadUint8(), ar = file.ReadUint8();
+				if(version < 0x13) file.Skip(1);
+				const uint8 dr = file.ReadUint8();
+				if(version < 0x13) file.Skip(version < 0x11 ? 4 : 3);
+				const uint8 mult = file.ReadUint8(), rr = file.ReadUint8(), sl = file.ReadUint8();
+				if(version < 0x13) file.Skip(1);
+				const uint8 tl = file.ReadUint8();
+				file.Skip(version < 0x13 ? 2 : 1);  // VIB и WS у старых версий, DT2 у новых
+				const uint8 rs = file.ReadUint8(), dt = file.ReadUint8(), d2r = file.ReadUint8(), ssg = file.ReadUint8();
+				const auto i = 1 + op * 7;
+				ins.patch[i + 0] = static_cast<uint8>((Detune[dt & 7] << 4) | (mult & 15));
+				ins.patch[i + 1] = tl & 127;
+				ins.patch[i + 2] = static_cast<uint8>(((rs & 3) << 6) | (ar & 31));
+				ins.patch[i + 3] = static_cast<uint8>(((am & 1) << 7) | (dr & 31));
+				ins.patch[i + 4] = d2r & 31;
+				ins.patch[i + 5] = static_cast<uint8>(((sl & 15) << 4) | (rr & 15));
+				ins.patch[i + 6] = ssg & 15;
+			}
+		} else
+		{
+			ins.type = 0;
+			const auto readMacro = [&](PSGSequence *target, bool arpeggio) -> bool
+			{
+				if(!file.CanRead(1))
+					return false;
+				const uint8 length = file.ReadUint8();
+				if(!file.CanRead(length * 4u + (length ? 1u : 0u) + (arpeggio && version > 0x0f ? 1u : 0u)))
+					return false;
+				std::vector<int32> values(length);
+				for(auto &value : values)
+					value = file.ReadInt32LE();
+				const uint8 loop = length ? file.ReadUint8() : uint8(255);
+				if(arpeggio)
+				{
+					const uint8 arpMode = version > 0x0f ? file.ReadUint8() : 0;
+					if(!arpMode)
+					{
+						// Относительное арпеджио хранится со смещением на октаву.
+						for(auto &value : values)
+							value -= 12;
+					} else
+					{
+						for(auto &value : values)
+							value ^= 0x40000000;
+						// Фиксированное арпеджио без петли Furnace закрывает нулём,
+						// чтобы после него нота вернулась на свою высоту.
+						if(loop == 255 && values.size() < 255)
+							values.push_back(0);
+					}
+				}
+				if(target && !values.empty())
+				{
+					target->values = std::move(values);
+					target->loop = loop;
+				}
+				return true;
+			};
+			if(!readMacro(&ins.psg.macros[PSGPatch::Volume], false)
+				|| !readMacro(&ins.psg.macros[PSGPatch::Arpeggio], true)
+				|| !readMacro(&ins.psg.macros[PSGPatch::Duty], false)
+				|| !readMacro(nullptr, false))
+				return false;
+		}
+	}
+
+	const uint8 waveCount = file.ReadUint8();
+	for(size_t i = 0; i < waveCount; i++)
+	{
+		const auto length = static_cast<uint8>(file.ReadUint32LE());
+		if(length > 65 || !file.Skip(length * 4u))
+			return false;
+	}
+
+	for(size_t c = 0; c < channels; c++)
+	{
+		const uint8 effectColumns = file.ReadUint8();
+		if(effectColumns < 1 || effectColumns > 4)
+			return false;
+		const size_t rowSize = 8 + effectColumns * 4u;
+		for(size_t o = 0; o < orders; o++)
+		{
+			if(!file.CanRead(rowSize * song.rows))
+				return false;
+			if(!loadPatterns)
+			{
+				file.Skip(rowSize * song.rows);
+				continue;
+			}
+			const std::pair<uint16, uint16> key{static_cast<uint16>(c), song.arrangement[c * orders + o]};
+			if(!song.patterns.count(key))
+				song.patternSequence.push_back(key);
+			auto &data = song.patterns[key];
+			data.assign(song.rows, FurRow{});
+			for(auto &row : data)
+			{
+				const int16 note = file.ReadInt16LE(), octave = file.ReadInt16LE();
+				// Так же, как PATR в .fur: 100-102 — note off, release и
+				// release макросов, иначе нота с октавой (12 — до следующей).
+				if(note >= 100 && note <= 102)
+				{
+					row.note = note + 80;
+				} else if(note != 0 || octave != 0)
+				{
+					const int seek = note + 12 * static_cast<int8>(octave) + 60;
+					row.note = (seek >= 0 && seek < 180) ? seek : -1;
+				}
+				row.volume = file.ReadInt16LE();
+				for(size_t e = 0; e < effectColumns; e++)
+				{
+					int16 fx = file.ReadInt16LE(), value = file.ReadInt16LE();
+					if(value != -1)
+					{
+						// До 0x14 у E5xx был вчетверо больший шаг.
+						if(fx == 0xe5 && version < 0x14)
+							value = static_cast<int16>(128 + (value - 128) / 4);
+						if(fx == 0x09 || fx == 0x0f)
+							value = static_cast<int16>(std::clamp<int>(value * timeBase, 1, 255));
+					}
+					row.effects[e] = {fx, value};
+				}
+				row.instrument = file.ReadInt16LE();
+			}
+		}
+	}
+
+	const uint8 sampleCount = file.ReadUint8();
+	song.samples.resize(sampleCount);
+	static constexpr uint32 rates[] = {4000, 8000, 11025, 16000, 22050, 32000};
+	static constexpr double pitches[] = {1.0 / 6.0, 0.2, 0.25, 1.0 / 3.0, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
+	for(auto &sample : song.samples)
+	{
+		const int32 length = file.ReadInt32LE();
+		if(length < 0 || length > (1 << 29))
+			return false;
+		if(version > 0x16 && !DefleMaskString(file, sample.name))
+			return false;
+		sample.rate = rates[std::min<uint8>(file.ReadUint8(), 5)];
+		uint8 pitch = file.ReadUint8();
+		if(pitch > 10)
+			pitch = 5;
+		const uint8 volume = file.ReadUint8();
+		uint8 depth = version > 0x15 ? file.ReadUint8() : 16;
+		if(depth != 8 && depth != 16)
+			depth = 16;
+		int32 cutStart = 0, cutEnd = -1;
+		if(version >= 0x1b)
+		{
+			cutStart = file.ReadInt32LE();
+			cutEnd = file.ReadInt32LE();
+		}
+		if(!file.CanRead(length * 2u))
+			return false;
+		// DefleMask хранит сэмпл как есть, а его высоту и громкость отдельно.
+		// Furnace при загрузке пересчитывает сами данные: прореживает или
+		// растягивает их по шагу высоты и умножает на громкость (50 — единица).
+		// Частота при этом остаётся прежней, так что сэмпл и звучит выше или ниже.
+		const double step = pitches[pitch];
+		const size_t scaledLength = static_cast<size_t>(std::ceil(length / step));
+		std::vector<int16> scaled(scaledLength);
+		const float mult = volume / 50.0f;
+		FileReader source = file.ReadChunk(length * 2u);
+		size_t k = 0;
+		for(double j = 0; j < length && k < scaledLength; j += step)
+		{
+			source.Seek(static_cast<size_t>(j) * 2u);
+			const int16 raw = source.ReadInt16LE();
+			if(depth == 8)
+				scaled[k++] = static_cast<int16>(std::clamp((raw - 0x80) * mult, -128.0f, 127.0f));
+			else
+				scaled[k++] = static_cast<int16>(std::clamp(raw * mult, -32768.0f, 32767.0f));
+		}
+		size_t begin = 0, end = scaledLength;
+		if(version >= 0x1b)
+		{
+			if(cutStart < 0 || static_cast<size_t>(cutStart) > scaledLength || cutEnd < cutStart || static_cast<size_t>(cutEnd) > scaledLength)
+				return false;
+			begin = cutStart;
+			end = cutEnd;
+		}
+		auto &bytes = song.storage.emplace_back();
+		const bool is16Bit = depth == 16;
+		bytes.reserve((end - begin) * (is16Bit ? 2 : 1));
+		for(size_t i = begin; i < end; i++)
+		{
+			const auto value = static_cast<uint16>(scaled[i]);
+			bytes.push_back(static_cast<std::byte>(value & 0xff));
+			if(is16Bit)
+				bytes.push_back(static_cast<std::byte>(value >> 8));
+		}
+		sample.length = static_cast<uint32>(end - begin);
+		sample.is16Bit = is16Bit;
+		sample.data = FileReader(mpt::as_span(bytes));
+	}
+
+	// Флаги совместимости, которые Furnace ставит любому .dmf, в раскладке .fur.
+	auto &compat = song.compat;
+	compat[0] = 1;   // limitSlides
+	compat[1] = 1;   // linearPitch
+	compat[6] = version <= 24 ? 1 : 0;  // legacyVolumeSlides
+	compat[7] = 1;   // compatibleArpeggio
+	compat[8] = 1;   // noteOffResetsSlides
+	compat[9] = 1;   // targetResetsSlides
+	compat[13] = 1;  // ignoreDuplicateSlides
+	compat[16] = 1;  // brokenDACMode
+	compat[18] = 1;  // newInsTriggersInPorta
+	compat[19] = 1;  // arp0Reset
+	auto &extra = song.extraCompat;
+	extra[0] = 1;    // brokenSpeedSel
+	extra[3] = 1;    // ignoreJumpAtEnd
+	extra[4] = 1;    // buggyPortaAfterSlide
+	extra[8] = 1;    // e1e2AlsoTakePriority
+	extra[10] = 1;   // fbPortaPause
+	extra[11] = 1;   // snDutyReset
+	extra[13] = 4;   // pitchSlideSpeed
+	extra[15] = 1;   // noOPN2Vol
+	extra[18] = 1;   // brokenOutVol
+	extra[19] = 1;   // e1e2StopOnSameNote
+	extra[21] = 1;   // snNoLowPeriods
+	extra[22] = 0;   // delayBehavior
+	song.delayBehavior = 0;
+	return true;
+}
+
+} // namespace
+
+CSoundFile::ProbeResult CSoundFile::ProbeFileHeaderDefleMask(MemoryFileReader file, const uint64 *)
+{
+	if(!file.CanRead(16))
+		return ProbeWantMoreData;
+	if(file.ReadMagic(DefleMaskMagic))
+		return ProbeSuccess;
+	file.Rewind();
+#ifdef MPT_WITH_ZLIB
+	if(IsZlib(file))
+	{
+		std::vector<uint8> prefix;
+		if(InflateFur(file, prefix, true, DefleMaskMagic))
+			return ProbeSuccess;
+		if(file.GetLength() < 64)
+			return ProbeWantMoreData;
+	}
+#endif
+	return ProbeFailure;
+}
+
+bool CSoundFile::ReadDefleMask(FileReader &source, ModLoadingFlags flags)
+{
+	source.Rewind();
+	FileReader file = source;
+	std::vector<uint8> unpacked;
+	if(!file.ReadMagic(DefleMaskMagic))
+	{
+#ifdef MPT_WITH_ZLIB
+		if(!InflateFur(source, unpacked, flags == onlyVerifyHeader, DefleMaskMagic))
+			return false;
+		file = FileReader(mpt::as_span(unpacked));
+		if(!file.ReadMagic(DefleMaskMagic))
+			return false;
+#else
+		return false;
+#endif
+	}
+	if(flags == onlyVerifyHeader)
+		return true;
+	FurSong song;
+	if(!ParseDefleMask(file, song, (flags & loadPatternData) != 0) || !BuildFurSong(song, flags))
+		return false;
+	m_modFormat.formatName = UL_("DefleMask (editable import)");
+	m_modFormat.type = UL_("dmf");
+	m_modFormat.madeWithTracker = UL_("DefleMask");
+	m_modFormat.charset = mpt::Charset::UTF8;
 	return true;
 }
 OPENMPT_NAMESPACE_END
