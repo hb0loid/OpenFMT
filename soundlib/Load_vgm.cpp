@@ -1983,52 +1983,77 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		// Значение PWM — 12 бит со знаком (как читает libvgm). Сжатые блоки
 		// бывают с меньшим числом бит, чем значение (Knuckles' Chaotix: 10 из
 		// 12): в файле лежат только младшие биты, и громкие места переносятся
-		// через край — на слух сплошной рёв. Сигнал восстанавливаем размоткой:
-		// скачок больше половины диапазона — это перенос, а не звук.
+		// через край — на слух сплошной рёв. Сигнал восстанавливаем: у каждого
+		// отсчёта несколько вариантов «хранимое + k·диапазон» в пределах 12 бит
+		// со знаком, и из всех путей берём самый плавный по всей длине
+		// (алгоритм Витерби). Выбор «ближе к предыдущему» по одному отсчёту на
+		// атаках барабанов уходил не в ту сторону и давал пики почти до потолка.
+		std::vector<double> values;
+		values.reserve(static_cast<size_t>(std::min<uint64>(commands, MAX_SAMPLE_LENGTH)));
+		std::vector<int> stored;
 		const uint8 storedBits = streamStoredBits[seg.bank];
 		const int wrap = storedBits ? (1 << storedBits) : 0;
-		// Выход PWM идёт через разделительный конденсатор: постоянную
-		// составляющую убираем фильтром около 20 Гц, иначе на краях щелчки.
-		const double keep = 1.0 - 2.0 * 3.14159265358979323846 * 20.0 / seg.frequency;
-		double previous = 0.0, filtered = 0.0, unwrapped = 0.0;
-		int lastRaw = -1;
-		for(uint64 n = 0; n < commands && pcmData.size() < MAX_SAMPLE_LENGTH; n++)
+		for(uint64 n = 0; n < commands && values.size() < MAX_SAMPLE_LENGTH; n++)
 		{
 			const uint64 at = seg.byteOffset + (seg.stepBase + n * seg.stepSize) * 2u;
 			if(at + 1 >= source.size())
 				break;
 			const int raw = (source[at] | (source[at + 1] << 8)) & 0xFFF;
-			double value;
 			if(wrap)
+				stored.push_back(raw & (wrap - 1));
+			else
+				values.push_back((raw & 0x800) ? raw - 0x1000 : raw);
+		}
+		if(wrap && !stored.empty())
+		{
+			constexpr int States = 5;  // k = -2..2
+			const auto candidate = [&](size_t t, int k) { return stored[t] + (k - 2) * wrap; };
+			const auto valid = [](int c) { return c >= -2048 && c < 2048; };
+			constexpr double Impossible = 1e30;
+			std::array<double, States> cost, next;
+			for(int k = 0; k < States; k++)
+				cost[k] = valid(candidate(0, k)) ? std::abs(candidate(0, k)) : Impossible;
+			std::vector<std::array<uint8, States>> from(stored.size());
+			for(size_t t = 1; t < stored.size(); t++)
 			{
-				// Из значений «хранимое + k·диапазон», которые помещаются в
-				// 12 бит со знаком, берём ближайшее к предыдущему: так ошибка
-				// на резком перепаде не копится, а упирается в границы.
-				const int stored = raw & (wrap - 1);
-				double best = 0.0, bestCost = 1e30;
-				for(int k = -(4096 / wrap); k <= 4096 / wrap; k++)
+				double lowest = Impossible;
+				for(int k = 0; k < States; k++)
 				{
-					const int candidate = stored + k * wrap;
-					if(candidate < -2048 || candidate >= 2048)
+					const int c = candidate(t, k);
+					next[k] = Impossible;
+					if(!valid(c))
 						continue;
-					const double cost = (lastRaw < 0) ? std::abs(candidate) : std::abs(candidate - unwrapped) + 0.05 * std::abs(candidate);
-					if(cost < bestCost)
+					for(int j = 0; j < States; j++)
 					{
-						bestCost = cost;
-						best = candidate;
+						if(cost[j] >= Impossible)
+							continue;
+						const double total = cost[j] + std::abs(c - candidate(t - 1, j));
+						if(total < next[k])
+						{
+							next[k] = total;
+							from[t][k] = static_cast<uint8>(j);
+						}
 					}
+					next[k] += 0.05 * std::abs(c);
+					lowest = std::min(lowest, next[k]);
 				}
-				if(lastRaw < 0)
-					previous = best;
-				unwrapped = best;
-				lastRaw = stored;
-				value = unwrapped;
-			} else
-			{
-				value = (raw & 0x800) ? raw - 0x1000 : raw;
-				if(n == 0)
-					previous = value;
+				for(int k = 0; k < States; k++)
+					cost[k] = (next[k] >= Impossible) ? Impossible : next[k] - lowest;
 			}
+			int state = static_cast<int>(std::distance(cost.begin(), std::min_element(cost.begin(), cost.end())));
+			values.resize(stored.size());
+			for(size_t t = stored.size(); t-- > 0;)
+			{
+				values[t] = candidate(t, state);
+				state = from[t][state];
+			}
+		}
+		// Выход PWM идёт через разделительный конденсатор: постоянную
+		// составляющую убираем фильтром около 20 Гц, иначе на краях щелчки.
+		const double keep = 1.0 - 2.0 * 3.14159265358979323846 * 20.0 / seg.frequency;
+		double previous = values.empty() ? 0.0 : values.front(), filtered = 0.0;
+		for(const double value : values)
+		{
 			filtered = value - previous + keep * filtered;
 			previous = value;
 			// Шкала — 12-битный ЦАП, как в MAME.
