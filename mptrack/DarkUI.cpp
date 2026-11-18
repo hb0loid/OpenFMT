@@ -702,6 +702,9 @@ void PaintMessageBoxFooter(HWND window)
 		return;
 	RECT footer = client;
 	footer.top = std::max(client.top, top - (client.bottom - bottom));
+	// Над полосой Windows проводит светлую линию-границу, на пару пикселей
+	// выше, чем полоса начинается по кнопкам. Захватываем и её.
+	footer.top = std::max(client.top, footer.top - MulDiv(4, GetDpiForWindow(window), 96));
 	const HDC dc = GetDC(window);
 	const int saved = SaveDC(dc);
 	for(HWND child = GetWindow(window, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT))
