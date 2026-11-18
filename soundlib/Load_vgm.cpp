@@ -402,6 +402,9 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// Данные потоков по типу блока (0x00–0x3F), сжатые блоки распакованы.
 	std::array<std::vector<uint8>, 0x40> streamData;
 	std::array<std::vector<DataBlock>, 0x40> streamBlocks;
+	// Сколько бит реально лежит в сжатом блоке, если меньше распакованных
+	// (0 — всё на месте). См. разбор PWM.
+	std::array<uint8, 0x40> streamStoredBits{};
 	// Таблицы распаковки (блок 0x7F) по виду сжатия и подтипу.
 	std::map<uint16, std::vector<uint16>> unpackTables;
 	const auto unpackBlock = [&](const uint8 *src, uint32 size, std::vector<uint8> &out) -> bool
@@ -1494,7 +1497,11 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 				auto &target = streamData[blockType - 0x40];
 				const uint32 before = static_cast<uint32>(target.size());
 				if(unpackBlock(data.data() + pos + 6, size, target))
+				{
 					streamBlocks[blockType - 0x40].push_back({before, static_cast<uint32>(target.size()) - before});
+					const uint8 bitsOut = data[pos + 11], bitsIn = data[pos + 12], method = data[pos + 6], subType = data[pos + 13];
+					streamStoredBits[blockType - 0x40] = (method == 0 && subType == 0 && bitsIn < bitsOut) ? bitsIn : 0;
+				}
 				else
 					target.resize(before);
 			} else if(blockType == 0x7F && size >= 6 && pos + 6 + size <= data.size())
@@ -1970,28 +1977,62 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		const auto &source = streamData[seg.bank];
 		if(!seg.frequency || seg.endSample <= seg.startSample)
 			continue;
-		const double center = (seg.cycle ? seg.cycle : 0x1000) / 2.0;
 		const uint64 commands = static_cast<uint64>((seg.endSample - seg.startSample) * static_cast<double>(seg.frequency) / VgmRate);
 		std::vector<int16> pcmData;
 		pcmData.reserve(static_cast<size_t>(std::min<uint64>(commands, MAX_SAMPLE_LENGTH)));
+		// Значение PWM — 12 бит со знаком (как читает libvgm). Сжатые блоки
+		// бывают с меньшим числом бит, чем значение (Knuckles' Chaotix: 10 из
+		// 12): в файле лежат только младшие биты, и громкие места переносятся
+		// через край — на слух сплошной рёв. Сигнал восстанавливаем размоткой:
+		// скачок больше половины диапазона — это перенос, а не звук.
+		const uint8 storedBits = streamStoredBits[seg.bank];
+		const int wrap = storedBits ? (1 << storedBits) : 0;
 		// Выход PWM идёт через разделительный конденсатор: постоянную
-		// составляющую (до запуска звука значения стоят у нуля, а не в
-		// середине) убираем фильтром около 20 Гц, иначе на краях щелчки.
+		// составляющую убираем фильтром около 20 Гц, иначе на краях щелчки.
 		const double keep = 1.0 - 2.0 * 3.14159265358979323846 * 20.0 / seg.frequency;
-		double previous = center, filtered = 0.0;
+		double previous = 0.0, filtered = 0.0, unwrapped = 0.0;
+		int lastRaw = -1;
 		for(uint64 n = 0; n < commands && pcmData.size() < MAX_SAMPLE_LENGTH; n++)
 		{
 			const uint64 at = seg.byteOffset + (seg.stepBase + n * seg.stepSize) * 2u;
 			if(at + 1 >= source.size())
 				break;
-			const double value = (source[at] | (source[at + 1] << 8)) & 0xFFF;
+			const int raw = (source[at] | (source[at + 1] << 8)) & 0xFFF;
+			double value;
+			if(wrap)
+			{
+				// Из значений «хранимое + k·диапазон», которые помещаются в
+				// 12 бит со знаком, берём ближайшее к предыдущему: так ошибка
+				// на резком перепаде не копится, а упирается в границы.
+				const int stored = raw & (wrap - 1);
+				double best = 0.0, bestCost = 1e30;
+				for(int k = -(4096 / wrap); k <= 4096 / wrap; k++)
+				{
+					const int candidate = stored + k * wrap;
+					if(candidate < -2048 || candidate >= 2048)
+						continue;
+					const double cost = (lastRaw < 0) ? std::abs(candidate) : std::abs(candidate - unwrapped) + 0.05 * std::abs(candidate);
+					if(cost < bestCost)
+					{
+						bestCost = cost;
+						best = candidate;
+					}
+				}
+				if(lastRaw < 0)
+					previous = best;
+				unwrapped = best;
+				lastRaw = stored;
+				value = unwrapped;
+			} else
+			{
+				value = (raw & 0x800) ? raw - 0x1000 : raw;
+				if(n == 0)
+					previous = value;
+			}
 			filtered = value - previous + keep * filtered;
 			previous = value;
-			// Делим на весь цикл, а не на половину: среднее у потока не в
-			// середине (у Chaotix около 414 при цикле 1047), и после снятия
-			// постоянной составляющей размах доходит почти до цикла — при делении
-			// на половину пики обрезались, и звук хрипел.
-			pcmData.push_back(static_cast<int16>(std::clamp(filtered / (2.0 * center) * 32767.0, -32768.0, 32767.0)));
+			// Шкала — 12-битный ЦАП, как в MAME.
+			pcmData.push_back(static_cast<int16>(std::clamp(filtered / 2048.0 * 32767.0, -32768.0, 32767.0)));
 		}
 		const uint32 played = static_cast<uint32>(pcmData.size());
 		const int sound = addPcmSound(std::move(pcmData), seg.frequency, uint32_max, "PWM");
@@ -2039,10 +2080,9 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// Battle Garrega: YM2151 0,3, OKIM6295 0,6; при выходах самих чипов это
 	// OKI на 24 дБ громче, чем у нас вышло бы по умолчанию.
 	// 32X: PWM через 12-битный ЦАП с усилением 0,4, YM2612 приглушён до 0,25;
-	// PWM на 6 дБ громче, чем по умолчанию, и запас от перегруза: YM2612 x1/4,
-	// PSG x1/2, сэмплы x1/2 (ЦАП YM2612 — ещё x1/2 в инструменте, вровень с FM).
-	// PWM сам записан с половинным масштабом (без обрезания пиков), поэтому
-	// усиление сэмплов x2 к этому, а ЦАП YM2612 — на столько же тише.
+	// YM2612 x1/4 (как в MAME, плюс запас), PSG x1/2; сэмплы подобраны так,
+	// чтобы PWM был громче FM, как в MAME, а ЦАП YM2612 (тоже сэмпл) — тише
+	// на столько же, вровень со своим FM.
 	const bool pwmSong = !pwmSegments.empty();
 	if(header.okiClock && std::any_of(pcmVoiceUsed.begin() + OKIBase, pcmVoiceUsed.begin() + OKIBase + OKIChannels, [](bool b) { return b; }))
 	{
@@ -2056,7 +2096,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	{
 		m_chipVolume[ChipOPN2] = ChipVolumeUnity / 4;
 		m_chipVolume[ChipPSG] = ChipVolumeUnity / 2;
-		m_nSamplePreAmp = 48;  // x1/2 к обычному, и ещё x2 за масштаб PWM ниже
+		m_nSamplePreAmp = 79;  // PWM на 6,7 дБ громче FM, как в MAME (замер по Chaotix)
 	}
 	Order().SetDefaultSpeed(1);
 	// Строка равна кадру: при скорости 1 темп задаёт число тиков в секунду.
@@ -2239,7 +2279,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			instrument->name = m_szNames[smp];
 			instrument->midiPWD = 1;  // E5xx: шаг 1/128 полутона
 			if(pwmSong)
-				instrument->nGlobalVol = 16;  // См. баланс 32X выше
+				instrument->nGlobalVol = 10;  // ЦАП YM2612 вровень с FM при усилении 79
 		}
 		return true;
 	};
