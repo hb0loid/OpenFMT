@@ -1987,7 +1987,11 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			const double value = (source[at] | (source[at + 1] << 8)) & 0xFFF;
 			filtered = value - previous + keep * filtered;
 			previous = value;
-			pcmData.push_back(static_cast<int16>(std::clamp(filtered / center * 32767.0, -32768.0, 32767.0)));
+			// Делим на весь цикл, а не на половину: среднее у потока не в
+			// середине (у Chaotix около 414 при цикле 1047), и после снятия
+			// постоянной составляющей размах доходит почти до цикла — при делении
+			// на половину пики обрезались, и звук хрипел.
+			pcmData.push_back(static_cast<int16>(std::clamp(filtered / (2.0 * center) * 32767.0, -32768.0, 32767.0)));
 		}
 		const uint32 played = static_cast<uint32>(pcmData.size());
 		const int sound = addPcmSound(std::move(pcmData), seg.frequency, uint32_max, "PWM");
@@ -2037,6 +2041,8 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// 32X: PWM через 12-битный ЦАП с усилением 0,4, YM2612 приглушён до 0,25;
 	// PWM на 6 дБ громче, чем по умолчанию, и запас от перегруза: YM2612 x1/4,
 	// PSG x1/2, сэмплы x1/2 (ЦАП YM2612 — ещё x1/2 в инструменте, вровень с FM).
+	// PWM сам записан с половинным масштабом (без обрезания пиков), поэтому
+	// усиление сэмплов x2 к этому, а ЦАП YM2612 — на столько же тише.
 	const bool pwmSong = !pwmSegments.empty();
 	if(header.okiClock && std::any_of(pcmVoiceUsed.begin() + OKIBase, pcmVoiceUsed.begin() + OKIBase + OKIChannels, [](bool b) { return b; }))
 	{
@@ -2048,7 +2054,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	{
 		m_chipVolume[ChipOPN2] = ChipVolumeUnity / 4;
 		m_chipVolume[ChipPSG] = ChipVolumeUnity / 2;
-		m_nSamplePreAmp = 24;
+		m_nSamplePreAmp = 48;  // x1/2 к обычному, и ещё x2 за масштаб PWM ниже
 	}
 	Order().SetDefaultSpeed(1);
 	// Строка равна кадру: при скорости 1 темп задаёт число тиков в секунду.
@@ -2231,7 +2237,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			instrument->name = m_szNames[smp];
 			instrument->midiPWD = 1;  // E5xx: шаг 1/128 полутона
 			if(pwmSong)
-				instrument->nGlobalVol = 32;  // См. баланс 32X выше
+				instrument->nGlobalVol = 16;  // См. баланс 32X выше
 		}
 		return true;
 	};
