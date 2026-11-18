@@ -132,9 +132,9 @@ BOOL WelcomeDlg::OnInitDialog()
 
 	CheckDlgButton(IDC_CHECK1, BST_CHECKED);
 	CheckDlgButton(IDC_CHECK3, BST_CHECKED);
-#if defined(MPT_ENABLE_UPDATE)
-	GetDlgItem(IDC_STATIC_WELCOME_STATISTICS)->SetWindowText(mpt::ToCString(mpt::replace(CUpdateCheck::GetStatisticsUserInformation(false), U_("\n"), U_(" "))));
-#endif // MPT_ENABLE_UPDATE
+	// OpenFMT: в этом окне нет ни галочки проверки обновлений, ни текста о
+	// статистике OpenMPT — их убрали в 0.1.0. Обращение к несуществующему
+	// элементу роняло окно при первом запуске.
 	CheckDlgButton(IDC_CHECK2, (TrackerSettings::Instance().patternFont.Get().name == PATTERNFONT_LARGE) ? BST_CHECKED : BST_UNCHECKED);
 
 	SetWindowText(_T("Welcome to ") _T(OPENFMT_NAME) _T("!"));
@@ -201,9 +201,10 @@ void WelcomeDlg::OnOK()
 	}
 
 #if defined(MPT_ENABLE_UPDATE)
-	bool runUpdates = IsDlgButtonChecked(IDC_CHECK1) != BST_UNCHECKED;
-	TrackerSettings::Instance().UpdateIntervalDays = (runUpdates ? 7 : -1);
-	TrackerSettings::Instance().UpdateStatistics = (IsDlgButtonChecked(IDC_CHECK3) != BST_UNCHECKED);
+	// Проверка выпусков OpenFMT включена по умолчанию (раз в день); выключается
+	// в настройках Update. Статистику OpenFMT не отправляет.
+	const bool runUpdates = TrackerSettings::Instance().UpdateIntervalDays >= 0;
+	TrackerSettings::Instance().UpdateStatistics = false;
 	TrackerSettings::Instance().UpdateShowUpdateHint = false;
 	TrackerSettings::Instance().UpdateStatisticsConsentAsked = true;
 

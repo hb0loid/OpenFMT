@@ -504,6 +504,9 @@ static bool OpenFMTVersionNewer(const std::vector<int> &a, const std::vector<int
 struct OpenFMTRelease
 {
 	std::string version, date, url;
+	// Пакет выпуска и его контрольная сумма (файлы, которые кладёт
+	// make_release.py). Нет обоих — ставить нечего, только страница.
+	std::string zipName, zipURL, sha256URL;
 };
 static std::optional<OpenFMTRelease> FindNewerOpenFMTRelease(const std::vector<std::byte> &json)
 {
@@ -526,6 +529,26 @@ static std::optional<OpenFMTRelease> FindNewerOpenFMTRelease(const std::vector<s
 		info.version = (!tag.empty() && (tag[0] == 'v' || tag[0] == 'V')) ? tag.substr(1) : tag;
 		info.date = release.value("published_at", std::string{}).substr(0, 10);
 		info.url = release.value("html_url", std::string{"https://github.com/hb0loid/OpenFMT/releases"});
+		if(const auto assets = release.find("assets"); assets != release.end() && assets->is_array())
+		{
+			const auto endsWith = [](const std::string &text, const std::string &suffix) { return text.size() >= suffix.size() && text.compare(text.size() - suffix.size(), suffix.size(), suffix) == 0; };
+			for(const auto &asset : *assets)
+			{
+				if(!asset.is_object())
+					continue;
+				const std::string name = asset.value("name", std::string{}), link = asset.value("browser_download_url", std::string{});
+				if(endsWith(name, "-win64.zip"))
+				{
+					info.zipName = name;
+					info.zipURL = link;
+				} else if(endsWith(name, "-win64.zip.sha256"))
+				{
+					info.sha256URL = link;
+				}
+			}
+			if(info.zipURL.empty() || info.sha256URL.empty())
+				info.zipName.clear(), info.zipURL.clear(), info.sha256URL.clear();
+		}
 		best = info;
 	}
 	return best;
@@ -1589,6 +1612,244 @@ void CUpdateCheck::AcknowledgeSuccess(const UpdateCheckResult &result)
 }
 
 
+// Установка обновления OpenFMT. Скачиваем пакет выпуска с GitHub, сверяем
+// SHA-256 с файлом суммы того же выпуска и отдаём сценарию PowerShell: он
+// ждёт, пока OpenFMT закроется, сохраняет заменяемые файлы, распаковывает
+// новые поверх папки программы, при ошибке возвращает старые и запускает
+// OpenFMT снова. Настроек (mptrack.ini и прочего) в пакете нет — их не трогаем.
+static const char OpenFMTUpdateScript[] = R"ps1(
+param(
+	[String]$zip = "",
+	[String]$subfolder = "",
+	[String]$dst = "",
+	[String]$restartbinary = "OpenFMT.exe",
+	[Int32]$waitpid = 0)
+
+$ErrorActionPreference = "Stop"
+Write-Output "OpenFMT update"
+Write-Output "=============="
+Write-Output ""
+Write-Output "Waiting for OpenFMT to close..."
+if ($waitpid -ne 0) {
+	$deadline = (Get-Date).AddMinutes(10)
+	while (Get-Process -Id $waitpid -ErrorAction SilentlyContinue) {
+		if ((Get-Date) -gt $deadline) {
+			Write-Output "OpenFMT did not close. The update was not installed."
+			Start-Sleep -Seconds 5
+			exit 1
+		}
+		Start-Sleep -Milliseconds 500
+	}
+}
+Start-Sleep -Seconds 1
+
+$work = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$tmp = Join-Path $work "tmp"
+$backup = Join-Path $work "backup"
+foreach ($dir in @($tmp, $backup)) { if (Test-Path $dir) { Remove-Item $dir -Recurse -Force } }
+
+Write-Output "Unpacking..."
+Expand-Archive -Path $zip -DestinationPath $tmp -Force
+$src = $tmp
+if ($subfolder -ne "" -and $subfolder -ne ".") { $src = Join-Path $tmp $subfolder }
+$src = (Resolve-Path $src).Path
+$dst = (Resolve-Path $dst).Path
+
+Write-Output "Backing up the files that will be replaced..."
+$files = Get-ChildItem -Path $src -Recurse -File
+foreach ($file in $files) {
+	$rel = $file.FullName.Substring($src.Length).TrimStart('\')
+	$old = Join-Path $dst $rel
+	if (Test-Path $old) {
+		$keep = Join-Path $backup $rel
+		New-Item -ItemType Directory -Force -Path (Split-Path -Parent $keep) | Out-Null
+		Copy-Item -Path $old -Destination $keep -Force
+	}
+}
+
+Write-Output "Installing..."
+try {
+	foreach ($file in $files) {
+		$rel = $file.FullName.Substring($src.Length).TrimStart('\')
+		$new = Join-Path $dst $rel
+		New-Item -ItemType Directory -Force -Path (Split-Path -Parent $new) | Out-Null
+		Copy-Item -Path $file.FullName -Destination $new -Force
+	}
+} catch {
+	Write-Output "Installing failed: $_"
+	Write-Output "Restoring the previous version..."
+	if (Test-Path $backup) { Copy-Item -Path (Join-Path $backup "*") -Destination $dst -Recurse -Force }
+	Write-Output "The previous version was restored."
+	Start-Sleep -Seconds 10
+	exit 1
+}
+
+Write-Output "Cleaning up..."
+foreach ($dir in @($tmp, $backup)) { if (Test-Path $dir) { Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue } }
+Remove-Item $zip -Force -ErrorAction SilentlyContinue
+Remove-Item $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+
+Write-Output "Starting OpenFMT..."
+Start-Process -FilePath (Join-Path $dst $restartbinary) -WorkingDirectory $dst
+Write-Output "Done."
+Start-Sleep -Seconds 2
+)ps1";
+
+
+class COpenFMTUpdate : public CProgressDialog
+{
+	OpenFMTRelease m_release;
+	class Failure : public std::runtime_error
+	{
+	public:
+		using std::runtime_error::runtime_error;
+	};
+	class Aborted : public std::exception {};
+
+	void Step(const TCHAR *text, int permille)
+	{
+		SetText(text);
+		SetProgress(permille);
+		ProcessMessages();
+		if(m_abort)
+			throw Aborted();
+	}
+
+	std::vector<std::byte> Fetch(HTTP::InternetSession &internet, const std::string &url)
+	{
+		HTTP::Request request;
+		request.SetURI(ParseURI(mpt::ToUnicode(mpt::Charset::UTF8, url)));
+		request.method = HTTP::Method::Get;
+		request.acceptMimeTypes = HTTP::MimeTypes::Binary();
+		HTTP::Result result = internet(request);
+		if(result.Status != 200)
+			throw Failure("HTTP status " + std::to_string(result.Status) + " for " + url);
+		return std::move(result.Data);
+	}
+
+public:
+	COpenFMTUpdate(OpenFMTRelease release, CWnd *parent)
+		: CProgressDialog(parent), m_release(std::move(release)) {}
+
+	void Run() override
+	{
+		try
+		{
+			SetTitle(_T("OpenFMT Update"));
+			SetAbortText(_T("Cancel"));
+			SetRange(0, 1000);
+			if(theApp.IsSourceTreeMode())
+				throw Failure("OpenFMT is running from its source tree; it will not update itself there.");
+
+			// Писать в папку программы должно быть можно — иначе (Program
+			// Files и т.п.) ставить некуда, остаётся страница загрузки.
+			const mpt::PathString installDir = theApp.GetInstallPath().WithTrailingSlash();
+			{
+				const mpt::PathString probe = installDir + P_("openfmt-update-write-test.tmp");
+				HANDLE f = ::CreateFile(probe.AsNative().c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
+				if(f == INVALID_HANDLE_VALUE)
+					throw Failure("OpenFMT cannot write to its own folder, so it cannot update itself there. Please download the new version from the release page.");
+				::CloseHandle(f);
+			}
+
+			Step(_T("Connecting..."), 10);
+			HTTP::InternetSession internet(U_("OpenFMT/") + mpt::ToUnicode(mpt::Charset::ASCII, OPENFMT_VERSION_A));
+
+			Step(_T("Downloading checksum..."), 20);
+			const auto checksumText = mpt::buffer_cast<std::string>(Fetch(internet, m_release.sha256URL));
+			if(checksumText.size() < 64)
+				throw Failure("The checksum file of the release is not valid.");
+			const std::vector<std::byte> expected = mpt::decode_hex(mpt::ToUnicode(mpt::Charset::ASCII, checksumText.substr(0, 64)));
+			if(expected.size() != 32)
+				throw Failure("The checksum file of the release is not valid.");
+
+			const mpt::PathString tempDir = CUpdateCheck::GetUpdateTempDirectory(theApp.IsPortableMode());
+			::CreateDirectory(mpt::support_long_path(tempDir.AsNative()).c_str(), nullptr);
+			const mpt::PathString workDir = tempDir + P_("OpenFMT-Update") + mpt::PathString::FromNative(mpt::RawPathString(1, mpt::PathString::GetDefaultPathSeparator()));
+			::CreateDirectory(mpt::support_long_path(workDir.AsNative()).c_str(), nullptr);
+			const mpt::PathString zipPath = workDir + mpt::PathString::FromUTF8(m_release.zipName);
+
+			Step(_T("Downloading OpenFMT..."), 30);
+			{
+				mpt::IO::SafeOutputFile file(zipPath, std::ios::binary);
+				file.stream().imbue(std::locale::classic());
+				file.stream().exceptions(std::ios::failbit | std::ios::badbit);
+				HTTP::Request request;
+				request.SetURI(ParseURI(mpt::ToUnicode(mpt::Charset::UTF8, m_release.zipURL)));
+				request.method = HTTP::Method::Get;
+				request.acceptMimeTypes = HTTP::MimeTypes::Binary();
+				request.outputStream = &file.stream();
+				request.progressCallback = [&](HTTP::Progress progress, uint64 transferred, std::optional<uint64> expectedSize)
+				{
+					if(progress == HTTP::Progress::TransferRunning && expectedSize && *expectedSize)
+						SetProgress(30 + static_cast<int64>(900.0 * transferred / *expectedSize));
+					ProcessMessages();
+					if(m_abort)
+						throw HTTP::Abort();
+				};
+				HTTP::Result result = internet(request);
+				if(result.Status != 200)
+					throw Failure("HTTP status " + std::to_string(result.Status) + " while downloading the update.");
+			}
+
+			Step(_T("Verifying download..."), 940);
+			{
+				mpt::crypto::hash::SHA256 hash;
+				mpt::IO::ifstream f(zipPath, std::ios::binary);
+				f.imbue(std::locale::classic());
+				f.exceptions(std::ios::badbit);
+				while(!mpt::IO::IsEof(f))
+				{
+					std::array<std::byte, mpt::IO::BUFFERSIZE_TINY> buf;
+					hash.process(mpt::IO::ReadRaw(f, mpt::as_span(buf)));
+				}
+				const auto gotten = hash.result();
+				if(!std::equal(gotten.begin(), gotten.end(), expected.begin(), expected.end()))
+				{
+					::DeleteFile(zipPath.AsNative().c_str());
+					throw Failure("The downloaded file does not match the release checksum. Nothing was changed.");
+				}
+			}
+
+			Step(_T("Starting the installer..."), 970);
+			const mpt::PathString scriptPath = workDir + P_("update.ps1");
+			{
+				mpt::IO::SafeOutputFile file(scriptPath, std::ios::binary);
+				file.stream().imbue(std::locale::classic());
+				file.stream().exceptions(std::ios::failbit | std::ios::badbit);
+				mpt::IO::WriteRaw(file.stream(), mpt::as_span(std::string(OpenFMTUpdateScript)));
+			}
+			std::string subfolder = m_release.zipName;
+			if(subfolder.size() > 4)
+				subfolder.erase(subfolder.size() - 4);
+			const mpt::ustring arguments = U_("-NoLogo -ExecutionPolicy Bypass -File \"") + scriptPath.ToUnicode()
+				+ U_("\" -zip \"") + zipPath.ToUnicode()
+				+ U_("\" -subfolder \"") + mpt::ToUnicode(mpt::Charset::UTF8, subfolder)
+				+ U_("\" -dst \"") + theApp.GetInstallPath().WithoutTrailingSlash().ToUnicode()
+				+ U_("\" -restartbinary \"OpenFMT.exe\" -waitpid ") + mpt::ufmt::val(::GetCurrentProcessId());
+			if(reinterpret_cast<INT_PTR>(::ShellExecute(nullptr, nullptr, P_("PowerShell.exe").AsNative().c_str(), mpt::ToWin(arguments).c_str(), workDir.AsNative().c_str(), SW_SHOWDEFAULT)) < 32)
+				throw Failure("Could not start the installer (PowerShell).");
+
+			Step(_T("Closing OpenFMT..."), 1000);
+			// Закрываемся по-обычному, с вопросом о несохранённых песнях. Если
+			// закрытие отменить, сценарий подождёт и выйдет, ничего не меняя.
+			CMainFrame::GetMainFrame()->PostMessage(WM_CLOSE);
+			EndDialog(IDOK);
+		} catch(const HTTP::Abort &)
+		{
+			EndDialog(IDCANCEL);
+		} catch(const Aborted &)
+		{
+			EndDialog(IDCANCEL);
+		} catch(const std::exception &e)
+		{
+			Reporting::Error(mpt::ToUnicode(mpt::Charset::UTF8, e.what()), U_("OpenFMT Update"));
+			EndDialog(IDCANCEL);
+		}
+	}
+};
+
+
 void CUpdateCheck::ShowSuccessGUI(const bool autoUpdate, const UpdateCheckResult &result)
 {
 	// OpenFMT: выпуски с GitHub. Сами ничего не скачиваем и не ставим —
@@ -1620,10 +1881,17 @@ void CUpdateCheck::ShowSuccessGUI(const bool autoUpdate, const UpdateCheckResult
 		modal = true;
 	if(!modal)
 		return;
-	UpdateDialog dlg(version, mpt::ToCString(mpt::Charset::UTF8, release->date), url, _T("&Open Download Page"));
+	const bool canInstall = !release->zipURL.empty();
+	UpdateDialog dlg(version, mpt::ToCString(mpt::Charset::UTF8, release->date), url, canInstall ? _T("&Install Update") : _T("&Open Download Page"));
 	if(dlg.DoModal() != IDOK)
 		return;
-	CTrackApp::OpenURL(url);
+	if(!canInstall)
+	{
+		CTrackApp::OpenURL(url);
+		return;
+	}
+	COpenFMTUpdate installer(*release, theApp.GetMainWnd());
+	installer.DoModal();
 }
 
 
