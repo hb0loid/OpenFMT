@@ -659,6 +659,9 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		uint32 fraction = 0;
 		std::vector<int16> heard;
 		std::vector<uint8> heardRaw;
+		// Снимок сэмпла в момент нажатия: от начала до 0xFF и точка петли.
+		std::vector<uint8> snapshot;
+		uint32 snapshotLoop = uint32_max;
 		int onEvent = -1;
 		double noteRate = 0.0;
 		int volume = -1, panning = -1;
@@ -713,28 +716,188 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		volume = std::clamp((v.env * std::max(left, right) * 64 + 255 * 15 / 2) / (255 * 15), 0, 64);
 		panning = (left + right) ? (right * 255 + (left + right) / 2) / (left + right) : 128;
 	};
-	const auto rfFinish = [&](uint8 index, uint32 when)
+	// Нота RF5C164 разбирается после чтения всего файла: только тогда
+	// известно, какие страницы памяти драйвер переписывал на ходу.
+	struct RfNote
 	{
-		RfVoice &v = rf[index];
-		if(v.onEvent < 0)
+		std::vector<int16> heard;
+		std::vector<uint8> heardRaw, snapshot;
+		uint32 snapshotLoop = uint32_max;
+		uint8 start = 0;
+		double noteRate = 0.0;
+		int onEvent = -1;
+	};
+	std::vector<RfNote> rfNotes;
+	std::array<uint32, 256> rfPageWrites{};  // сколько раз писали в страницу 256 байт
+	const auto rfTouch = [&](uint32 from, uint32 count)
+	{
+		if(!count)
 			return;
+		const uint32 last = std::min<uint32>(from + count - 1, 0xFFFF);
+		for(uint32 page = (from & 0xFFFF) >> 8; page <= (last >> 8); page++)
+			rfPageWrites[page]++;
+	};
+	// Страница, в которую писали много раз, — буфер подкачки, а не сэмпл.
+	const auto rfStreamed = [&](uint8 start, size_t length)
+	{
+		const uint32 first = static_cast<uint32>(start), last = std::min<uint32>((static_cast<uint32>(start) * 256 + static_cast<uint32>(length)) >> 8, 255);
+		for(uint32 page = first; page <= last; page++)
+		{
+			if(rfPageWrites[page] > 8)
+				return true;
+		}
+		return false;
+	};
+	const auto rfResolve = [&](RfNote &n, bool loopsOnly) -> bool
+	{
+		int sound = -1;
 		// Драйвер подкачивает в память куски своего банка сэмплов (блок
 		// данных типа 2) подряд. Если услышанное нашлось в банке, звук — это
 		// место в банке: одно и то же место — один инструмент, даже если ноты
 		// были разной длины или начинались в разных местах памяти.
-		int sound = -1;
+		// Память под нотой не менялась: услышанное — это снимок, а дальше
+		// повторы его петли. Тогда инструмент — сам сэмпл с петлёй, как в
+		// памяти чипа, и звучит как надо при любой длине ноты.
+		if(!n.snapshot.empty() && n.snapshot.size() >= 16 && !rfStreamed(n.start, n.snapshot.size()))
+		{
+			const size_t length = n.snapshot.size();
+			bool same = true;
+			for(size_t i = 0; i < n.heardRaw.size() && same; i++)
+			{
+				size_t at = i;
+				if(at >= length)
+				{
+					if(n.snapshotLoop == uint32_max)
+					{
+						same = false;
+						break;
+					}
+					at = n.snapshotLoop + (at - length) % (length - n.snapshotLoop);
+				}
+				same = (n.heardRaw[i] == n.snapshot[at]);
+			}
+			if(same)
+			{
+				std::vector<int16> sampleData(length);
+				for(size_t i = 0; i < length; i++)
+					sampleData[i] = rfByte(n.snapshot[i]);
+				sound = addPcmSound(std::move(sampleData), n.noteRate, n.snapshotLoop, "RF");
+			}
+		}
 		const auto &bank = streamData[0x02];
-		if(v.heardRaw.size() >= 32 && !bank.empty())
+		// Петля, которую делает драйвер: он подкачивает из банка сэмпл целиком,
+		// а потом раз за разом его петлевой кусок. Раскладываем услышанное на
+		// куски банка; вид «[X..Y), затем [L..Y), [L..Y)…» — это сэмпл X..Y с
+		// петлёй от L, и инструмент получает настоящую петлю.
+		if(sound < 0 && n.heardRaw.size() >= 64 && !bank.empty())
+		{
+			std::vector<std::pair<uint32, uint32>> pieces;  // начало в банке, длина
+			size_t i = 0;
+			bool ok = true;
+			while(i < n.heardRaw.size() && ok)
+			{
+				const size_t left = n.heardRaw.size() - i;
+				// Продолжение прошлого куска или новое место: сначала пробуем
+				// петлю (начало второго куска), потом поиск по банку.
+				uint32 at = uint32_max;
+				const auto runFrom = [&](uint32 candidate)
+				{
+					size_t len = 0;
+					while(len < left && candidate + len < bank.size() && bank[candidate + len] == n.heardRaw[i + len])
+						len++;
+					return len;
+				};
+				if(pieces.size() >= 2 && runFrom(pieces[1].first) >= std::min<size_t>(left, 16))
+					at = pieces[1].first;
+				if(at == uint32_max)
+				{
+					if(left < 16)
+					{
+						ok = false;
+						break;
+					}
+					const std::boyer_moore_horspool_searcher searcher(n.heardRaw.begin() + i, n.heardRaw.begin() + i + 16);
+					const auto found = std::search(bank.begin(), bank.end(), searcher);
+					if(found == bank.end())
+					{
+						ok = false;
+						break;
+					}
+					at = static_cast<uint32>(std::distance(bank.begin(), found));
+				}
+				const size_t len = runFrom(at);
+				if(!len)
+				{
+					ok = false;
+					break;
+				}
+				pieces.emplace_back(at, static_cast<uint32>(len));
+				i += len;
+				if(pieces.size() > 4096)
+					ok = false;
+			}
+			// Петля — первый прыжок на место банка, которое уже звучало. Сэмпл —
+			// всё до прыжка, петля — от того места; остаток ноты обязан по ней
+			// циклиться, иначе это не петля.
+			if(ok && pieces.size() >= 2)
+			{
+				size_t offset = pieces[0].second;
+				for(size_t k = 1; k < pieces.size() && sound < 0; k++)
+				{
+					const uint32 target = pieces[k].first;
+					size_t loopAt = SIZE_MAX, earlier = 0;
+					for(size_t m = 0; m < k; m++)
+					{
+						if(target >= pieces[m].first && target < pieces[m].first + pieces[m].second)
+						{
+							loopAt = earlier + (target - pieces[m].first);
+							break;
+						}
+						earlier += pieces[m].second;
+					}
+					if(loopAt != SIZE_MAX)
+					{
+						const size_t loopEnd = offset, loopLength = loopEnd - loopAt;
+						bool cycles = loopLength > 0;
+						for(size_t t = loopEnd; t < n.heardRaw.size() && cycles; t++)
+							cycles = n.heardRaw[t] == n.heardRaw[loopAt + (t - loopEnd) % loopLength];
+						if(cycles)
+						{
+							std::vector<int16> sampleData(n.heard.begin(), n.heard.begin() + loopEnd);
+							sound = addPcmSound(std::move(sampleData), n.noteRate, static_cast<uint32>(loopAt), "RF");
+						}
+						break;
+					}
+					offset += pieces[k].second;
+				}
+			}
+		}
+		if(loopsOnly)
+		{
+			if(sound >= 0)
+				pcmEvents[n.onEvent].sound = sound;
+			return sound >= 0;
+		}
+		// Нота не дошла до петли, но это начало уже известного зацикленного
+		// звука: берём его, тогда и у короткой ноты инструмент с петлёй.
+		for(size_t k = 0; k < pcmSounds.size() && sound < 0; k++)
+		{
+			const PcmSound &known = pcmSounds[k];
+			if(known.loopStart != uint32_max && known.name == "RF" && n.heard.size() >= 64 && n.heard.size() <= known.data.size()
+				&& std::equal(n.heard.begin(), n.heard.end(), known.data.begin()))
+				sound = static_cast<int>(k);
+		}
+		if(sound < 0 && n.heardRaw.size() >= 32 && !bank.empty())
 		{
 			// Ищем по первому окну, где звук меняется: начало из одинаковых
 			// байт (тишина) нашлось бы в первом же пустом месте банка.
 			size_t window = 0;
-			while(window + 32 <= v.heardRaw.size()
-				&& std::all_of(v.heardRaw.begin() + window, v.heardRaw.begin() + window + 32, [&](uint8 x) { return x == v.heardRaw[window]; }))
+			while(window + 32 <= n.heardRaw.size()
+				&& std::all_of(n.heardRaw.begin() + window, n.heardRaw.begin() + window + 32, [&](uint8 x) { return x == n.heardRaw[window]; }))
 				window += 32;
-			if(window + 32 <= v.heardRaw.size())
+			if(window + 32 <= n.heardRaw.size())
 			{
-				const std::boyer_moore_horspool_searcher searcher(v.heardRaw.begin() + window, v.heardRaw.begin() + window + 32);
+				const std::boyer_moore_horspool_searcher searcher(n.heardRaw.begin() + window, n.heardRaw.begin() + window + 32);
 				auto from = bank.begin();
 				while(sound < 0)
 				{
@@ -747,18 +910,18 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 						continue;
 					const uint32 at = static_cast<uint32>(foundAt - window);
 					// Склеиваем, только если вся нота совпала с банком байт в байт.
-					if(at + v.heardRaw.size() > bank.size() || !std::equal(v.heardRaw.begin(), v.heardRaw.end(), bank.begin() + at))
+					if(at + n.heardRaw.size() > bank.size() || !std::equal(n.heardRaw.begin(), n.heardRaw.end(), bank.begin() + at))
 						continue;
 					if(const auto known = rfSoundAt.find(at); known != rfSoundAt.end())
 					{
 						sound = known->second;
-						if(v.heard.size() > pcmSounds[sound].data.size())
-							pcmSounds[sound].data = std::move(v.heard);
+						if(n.heard.size() > pcmSounds[sound].data.size())
+							pcmSounds[sound].data = std::move(n.heard);
 					} else
 					{
 						PcmSound made;
-						made.data = std::move(v.heard);
-						made.rate = v.noteRate;
+						made.data = std::move(n.heard);
+						made.rate = n.noteRate;
 						made.name = "RF";
 						pcmSounds.push_back(std::move(made));
 						sound = static_cast<int>(pcmSounds.size() - 1);
@@ -768,10 +931,27 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			}
 		}
 		if(sound < 0)
-			sound = addPrefixSound(std::move(v.heard), v.noteRate, "RF");
+			sound = addPrefixSound(std::move(n.heard), n.noteRate, "RF");
+		pcmEvents[n.onEvent].sound = sound;
+		return true;
+	};
+	const auto rfFinish = [&](uint8 index, uint32 when)
+	{
+		RfVoice &v = rf[index];
+		if(v.onEvent < 0)
+			return;
+		RfNote note;
+		note.heard = std::move(v.heard);
+		note.heardRaw = std::move(v.heardRaw);
+		note.snapshot = std::move(v.snapshot);
+		note.snapshotLoop = v.snapshotLoop;
+		note.start = v.start;
+		note.noteRate = v.noteRate;
+		note.onEvent = v.onEvent;
+		rfNotes.push_back(std::move(note));
 		v.heard.clear();
 		v.heardRaw.clear();
-		pcmEvents[v.onEvent].sound = sound;
+		v.snapshot.clear();
 		pcmEvents.push_back({when, static_cast<uint8>(RFBase + index), PcmWhat::Off});
 		v.onEvent = -1;
 	};
@@ -789,6 +969,15 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			b = rfRam[v.position];
 		}
 		v.heardRaw.clear();
+		v.snapshot.clear();
+		v.snapshotLoop = uint32_max;
+		{
+			const uint32 first = static_cast<uint32>(v.start) << 8;
+			for(uint32 a = first; a < 0x10000 && rfRam[a] != 0xFF; a++)
+				v.snapshot.push_back(rfRam[a]);
+			if(v.loop >= first && v.loop < first + v.snapshot.size())
+				v.snapshotLoop = v.loop - first;
+		}
 		v.heard.push_back(rfByte(b == 0xFF ? 0 : b));
 		v.heardRaw.push_back(b);
 		v.noteRate = rfRateOf(v);
@@ -1329,6 +1518,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 				// Прямая запись в память RF5C164: адрес и байты.
 				rfAdvance(sample);
 				const uint32 to = (data[pos + 6] | (data[pos + 7] << 8)) | (static_cast<uint32>(rfBank) << 12);
+				rfTouch(to, size - 2);
 				for(uint32 i = 0; i + 2 < size && to + i < 0x10000; i++)
 					rfRam[to + i] = data[pos + 8 + i];
 			} else if(blockType == 0x8B && size > 8 && pos + 6 + size <= data.size())
@@ -1596,6 +1786,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			rfAdvance(sample);
 			const uint16 offset = static_cast<uint16>(data[pos] | (data[pos + 1] << 8));
 			rfRam[(offset | (rfBank << 12)) & 0xFFFF] = data[pos + 2];
+			rfTouch((offset | (rfBank << 12)) & 0xFFFF, 1);
 			pos += 3;
 		} else if(code == 0x68)
 		{
@@ -1615,6 +1806,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 				const auto &source = streamData[0x02];
 				// Адрес записи — внутри окна памяти, выбранного регистром 7 (как в libvgm).
 				const uint32 base = to | (static_cast<uint32>(rfBank) << 12);
+				rfTouch(base, count);
 				for(uint32 i = 0; i < count && from + i < source.size() && base + i < 0x10000; i++)
 					rfRam[base + i] = source[from + i];
 			}
@@ -1759,6 +1951,16 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	rfAdvance(sample);
 	for(uint8 i = 0; i < RFChannels; i++)
 		rfFinish(i, sample);
+	// Сначала ноты с петлёй, потом остальные — им уже есть с кем сверяться.
+	std::vector<bool> rfResolved(rfNotes.size(), false);
+	for(size_t i = 0; i < rfNotes.size(); i++)
+		rfResolved[i] = rfResolve(rfNotes[i], true);
+	for(size_t i = 0; i < rfNotes.size(); i++)
+	{
+		if(!rfResolved[i])
+			rfResolve(rfNotes[i], false);
+	}
+	rfNotes.clear();
 	// Куски PWM: значения из данных потока по шагу, относительно середины цикла.
 	for(int stream = 0; stream < 256; stream++)
 		closeSegment(static_cast<uint8>(stream), sample);
@@ -1828,6 +2030,26 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	}
 	InitializeGlobals(MOD_TYPE_MPT, usedChannels);
 	m_nSamplePreAmp = m_nVSTiVolume = 48;
+	// Баланс чипов как у плат в MAME. Сэмплы (PCM) идут через общее
+	// усиление сэмплов, синтезаторы — через громкость своего чипа.
+	// Battle Garrega: YM2151 0,3, OKIM6295 0,6; при выходах самих чипов это
+	// OKI на 24 дБ громче, чем у нас вышло бы по умолчанию.
+	// 32X: PWM через 12-битный ЦАП с усилением 0,4, YM2612 приглушён до 0,25;
+	// PWM на 6 дБ громче, чем по умолчанию, и запас от перегруза: YM2612 x1/4,
+	// PSG x1/2, сэмплы x1/2 (ЦАП YM2612 — ещё x1/2 в инструменте, вровень с FM).
+	const bool pwmSong = !pwmSegments.empty();
+	if(header.okiClock && std::any_of(pcmVoiceUsed.begin() + OKIBase, pcmVoiceUsed.begin() + OKIBase + OKIChannels, [](bool b) { return b; }))
+	{
+		// Ещё -6 дБ на оба: удары OKI иначе упираются в потолок.
+		m_chipVolume[ChipOPM] = ChipVolumeUnity / 8;
+		m_nSamplePreAmp = 48 * 2;
+	}
+	if(pwmSong)
+	{
+		m_chipVolume[ChipOPN2] = ChipVolumeUnity / 4;
+		m_chipVolume[ChipPSG] = ChipVolumeUnity / 2;
+		m_nSamplePreAmp = 24;
+	}
 	Order().SetDefaultSpeed(1);
 	// Строка равна кадру: при скорости 1 темп задаёт число тиков в секунду.
 	// В классическом счёте тиков в секунду выходит темп * 0,4, поэтому кадр в
@@ -2008,6 +2230,8 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		{
 			instrument->name = m_szNames[smp];
 			instrument->midiPWD = 1;  // E5xx: шаг 1/128 полутона
+			if(pwmSong)
+				instrument->nGlobalVol = 32;  // См. баланс 32X выше
 		}
 		return true;
 	};
