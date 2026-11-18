@@ -365,7 +365,7 @@ TrackerSettings::TrackerSettings(SettingsContainer &conf)
 	, UpdateInstallAutomatically(conf, UL_("Update"), UL_("InstallAutomatically"), false)
 	, UpdateLastUpdateCheck(conf, UL_("Update"), UL_("LastUpdateCheck"), mpt::chrono::default_system_clock::time_point{})
 	, UpdateUpdateCheckPeriod_DEPRECATED(conf, UL_("Update"), UL_("UpdateCheckPeriod"), 7)
-	, UpdateIntervalDays(conf, UL_("Update"), UL_("UpdateCheckIntervalDays"), 7)
+	, UpdateIntervalDays(conf, UL_("Update"), UL_("UpdateCheckIntervalDays"), 1)  // OpenFMT: раз в день
 	, UpdateChannel(conf, UL_("Update"), UL_("Channel"), UpdateChannelRelease)
 	, UpdateUpdateURL_DEPRECATED(conf, UL_("Update"), UL_("UpdateURL"), UL_("https://update.openmpt.org/check/$VERSION/$GUID"))
 	, UpdateAPIURL(conf, UL_("Update"), UL_("APIURL"), CUpdateCheck::GetDefaultAPIURL())

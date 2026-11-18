@@ -21,6 +21,7 @@
 #include "resource.h"
 #include "TrackerSettings.h"
 #include "WindowMessages.h"
+#include "OpenFMTVersion.h"
 #include "../common/misc_util.h"
 #include "../common/mptStringBuffer.h"
 #include "../common/version.h"
@@ -388,7 +389,7 @@ public:
 		m_boldFont.CreateFontIndirect(&lf);
 		GetDlgItem(IDC_VERSION2)->SetFont(&m_boldFont);
 
-		SetDlgItemText(IDC_VERSION1, mpt::cfmt::val(VersionWithRevision::Current()));
+		SetDlgItemText(IDC_VERSION1, _T(OPENFMT_VERSION_A));
 		SetDlgItemText(IDC_VERSION2, m_releaseVersion);
 		SetDlgItemText(IDC_DATE, m_releaseDate);
 		SetDlgItemText(IDC_SYSLINK1, _T("More information about this build:\n<a href=\"") + m_releaseURL + _T("\">") + m_releaseURL + _T("</a>"));
@@ -450,6 +451,84 @@ std::vector<mpt::ustring> CUpdateCheck::GetDefaultUpdateSigningKeysRootAnchors()
 mpt::ustring CUpdateCheck::GetDefaultAPIURL()
 {
 	return U_("https://update.openmpt.org/api/v3/");
+}
+
+
+// OpenFMT проверяет обновления у себя на GitHub, а не у OpenMPT: тот сервер
+// знает только версии OpenMPT и предлагал бы людям не ту программу.
+static constexpr char OpenFMTReleasesURL[] = "https://api.github.com/repos/hb0loid/OpenFMT/releases?per_page=20";
+static constexpr char OpenFMTUpdateCache[] = "openfmt-releases.json";
+
+// Номер версии «0.1.2» (или «v0.1.2») в числа для сравнения.
+static std::vector<int> ParseOpenFMTVersion(std::string text)
+{
+	if(!text.empty() && (text[0] == 'v' || text[0] == 'V'))
+		text.erase(0, 1);
+	std::vector<int> parts;
+	int value = 0;
+	bool digits = false;
+	for(char c : text)
+	{
+		if(c >= '0' && c <= '9')
+		{
+			value = value * 10 + (c - '0');
+			digits = true;
+		} else if(c == '.')
+		{
+			parts.push_back(value);
+			value = 0;
+			digits = false;
+		} else
+		{
+			break;
+		}
+	}
+	if(digits)
+		parts.push_back(value);
+	return parts;
+}
+
+static bool OpenFMTVersionNewer(const std::vector<int> &a, const std::vector<int> &b)
+{
+	for(size_t i = 0; i < std::max(a.size(), b.size()); i++)
+	{
+		const int x = i < a.size() ? a[i] : 0, y = i < b.size() ? b[i] : 0;
+		if(x != y)
+			return x > y;
+	}
+	return false;
+}
+
+// Самый новый выпуск на GitHub новее нашей версии (черновики пропускаем,
+// пробные — нет: все наши выпуски пока помечены как pre-release).
+struct OpenFMTRelease
+{
+	std::string version, date, url;
+};
+static std::optional<OpenFMTRelease> FindNewerOpenFMTRelease(const std::vector<std::byte> &json)
+{
+	const auto releases = nlohmann::json::parse(mpt::buffer_cast<std::string>(json));
+	if(!releases.is_array())
+		throw std::runtime_error("not a release list");
+	const auto current = ParseOpenFMTVersion(OPENFMT_VERSION_A);
+	std::optional<OpenFMTRelease> best;
+	std::vector<int> bestVersion = current;
+	for(const auto &release : releases)
+	{
+		if(!release.is_object() || release.value("draft", false))
+			continue;
+		const std::string tag = release.value("tag_name", std::string{});
+		const auto version = ParseOpenFMTVersion(tag);
+		if(version.empty() || !OpenFMTVersionNewer(version, bestVersion))
+			continue;
+		bestVersion = version;
+		OpenFMTRelease info;
+		info.version = (!tag.empty() && (tag[0] == 'v' || tag[0] == 'V')) ? tag.substr(1) : tag;
+		info.date = release.value("published_at", std::string{}).substr(0, 10);
+		info.url = release.value("html_url", std::string{"https://github.com/hb0loid/OpenFMT/releases"});
+		best = info;
+	}
+	return best;
 }
 
 
@@ -551,8 +630,9 @@ void CUpdateCheck::StartUpdateCheckAsync(bool isAutoUpdate)
 	}
 	TrackerSettings::Instance().UpdateShowUpdateHint = false;
 
-	// ask if user wants to contribute system statistics
-	if(!TrackerSettings::Instance().UpdateStatisticsConsentAsked)
+	// OpenFMT статистику не собирает, поэтому и не спрашивает.
+	TrackerSettings::Instance().UpdateStatistics = false;
+	if(false)
 	{
 		const auto enableStatistics = Reporting::Confirm(
 			U_("Do you want to contribute to OpenMPT by providing system statistics?\r\n\r\n") +
@@ -705,11 +785,11 @@ UpdateCheckResult CUpdateCheck::SearchUpdate(const CUpdateCheck::Context &contex
 		{
 			try
 			{
-				mpt::IO::InputFile f(settings.persistencePath + P_("update-") + mpt::PathString::FromUnicode(GetChannelName(settings.channel)) + P_(".json"));
+				mpt::IO::InputFile f(settings.persistencePath + mpt::PathString::FromUTF8(OpenFMTUpdateCache));
 				if(f.IsValid())
 				{
 					std::vector<std::byte> data = GetFileReader(f).ReadRawDataAsByteVector();
-					nlohmann::json::parse(mpt::buffer_cast<std::string>(data)).get<Update::versions>();
+					FindNewerOpenFMTRelease(data);
 					result.CheckTime = mpt::chrono::default_system_clock::time_point{};
 					result.json = data;
 					loaded = true;
@@ -728,7 +808,7 @@ UpdateCheckResult CUpdateCheck::SearchUpdate(const CUpdateCheck::Context &contex
 		}
 		if(!loaded)
 		{
-			HTTP::InternetSession internet(Version::Current().GetOpenMPTVersionString());
+			HTTP::InternetSession internet(U_("OpenFMT/") + mpt::ToUnicode(mpt::Charset::ASCII, OPENFMT_VERSION_A));
 			if(!context.window->SendMessage(context.msgProgress, context.autoUpdate ? 1 : 0, 30))
 			{
 				throw CUpdateCheck::Cancel();
@@ -736,7 +816,7 @@ UpdateCheckResult CUpdateCheck::SearchUpdate(const CUpdateCheck::Context &contex
 			result = SearchUpdateModern(internet, settings);
 			try
 			{
-				mpt::IO::SafeOutputFile f(settings.persistencePath + P_("update-") + mpt::PathString::FromUnicode(GetChannelName(settings.channel)) + P_(".json"), std::ios::binary);
+				mpt::IO::SafeOutputFile f(settings.persistencePath + mpt::PathString::FromUTF8(OpenFMTUpdateCache), std::ios::binary);
 				f.stream().imbue(std::locale::classic());
 				mpt::IO::WriteRaw(f.stream(), mpt::as_span(result.json));
 				f.stream().flush();
@@ -751,7 +831,8 @@ UpdateCheckResult CUpdateCheck::SearchUpdate(const CUpdateCheck::Context &contex
 			{
 				throw CUpdateCheck::Cancel();
 			}
-			SendStatistics(internet, settings, statistics);
+			// Статистику о системе OpenFMT никуда не отправляет.
+			MPT_UNREFERENCED_PARAMETER(statistics);
 			if(!context.window->SendMessage(context.msgProgress, context.autoUpdate ? 1 : 0, 70))
 			{
 				throw CUpdateCheck::Cancel();
@@ -850,7 +931,7 @@ UpdateCheckResult CUpdateCheck::SearchUpdateModern(HTTP::InternetSession &intern
 {
 
 	HTTP::Request request;
-	request.SetURI(ParseURI(settings.apiURL + MPT_UFORMAT("update/{}")(GetChannelName(static_cast<UpdateChannel>(settings.channel)))));
+	request.SetURI(ParseURI(mpt::ToUnicode(mpt::Charset::ASCII, OpenFMTReleasesURL)));
 	request.method = HTTP::Method::Get;
 	request.acceptMimeTypes = HTTP::MimeTypes::JSON();
 	request.flags = HTTP::NoCache;
@@ -863,7 +944,7 @@ UpdateCheckResult CUpdateCheck::SearchUpdateModern(HTTP::InternetSession &intern
 	// Retrieve HTTP status code.
 	if(resultHTTP.Status >= 400)
 	{
-		throw CUpdateCheck::Error(MPT_CFORMAT("Version information could not be found on the server (HTTP status code {}). Maybe your version of OpenMPT is too old!")(resultHTTP.Status));
+		throw CUpdateCheck::Error(MPT_CFORMAT("Release information could not be loaded from GitHub (HTTP status code {}).")(resultHTTP.Status));
 	}
 
 	// Now, evaluate the downloaded data.
@@ -871,14 +952,17 @@ UpdateCheckResult CUpdateCheck::SearchUpdateModern(HTTP::InternetSession &intern
 	result.CheckTime = mpt::chrono::default_system_clock::now();
 	try
 	{
-		nlohmann::json::parse(mpt::buffer_cast<std::string>(resultHTTP.Data)).get<Update::versions>();
+		FindNewerOpenFMTRelease(resultHTTP.Data);
 		result.json = resultHTTP.Data;
 	} catch(mpt::out_of_memory e)
 	{
 		mpt::rethrow_out_of_memory(e);
 	}	catch(const nlohmann::json::exception &e)
 	{
-		throw CUpdateCheck::Error(MPT_CFORMAT("Could not understand server response ({}). Maybe your version of OpenMPT is too old!")(mpt::get_exception_text<mpt::ustring>(e)));
+		throw CUpdateCheck::Error(MPT_CFORMAT("Could not understand the GitHub response ({}).")(mpt::get_exception_text<mpt::ustring>(e)));
+	} catch(const std::exception &e)
+	{
+		throw CUpdateCheck::Error(MPT_CFORMAT("Could not understand the GitHub response ({}).")(mpt::get_exception_text<mpt::ustring>(e)));
 	}
 
 	return result;
@@ -1130,7 +1214,7 @@ public:
 			{
 
 				UpdateProgress(_T("Connecting..."), 0.0);
-				HTTP::InternetSession internet(Version::Current().GetOpenMPTVersionString());
+				HTTP::InternetSession internet(U_("OpenFMT/") + mpt::ToUnicode(mpt::Charset::ASCII, OPENFMT_VERSION_A));
 
 				UpdateProgress(_T("Downloading update information..."), 1.0);
 				std::vector<std::byte> rawDownloadInfo;
@@ -1507,83 +1591,39 @@ void CUpdateCheck::AcknowledgeSuccess(const UpdateCheckResult &result)
 
 void CUpdateCheck::ShowSuccessGUI(const bool autoUpdate, const UpdateCheckResult &result)
 {
+	// OpenFMT: выпуски с GitHub. Сами ничего не скачиваем и не ставим —
+	// показываем, что вышло, и открываем страницу выпуска.
 	bool modal = !autoUpdate;
-
-	Update::versions updateData = nlohmann::json::parse(mpt::buffer_cast<std::string>(result.json)).get<Update::versions>();
-	UpdateInfo updateInfo = GetBestDownload(updateData);
-
-	if(!updateInfo.IsAvailable())
+	std::optional<OpenFMTRelease> release;
+	try
+	{
+		release = FindNewerOpenFMTRelease(result.json);
+	} catch(const std::exception &)
 	{
 		if(modal)
-		{
-			Reporting::Information(U_("You already have the latest version of OpenMPT installed."), U_("OpenMPT Update"));
-		}
+			Reporting::Error(_T("Could not understand the release information from GitHub."), _T("OpenFMT Update"));
 		return;
 	}
-
-	auto &versionInfo = updateData[updateInfo.version];
-	if(autoUpdate && (mpt::ToCString(versionInfo.version) == TrackerSettings::Instance().UpdateIgnoreVersion))
+	if(!release)
 	{
+		if(modal)
+			Reporting::Information(U_("You already have the latest version of OpenFMT."), U_("OpenFMT Update"));
 		return;
 	}
-
-	if(autoUpdate && TrackerSettings::Instance().UpdateInstallAutomatically && !updateInfo.download.empty() && versionInfo.downloads[updateInfo.download].can_autoupdate && (Version::Current() >= Version::Parse(versionInfo.downloads[updateInfo.download].autoupdate_minversion)))
-	{
-		CDoUpdate updateDlg(versionInfo.downloads[updateInfo.download], theApp.GetMainWnd());
-		if(updateDlg.DoModal() != IDOK)
-		{
-			return;
-		}
-	} else
-	{
-		const TCHAR *action = _T("&View Announcement");
-		const bool canInstall = mpt::OS::Windows::IsOriginal() && !updateInfo.download.empty() && versionInfo.downloads[updateInfo.download].can_autoupdate && (Version::Current() >= Version::Parse(versionInfo.downloads[updateInfo.download].autoupdate_minversion));
-		const bool canDownload = !canInstall && !updateInfo.download.empty() && !versionInfo.downloads[updateInfo.download].download_url.empty();
-		if(canInstall)
-		{
-			action = _T("&Install Now");
-		} else if(canDownload)
-		{
-			action = _T("&Download Now");
-		}
-
-		// always show indicator, do not highlight it with a tooltip if we show a modal window later or when it is a cached result
-		if(!CMainFrame::GetMainFrame()->ShowUpdateIndicator(result, mpt::ToCString(versionInfo.version), mpt::ToCString(versionInfo.announcement_url), !modal && !result.IsFromCache()))
-		{
-			// on failure to show indicator, continue and show modal dialog
-			modal = true;
-		}
-
-		if(!modal)
-		{
-			return;
-		}
-
-		UpdateDialog dlg(
-			mpt::ToCString(versionInfo.version),
-			mpt::ToCString(versionInfo.date),
-			mpt::ToCString(versionInfo.announcement_url),
-			action);
-		if(dlg.DoModal() != IDOK)
-		{
-			return;
-		}
-
-		if(canInstall)
-		{
-			CDoUpdate updateDlg(versionInfo.downloads[updateInfo.download], theApp.GetMainWnd());
-			if(updateDlg.DoModal() != IDOK)
-			{
-				return;
-			}
-		} else if(canDownload)
-		{
-			CTrackApp::OpenURL(versionInfo.downloads[updateInfo.download].download_url);
-		} else
-		{
-			CTrackApp::OpenURL(versionInfo.announcement_url);
-		}
-	}
+	const CString version = mpt::ToCString(mpt::Charset::UTF8, release->version);
+	const CString url = mpt::ToCString(mpt::Charset::UTF8, release->url);
+	if(autoUpdate && version == TrackerSettings::Instance().UpdateIgnoreVersion.Get())
+		return;
+	// Значок на панели — всегда; всплывающую подсказку не показываем, если
+	// сейчас откроется окно или результат взят из кэша.
+	if(!CMainFrame::GetMainFrame()->ShowUpdateIndicator(result, version, url, !modal && !result.IsFromCache()))
+		modal = true;
+	if(!modal)
+		return;
+	UpdateDialog dlg(version, mpt::ToCString(mpt::Charset::UTF8, release->date), url, _T("&Open Download Page"));
+	if(dlg.DoModal() != IDOK)
+		return;
+	CTrackApp::OpenURL(url);
 }
 
 
@@ -1591,7 +1631,7 @@ void CUpdateCheck::ShowFailureGUI(const bool autoUpdate, const CUpdateCheck::Err
 {
 	if(!autoUpdate)
 	{
-		Reporting::Error(error.GetMessage(), _T("OpenMPT Update Error"));
+		Reporting::Error(error.GetMessage(), _T("OpenFMT Update Error"));
 	}
 }
 
@@ -1833,6 +1873,15 @@ void CUpdateSetupDlg::EnableDisableDialog()
 	GetDlgItem(IDC_CHECK1)->EnableWindow(status);
 	GetDlgItem(IDC_STATIC_UPDATEPRIVACYTEXT)->EnableWindow(status);
 	GetDlgItem(IDC_SYSLINK1)->EnableWindow(status);
+
+	// OpenFMT: каналы обновлений, статистика и автоустановка — это всё
+	// сервер OpenMPT. Мы только смотрим выпуски на GitHub, поэтому прячем.
+	for(const int id : {IDC_STATIC_UDATECHANNEL, IDC_RADIO1, IDC_RADIO2, IDC_RADIO3, IDC_CHECK_UPDATEINSTALLAUTOMATICALLY,
+		IDC_STATIC_UPDATEPRIVACY, IDC_CHECK1, IDC_STATIC_UPDATEPRIVACYTEXT, IDC_SYSLINK1})
+	{
+		if(CWnd *item = GetDlgItem(id))
+			item->ShowWindow(SW_HIDE);
+	}
 }
 
 

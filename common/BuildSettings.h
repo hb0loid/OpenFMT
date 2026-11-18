@@ -116,9 +116,9 @@
 // Use architecture-specific intrinsics
 #define MPT_ENABLE_ARCH_INTRINSICS
 
-// OpenFMT: проверка обновлений выключена. Она ходит на сервер OpenMPT и
-// предлагает «обновиться» до официальной версии, то есть затереть форк.
-//#define MPT_ENABLE_UPDATE
+// OpenFMT: проверка обновлений спрашивает выпуски OpenFMT на GitHub (см.
+// UpdateCheck.cpp), а не сервер OpenMPT, и ничего сама не ставит.
+#define MPT_ENABLE_UPDATE
 
 #if defined(MPT_BUILD_DEBUG)
 #define MPT_ENABLE_PLAYBACK_TEST_MENU

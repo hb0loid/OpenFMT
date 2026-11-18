@@ -35,7 +35,7 @@ bool UpdateToolTip::ShowUpdate(CWnd &parent, const CString &newVersion, const CS
 
 	m_infoURL = infoURL;
 
-	CString message = MPT_CFORMAT("OpenMPT {} has been released.\nClick this message to install the update,\nor <a>click here to see what's new.</a>")(newVersion);
+	CString message = MPT_CFORMAT("OpenFMT {} has been released.\nClick this message for details,\nor <a>click here to open the download page.</a>")(newVersion);
 	TOOLINFO ti{};
 	ti.cbSize = TTTOOLINFO_V1_SIZE;
 	ti.uFlags = TTF_TRACK | TTF_PARSELINKS;
