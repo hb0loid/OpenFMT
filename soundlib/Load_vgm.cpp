@@ -21,6 +21,8 @@
  */
 
 #include "stdafx.h"
+
+#include <functional>
 #include "Loaders.h"
 #ifdef MODPLUG_TRACKER
 #include "../mptrack/TrackerSettings.h"
@@ -47,7 +49,13 @@ constexpr uint8 OPMBase = FMChannels + PSGChannels;
 // YMZ280B — восемь голосов сэмплов, идут после YM2151.
 constexpr uint8 YMZChannels = 8;
 constexpr uint8 YMZBase = OPMBase + OPMChannels;
-constexpr uint8 VgmChannels = YMZBase + YMZChannels;
+// Прочие PCM-чипы: RF5C164 (Mega CD) — восемь голосов, PWM (32X) — левый и
+// правый, OKIM6295 — до двух чипов по четыре голоса.
+constexpr uint8 RFChannels = 8, PWMChannels = 2, OKIChannels = 8;
+constexpr uint8 RFBase = YMZBase + YMZChannels;
+constexpr uint8 PWMBase = RFBase + RFChannels;
+constexpr uint8 OKIBase = PWMBase + PWMChannels;
+constexpr uint8 VgmChannels = OKIBase + OKIChannels;
 // Коды нот YM2151 (младшие 4 бита KC) идут от до-диеза, каждый четвёртый
 // пропущен. -1 — кода нет.
 constexpr int8 OPMKeyCode[16] = {0, 1, 2, -1, 3, 4, 5, -1, 6, 7, 8, -1, 9, 10, 11, -1};
@@ -73,6 +81,8 @@ struct VgmHeader
 	uint32 opn2Clock = 0;
 	uint32 opmClock = 0;
 	uint32 ymzClock = 0;
+	uint32 rfClock = 0, pwmClock = 0, okiClock = 0;
+	bool okiPin7 = false;
 	bool foreignChip = false;
 };
 
@@ -103,14 +113,18 @@ bool ParseHeader(const std::vector<uint8> &data, VgmHeader &header)
 	header.opn2Clock = (0x2C + 4 <= headerEnd) ? (ReadLE32(data, 0x2C) & 0x3FFFFFFF) : 0;
 	header.opmClock = (0x30 + 4 <= headerEnd) ? (ReadLE32(data, 0x30) & 0x3FFFFFFF) : 0;
 	header.ymzClock = (0x68 + 4 <= headerEnd) ? (ReadLE32(data, 0x68) & 0x3FFFFFFF) : 0;
+	header.rfClock = (0x6C + 4 <= headerEnd) ? (ReadLE32(data, 0x6C) & 0x3FFFFFFF) : 0;
+	header.pwmClock = (0x70 + 4 <= headerEnd) ? (ReadLE32(data, 0x70) & 0x3FFFFFFF) : 0;
+	header.okiClock = (0x98 + 4 <= headerEnd) ? (ReadLE32(data, 0x98) & 0x3FFFFFFF) : 0;
+	header.okiPin7 = (0x98 + 4 <= headerEnd) && (ReadLE32(data, 0x98) & 0x80000000u);
 	for(uint16 offset : ForeignClockOffset)
 	{
-		if(offset == 0x30 || offset == 0x68)
-			continue;  // YM2151 и YMZ280B у нас есть
+		if(offset == 0x30 || offset == 0x68 || offset == 0x98)
+			continue;  // YM2151, YMZ280B и OKIM6295 у нас есть
 		if(offset + 4u <= headerEnd && (ReadLE32(data, offset) & 0x3FFFFFFF))
 			header.foreignChip = true;
 	}
-	return header.psgClock || header.opn2Clock || header.opmClock;
+	return header.psgClock || header.opn2Clock || header.opmClock || header.rfClock || header.pwmClock || header.okiClock;
 }
 
 // Одно событие потока: включение или выключение голоса, смена громкости.
@@ -260,7 +274,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	VgmHeader header;
 	if(!ParseHeader(data, header))
 		return false;
-	if(header.foreignChip || (!header.opn2Clock && !header.opmClock && !header.psgClock))
+	if(header.foreignChip || (!header.opn2Clock && !header.opmClock && !header.psgClock && !header.rfClock && !header.pwmClock && !header.okiClock))
 		return false;  // Не Mega Drive: чужие микросхемы мы не изображаем
 	if(loadFlags == onlyVerifyHeader)
 		return true;
@@ -379,6 +393,86 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	std::array<uint32, 256> streamFrequency{};
 	struct BlockStart { uint32 sample = 0, block = 0, frequency = 0; bool loop = false, stop = false; };
 	std::vector<BlockStart> blockStarts;
+	// Потоки других чипов: 0x90 задаёт чип и регистр, 0x91 — банк данных и шаг.
+	std::array<uint8, 256> streamChip;
+	streamChip.fill(0x02);  // По умолчанию — ЦАП YM2612, как пишет Furnace
+	std::array<uint8, 256> streamRegister{}, streamBank{}, streamStepBase{};
+	std::array<uint8, 256> streamStepSize;
+	streamStepSize.fill(1);
+	// Данные потоков по типу блока (0x00–0x3F), сжатые блоки распакованы.
+	std::array<std::vector<uint8>, 0x40> streamData;
+	std::array<std::vector<DataBlock>, 0x40> streamBlocks;
+	// Таблицы распаковки (блок 0x7F) по виду сжатия и подтипу.
+	std::map<uint16, std::vector<uint16>> unpackTables;
+	const auto unpackBlock = [&](const uint8 *src, uint32 size, std::vector<uint8> &out) -> bool
+	{
+		if(size < 10)
+			return false;
+		const uint8 method = src[0];
+		const uint32 outSize = src[1] | (src[2] << 8) | (src[3] << 16) | (static_cast<uint32>(src[4]) << 24);
+		const uint8 bitsOut = src[5], bitsIn = src[6], subType = src[7];
+		const uint16 addValue = static_cast<uint16>(src[8] | (src[9] << 8));
+		if(!bitsIn || bitsIn > 16 || !bitsOut || bitsOut > 16 || outSize > (64u << 20))
+			return false;
+		const std::vector<uint16> *table = nullptr;
+		if(method == 1 || subType == 2)
+		{
+			const auto found = unpackTables.find(static_cast<uint16>((method << 8) | subType));
+			if(found == unpackTables.end())
+				return false;
+			table = &found->second;
+		}
+		const uint8 bytesOut = (bitsOut + 7) / 8;
+		const uint8 *in = src + 10;
+		const uint64 inBits = static_cast<uint64>(size - 10) * 8;
+		uint64 bitPos = 0;
+		uint32 state = addValue;  // DPCM: начальное значение
+		const size_t base = out.size();
+		out.reserve(base + outSize);
+		while(out.size() - base + bytesOut <= outSize && bitPos + bitsIn <= inBits)
+		{
+			uint32 value = 0;
+			for(uint8 b = 0; b < bitsIn; b++, bitPos++)
+				value = (value << 1) | ((in[bitPos >> 3] >> (7 - (bitPos & 7))) & 1);
+			if(method == 1)
+			{
+				if(value >= table->size())
+					return false;
+				state = (state + (*table)[value]) & ((1u << bitsOut) - 1);
+				value = state;
+			} else if(subType == 0)
+			{
+				value += addValue;
+			} else if(subType == 1)
+			{
+				value = (value << (bitsOut - bitsIn)) + addValue;
+			} else if(subType == 2)
+			{
+				if(value >= table->size())
+					return false;
+				value = (*table)[value];
+			}
+			for(uint8 b = 0; b < bytesOut; b++)
+				out.push_back(static_cast<uint8>(value >> (8 * b)));
+		}
+		return true;
+	};
+	// PWM (32X): регистры и куски потоков. Кусок — непрерывное проигрывание:
+	// перезапуск потока с того же места, где он и так был, куском не считается.
+	uint16 pwmCycle = 0;
+	struct PwmSegment { uint8 voice = 0, bank = 0, stepSize = 1, stepBase = 0; uint32 startSample = 0, endSample = uint32_max, byteOffset = 0, frequency = 0; uint16 cycle = 0; };
+	std::vector<PwmSegment> pwmSegments;
+	std::array<int, 256> streamSegment;
+	streamSegment.fill(-1);
+	const auto closeSegment = [&](uint8 stream, uint32 when)
+	{
+		if(streamSegment[stream] >= 0)
+		{
+			PwmSegment &seg = pwmSegments[streamSegment[stream]];
+			seg.endSample = std::min(seg.endSample, when);
+			streamSegment[stream] = -1;
+		}
+	};
 	// То же, что у PSG: что звучит на голосе FM и с какой громкостью. Нужно,
 	// чтобы ловить ведение уровня по ходу ноты, а не только в момент нажатия.
 	std::array<ModCommand::NOTE, FMChannels> fmSounding{};
@@ -470,6 +564,298 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	{
 		const uint32 fnum = ((ymz[0x01 + channel * 4] & 1) << 8) | ymz[0x00 + channel * 4];
 		return (fnum + 1) * static_cast<double>(header.ymzClock) / (384.0 * 256.0);
+	};
+	// Прочие PCM-чипы (OKIM6295, RF5C164, PWM) сводятся к одному: голос
+	// играет звук — кусок PCM, который чип реально прочитал, — с какой-то
+	// частотой. Одинаковые звуки (по содержимому) становятся одним сэмплом,
+	// частота — нотой и подстройкой относительно обычной для этого звука.
+	struct PcmSound { std::vector<int16> data; double rate = 0.0; uint32 loopStart = uint32_max; std::string name; };
+	std::vector<PcmSound> pcmSounds;
+	std::multimap<uint64, size_t> pcmSoundByHash;
+	// Звуки, где нота всегда обрывается в конце (RF5C164): короткий звук,
+	// который совпадает с началом длинного, — тот же звук. Ключ — первые 64
+	// отсчёта.
+	std::multimap<uint64, size_t> pcmSoundByHead;
+	const auto headHash = [](const std::vector<int16> &d)
+	{
+		uint64 hash = 1469598103934665603ull;
+		for(size_t i = 0; i < std::min<size_t>(d.size(), 64); i++)
+			hash = (hash ^ static_cast<uint16>(d[i])) * 1099511628211ull;
+		return hash;
+	};
+	const auto addPrefixSound = [&](std::vector<int16> &&pcmData, double rate, const char *prefix) -> int
+	{
+		if(pcmData.size() < 64)
+			return -1;
+		const uint64 head = headHash(pcmData);
+		for(auto [it, end] = pcmSoundByHead.equal_range(head); it != end; ++it)
+		{
+			PcmSound &known = pcmSounds[it->second];
+			const size_t common = std::min(known.data.size(), pcmData.size());
+			if(!std::equal(pcmData.begin(), pcmData.begin() + common, known.data.begin()))
+				continue;
+			if(pcmData.size() > known.data.size())
+				known.data = std::move(pcmData);
+			return static_cast<int>(it->second);
+		}
+		PcmSound sound;
+		sound.data = std::move(pcmData);
+		sound.rate = rate;
+		sound.name = prefix;
+		pcmSounds.push_back(std::move(sound));
+		pcmSoundByHead.emplace(head, pcmSounds.size() - 1);
+		return static_cast<int>(pcmSounds.size() - 1);
+	};
+	const auto addPcmSound = [&](std::vector<int16> &&pcmData, double rate, uint32 loopStart, const char *prefix) -> int
+	{
+		if(pcmData.empty())
+			return -1;
+		uint64 hash = 1469598103934665603ull ^ pcmData.size() ^ (static_cast<uint64>(loopStart) << 32);
+		for(int16 v : pcmData)
+			hash = (hash ^ static_cast<uint16>(v)) * 1099511628211ull;
+		for(auto [it, end] = pcmSoundByHash.equal_range(hash); it != end; ++it)
+		{
+			const PcmSound &known = pcmSounds[it->second];
+			if(known.loopStart == loopStart && known.data == pcmData)
+				return static_cast<int>(it->second);
+		}
+		PcmSound sound;
+		sound.data = std::move(pcmData);
+		sound.rate = rate;
+		sound.loopStart = loopStart;
+		sound.name = prefix;
+		pcmSounds.push_back(std::move(sound));
+		pcmSoundByHash.emplace(hash, pcmSounds.size() - 1);
+		return static_cast<int>(pcmSounds.size() - 1);
+	};
+	enum class PcmWhat : uint8 { On, Pitch, Off, Volume, Pan };
+	struct PcmEvent { uint32 sample = 0; uint8 voice = 0; PcmWhat what = PcmWhat::On; int sound = -1; double rate = 0.0; int value = 0; };
+	std::vector<PcmEvent> pcmEvents;
+	std::array<bool, VgmChannels> pcmVoiceUsed{};
+	// OKIM6295: образ ROM (блок 0x8B), банки NMK112 и запуск фраз.
+	struct OkiChip
+	{
+		std::vector<uint8> rom;
+		std::array<uint8, 4> nmkBank{};
+		uint8 nmkFlags = 0, bank = 0;
+		int pendingPhrase = -1;
+		bool pin7 = false;
+	};
+	std::array<OkiChip, 2> oki;
+	for(auto &chip : oki)
+		chip.pin7 = header.okiPin7;
+	// RF5C164 (Mega CD): 64 КБ памяти волн, восемь голосов. Голос шагает по
+	// памяти с дробным шагом, байт 0xFF — переход на точку петли. Драйвер
+	// часто подкачивает звук в память на ходу (кольцевой буфер), поэтому мы
+	// повторяем чтение чипа по времени и собираем для каждого нажатия байты,
+	// которые голос реально прочитал, — по одному на адрес. Это и есть звук
+	// ноты на родной скорости, а шаг — её частота.
+	struct RfVoice
+	{
+		uint8 env = 0xFF, pan = 0xFF, start = 0;
+		uint16 step = 0, loop = 0;
+		bool enabled = false;
+		uint16 position = 0;
+		uint32 fraction = 0;
+		std::vector<int16> heard;
+		std::vector<uint8> heardRaw;
+		int onEvent = -1;
+		double noteRate = 0.0;
+		int volume = -1, panning = -1;
+	};
+	std::array<RfVoice, RFChannels> rf;
+	std::map<uint32, int> rfSoundAt;  // место в банке сэмплов -> звук
+	std::vector<uint8> rfRam(65536, 0);
+	uint8 rfBank = 0, rfSelected = 0;
+	bool rfRunning = false;
+	double rfTicks = 0.0;
+	const double rfRate = header.rfClock / 384.0;
+	const auto rfByte = [](uint8 b) { return static_cast<int16>(((b & 0x80) ? (b & 0x7F) : -(b & 0x7F)) * 256); };
+	const auto rfAdvance = [&](uint32 when)
+	{
+		if(!header.rfClock)
+			return;
+		const double target = when * rfRate / VgmRate;
+		const uint64 ticks = static_cast<uint64>(std::max(0.0, std::floor(target - rfTicks)));
+		rfTicks += static_cast<double>(ticks);
+		if(!rfRunning)
+			return;
+		for(auto &v : rf)
+		{
+			if(!v.enabled || v.onEvent < 0 || !v.step)
+				continue;
+			for(uint64 t = 0; t < ticks; t++)
+			{
+				v.fraction += v.step;
+				while(v.fraction >= 2048)
+				{
+					v.fraction -= 2048;
+					v.position++;
+					uint8 b = rfRam[v.position];
+					if(b == 0xFF)
+					{
+						v.position = v.loop;
+						b = rfRam[v.position];
+					}
+					if(v.heard.size() < MAX_SAMPLE_LENGTH)
+					{
+						v.heard.push_back(rfByte(b == 0xFF ? 0 : b));
+						v.heardRaw.push_back(b);
+					}
+				}
+			}
+		}
+	};
+	const auto rfRateOf = [&](const RfVoice &v) { return rfRate * v.step / 2048.0; };
+	const auto rfLevel = [&](const RfVoice &v, int &volume, int &panning)
+	{
+		const int left = v.pan & 15, right = v.pan >> 4;
+		volume = std::clamp((v.env * std::max(left, right) * 64 + 255 * 15 / 2) / (255 * 15), 0, 64);
+		panning = (left + right) ? (right * 255 + (left + right) / 2) / (left + right) : 128;
+	};
+	const auto rfFinish = [&](uint8 index, uint32 when)
+	{
+		RfVoice &v = rf[index];
+		if(v.onEvent < 0)
+			return;
+		// Драйвер подкачивает в память куски своего банка сэмплов (блок
+		// данных типа 2) подряд. Если услышанное нашлось в банке, звук — это
+		// место в банке: одно и то же место — один инструмент, даже если ноты
+		// были разной длины или начинались в разных местах памяти.
+		int sound = -1;
+		const auto &bank = streamData[0x02];
+		if(v.heardRaw.size() >= 32 && !bank.empty())
+		{
+			// Ищем по первому окну, где звук меняется: начало из одинаковых
+			// байт (тишина) нашлось бы в первом же пустом месте банка.
+			size_t window = 0;
+			while(window + 32 <= v.heardRaw.size()
+				&& std::all_of(v.heardRaw.begin() + window, v.heardRaw.begin() + window + 32, [&](uint8 x) { return x == v.heardRaw[window]; }))
+				window += 32;
+			if(window + 32 <= v.heardRaw.size())
+			{
+				const std::boyer_moore_horspool_searcher searcher(v.heardRaw.begin() + window, v.heardRaw.begin() + window + 32);
+				auto from = bank.begin();
+				while(sound < 0)
+				{
+					const auto found = std::search(from, bank.end(), searcher);
+					if(found == bank.end())
+						break;
+					from = found + 1;
+					const size_t foundAt = static_cast<size_t>(std::distance(bank.begin(), found));
+					if(foundAt < window)
+						continue;
+					const uint32 at = static_cast<uint32>(foundAt - window);
+					// Склеиваем, только если вся нота совпала с банком байт в байт.
+					if(at + v.heardRaw.size() > bank.size() || !std::equal(v.heardRaw.begin(), v.heardRaw.end(), bank.begin() + at))
+						continue;
+					if(const auto known = rfSoundAt.find(at); known != rfSoundAt.end())
+					{
+						sound = known->second;
+						if(v.heard.size() > pcmSounds[sound].data.size())
+							pcmSounds[sound].data = std::move(v.heard);
+					} else
+					{
+						PcmSound made;
+						made.data = std::move(v.heard);
+						made.rate = v.noteRate;
+						made.name = "RF";
+						pcmSounds.push_back(std::move(made));
+						sound = static_cast<int>(pcmSounds.size() - 1);
+						rfSoundAt[at] = sound;
+					}
+				}
+			}
+		}
+		if(sound < 0)
+			sound = addPrefixSound(std::move(v.heard), v.noteRate, "RF");
+		v.heard.clear();
+		v.heardRaw.clear();
+		pcmEvents[v.onEvent].sound = sound;
+		pcmEvents.push_back({when, static_cast<uint8>(RFBase + index), PcmWhat::Off});
+		v.onEvent = -1;
+	};
+	const auto rfKeyOn = [&](uint8 index, uint32 when)
+	{
+		RfVoice &v = rf[index];
+		rfFinish(index, when);
+		v.position = static_cast<uint16>(v.start << 8);
+		v.fraction = 0;
+		v.heard.clear();
+		uint8 b = rfRam[v.position];
+		if(b == 0xFF)
+		{
+			v.position = v.loop;
+			b = rfRam[v.position];
+		}
+		v.heardRaw.clear();
+		v.heard.push_back(rfByte(b == 0xFF ? 0 : b));
+		v.heardRaw.push_back(b);
+		v.noteRate = rfRateOf(v);
+		rfLevel(v, v.volume, v.panning);
+		const uint8 voice = static_cast<uint8>(RFBase + index);
+		pcmVoiceUsed[voice] = true;
+		pcmEvents.push_back({when, voice, PcmWhat::Pan, -1, 0.0, v.panning});
+		pcmEvents.push_back({when, voice, PcmWhat::On, -1, v.noteRate, v.volume});
+		v.onEvent = static_cast<int>(pcmEvents.size() - 1);
+	};
+	const auto okiByte = [](const OkiChip &chip, uint8 chipIndex, uint32 address) -> uint8
+	{
+		address &= 0x3FFFF;
+		uint32 physical;
+		if(chip.nmkFlags & 0x80)
+		{
+			// NMK112: четыре окна по 64 КБ, у каждого свой банк. Если таблица фраз
+			// постраничная, её четверти по 256 байт берутся из банков окон.
+			if(address < 0x400 && (chip.nmkFlags & (1 << chipIndex)))
+				physical = (static_cast<uint32>(chip.nmkBank[(address >> 8) & 3]) << 16) | address;
+			else
+				physical = (static_cast<uint32>(chip.nmkBank[(address >> 16) & 3]) << 16) | (address & 0xFFFF);
+		} else
+		{
+			physical = (static_cast<uint32>(chip.bank) << 18) | address;
+		}
+		return physical < chip.rom.size() ? chip.rom[physical] : uint8(0);
+	};
+	// АДИКМ OKI (как у MAME): 49 шагов, 12-битный сигнал, старший полубайт первый.
+	const auto okiDecode = [&](const OkiChip &chip, uint8 chipIndex, uint32 start, uint32 end) -> std::vector<int16>
+	{
+		static const auto diffTable = []()
+		{
+			std::array<int, 49 * 16> table{};
+			for(int step = 0; step < 49; step++)
+			{
+				const int value = static_cast<int>(std::floor(16.0 * std::pow(11.0 / 10.0, step)));
+				for(int nib = 0; nib < 16; nib++)
+				{
+					int diff = value / 8;
+					if(nib & 1)
+						diff += value / 4;
+					if(nib & 2)
+						diff += value / 2;
+					if(nib & 4)
+						diff += value;
+					table[step * 16 + nib] = (nib & 8) ? -diff : diff;
+				}
+			}
+			return table;
+		}();
+		static constexpr int IndexShift[8] = {-1, -1, -1, -1, 2, 4, 6, 8};
+		std::vector<int16> out;
+		if(end < start)
+			return out;
+		const uint32 bytes = std::min<uint32>(end - start + 1, 0x40000);
+		out.reserve(bytes * 2);
+		int signal = -2, step = 0;
+		for(uint32 n = 0; n < bytes * 2; n++)
+		{
+			const uint8 byte = okiByte(chip, chipIndex, start + n / 2);
+			const int nibble = (n & 1) ? (byte & 15) : (byte >> 4);
+			signal = std::clamp(signal + diffTable[step * 16 + nibble], -2048, 2047);
+			step = std::clamp(step + IndexShift[nibble & 7], 0, 48);
+			out.push_back(static_cast<int16>(signal * 16));
+		}
+		return out;
 	};
 	std::vector<VgmEvent> events;
 	uint32 sample = 0;
@@ -909,12 +1295,55 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 				break;
 			const uint8 blockType = data[pos + 1];
 			const uint32 size = ReadLE32(data, pos + 2) & 0x7FFFFFFF;
-			if(blockType == 0x00 && pos + 6 + size <= data.size())
+			if(blockType >= 0x01 && blockType <= 0x3F && pos + 6 + size <= data.size())
+			{
+				streamBlocks[blockType].push_back({static_cast<uint32>(streamData[blockType].size()), size});
+				streamData[blockType].insert(streamData[blockType].end(), data.begin() + pos + 6, data.begin() + pos + 6 + size);
+			} else if(blockType >= 0x41 && blockType <= 0x7E && pos + 6 + size <= data.size())
+			{
+				// Сжатый поток: распаковываем сразу.
+				auto &target = streamData[blockType - 0x40];
+				const uint32 before = static_cast<uint32>(target.size());
+				if(unpackBlock(data.data() + pos + 6, size, target))
+					streamBlocks[blockType - 0x40].push_back({before, static_cast<uint32>(target.size()) - before});
+				else
+					target.resize(before);
+			} else if(blockType == 0x7F && size >= 6 && pos + 6 + size <= data.size())
+			{
+				// Таблица распаковки: вид, подтип, биты, число значений, значения.
+				const uint8 *t = data.data() + pos + 6;
+				const uint8 bytes = (t[2] + 7) / 8;
+				const uint16 count = static_cast<uint16>(t[4] | (t[5] << 8));
+				std::vector<uint16> values;
+				for(uint32 i = 0; i < count && 6u + (i + 1) * bytes <= size; i++)
+					values.push_back(static_cast<uint16>(bytes == 1 ? t[6 + i] : (t[6 + i * 2] | (t[7 + i * 2] << 8))));
+				unpackTables[static_cast<uint16>((t[0] << 8) | t[1])] = std::move(values);
+			} else if(blockType == 0x00 && pos + 6 + size <= data.size())
 			{
 				// Тип 0 — сэмплы для ЦАПа YM2612. Блоков бывает несколько, и
 				// указатель потока считает их как один непрерывный кусок.
 				dataBlocks.push_back({static_cast<uint32>(pcm.size()), size});
 				pcm.insert(pcm.end(), data.begin() + pos + 6, data.begin() + pos + 6 + size);
+			} else if(blockType == 0xC1 && size > 2 && pos + 6 + size <= data.size())
+			{
+				// Прямая запись в память RF5C164: адрес и байты.
+				rfAdvance(sample);
+				const uint32 to = (data[pos + 6] | (data[pos + 7] << 8)) | (static_cast<uint32>(rfBank) << 12);
+				for(uint32 i = 0; i + 2 < size && to + i < 0x10000; i++)
+					rfRam[to + i] = data[pos + 8 + i];
+			} else if(blockType == 0x8B && size > 8 && pos + 6 + size <= data.size())
+			{
+				// ROM OKIM6295: полный размер, адрес куска, сам кусок; старший бит
+				// размера блока — второй чип.
+				OkiChip &chip = oki[(ReadLE32(data, pos + 2) & 0x80000000u) ? 1 : 0];
+				const uint32 offset = ReadLE32(data, pos + 10);
+				const uint32 length = size - 8;
+				if(offset < (16u << 20) && length <= (16u << 20) - offset)
+				{
+					if(chip.rom.size() < offset + length)
+						chip.rom.resize(offset + length);
+					std::copy(data.begin() + pos + 14, data.begin() + pos + 14 + length, chip.rom.begin() + offset);
+				}
 			} else if(blockType == 0x86 && size > 8 && pos + 6 + size <= data.size())
 			{
 				// Образ памяти YMZ280B: полный размер, адрес куска, сам кусок.
@@ -942,29 +1371,97 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			if(pos + size > data.size())
 				break;
 			const uint8 stream = data[pos];
-			if(code == 0x92)
+			const bool pwm = (streamChip[stream] & 0x7F) == 0x11;
+			// Куда пишет поток PWM: регистр 3 — правый, 2 и 4 (моно) — левый голос.
+			const auto pwmVoice = [&]() { return static_cast<uint8>(PWMBase + ((streamRegister[stream] == 3) ? 1 : 0)); };
+			const auto startPwm = [&](uint32 byteOffset)
+			{
+				// Продолжение того же проигрывания — не новый кусок.
+				if(streamSegment[stream] >= 0)
+				{
+					const PwmSegment &seg = pwmSegments[streamSegment[stream]];
+					const double expected = seg.byteOffset + (sample - seg.startSample) * static_cast<double>(seg.frequency) / VgmRate * seg.stepSize * 2.0;
+					if(std::abs(expected - byteOffset) <= seg.stepSize * 2.0 * (seg.frequency / 1000.0 + 8.0) && seg.frequency == streamFrequency[stream])
+						return;
+				}
+				closeSegment(stream, sample);
+				PwmSegment seg;
+				seg.voice = pwmVoice();
+				seg.bank = streamBank[stream] & 0x3F;
+				seg.stepSize = std::max<uint8>(streamStepSize[stream], 1);
+				seg.stepBase = streamStepBase[stream];
+				seg.startSample = sample;
+				seg.byteOffset = byteOffset;
+				seg.frequency = streamFrequency[stream];
+				seg.cycle = pwmCycle;
+				pwmSegments.push_back(seg);
+				streamSegment[stream] = static_cast<int>(pwmSegments.size() - 1);
+				pcmVoiceUsed[seg.voice] = true;
+			};
+			if(code == 0x90)
+			{
+				streamChip[stream] = data[pos + 1];
+				streamRegister[stream] = data[pos + 3];
+			} else if(code == 0x91)
+			{
+				streamBank[stream] = data[pos + 1];
+				streamStepSize[stream] = data[pos + 2];
+				streamStepBase[stream] = data[pos + 3];
+			} else if(code == 0x92)
 			{
 				streamFrequency[stream] = ReadLE32(data, pos + 1);
 			} else if(code == 0x95)
 			{
 				const uint32 blockID = data[pos + 1] | (data[pos + 2] << 8);
-				if(blockID < dataBlocks.size())
+				if(pwm)
+				{
+					const auto &blocks = streamBlocks[streamBank[stream] & 0x3F];
+					if(blockID < blocks.size())
+						startPwm(blocks[blockID].start);
+				} else if(blockID < dataBlocks.size())
+				{
 					blockStarts.push_back({sample, blockID, streamFrequency[stream], (data[pos + 3] & 1) != 0, false});
+				}
 			} else if(code == 0x93)
 			{
-				// Запуск с произвольного места. Furnace так не пишет, но если
-				// место совпадает с началом блока, это тот же удар.
 				const uint32 offset = ReadLE32(data, pos + 1);
-				const auto found = std::find_if(dataBlocks.begin(), dataBlocks.end(),
-					[offset](const DataBlock &b) { return b.start == offset; });
-				if(found != dataBlocks.end())
-					blockStarts.push_back({sample, static_cast<uint32>(std::distance(dataBlocks.begin(), found)), streamFrequency[stream], false, false});
+				if(pwm)
+				{
+					if(offset != uint32_max)
+						startPwm(offset);
+				} else
+				{
+					// Запуск с произвольного места. Furnace так не пишет, но если
+					// место совпадает с началом блока, это тот же удар.
+					const auto found = std::find_if(dataBlocks.begin(), dataBlocks.end(),
+						[offset](const DataBlock &b) { return b.start == offset; });
+					if(found != dataBlocks.end())
+						blockStarts.push_back({sample, static_cast<uint32>(std::distance(dataBlocks.begin(), found)), streamFrequency[stream], false, false});
+				}
 			} else if(code == 0x94)
 			{
-				if(!blockStarts.empty() && !blockStarts.back().stop)
+				if(pwm || stream == 0xFF)
+				{
+					for(int s2 = 0; s2 < 256; s2++)
+					{
+						if(stream == 0xFF || s2 == stream)
+							closeSegment(static_cast<uint8>(s2), sample);
+					}
+				}
+				if(!pwm && !blockStarts.empty() && !blockStarts.back().stop)
 					blockStarts.push_back({sample, 0, 0, false, true});
 			}
 			pos += size;
+		} else if(code == 0xB2)
+		{
+			// PWM напрямую: нужен только цикл (регистр 1) — по нему середина.
+			if(pos + 2 > data.size())
+				break;
+			const uint8 reg = data[pos] >> 4;
+			const uint16 value = static_cast<uint16>(((data[pos] & 15) << 8) | data[pos + 1]);
+			pos += 2;
+			if(reg == 1)
+				pwmCycle = value;
 		} else if(code == 0x54)
 		{
 			if(pos + 2 > data.size())
@@ -1031,6 +1528,149 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 						opmLastVolume[channel] = volume;
 					}
 				}
+			}
+		} else if(code == 0xB1)
+		{
+			if(pos + 2 > data.size())
+				break;
+			const uint8 reg = data[pos], value = data[pos + 1];
+			pos += 2;
+			rfAdvance(sample);
+			RfVoice &v = rf[rfSelected];
+			const uint8 voice = static_cast<uint8>(RFBase + rfSelected);
+			switch(reg)
+			{
+			case 0:
+			case 1:
+				(reg == 0 ? v.env : v.pan) = value;
+				if(v.onEvent >= 0)
+				{
+					int volume, panning;
+					rfLevel(v, volume, panning);
+					if(volume != v.volume)
+						pcmEvents.push_back({sample, voice, PcmWhat::Volume, -1, 0.0, volume});
+					if(panning != v.panning)
+						pcmEvents.push_back({sample, voice, PcmWhat::Pan, -1, 0.0, panning});
+					v.volume = volume;
+					v.panning = panning;
+				}
+				break;
+			case 2:
+			case 3:
+				v.step = (reg == 2) ? static_cast<uint16>((v.step & 0xFF00) | value) : static_cast<uint16>((v.step & 0x00FF) | (value << 8));
+				if(v.onEvent >= 0 && v.step)
+					pcmEvents.push_back({sample, voice, PcmWhat::Pitch, -1, rfRateOf(v)});
+				break;
+			case 4:
+				v.loop = static_cast<uint16>((v.loop & 0xFF00) | value);
+				break;
+			case 5:
+				v.loop = static_cast<uint16>((v.loop & 0x00FF) | (value << 8));
+				break;
+			case 6:
+				v.start = value;
+				break;
+			case 7:
+				rfRunning = (value & 0x80) != 0;
+				if(value & 0x40)
+					rfSelected = value & 7;
+				else
+					rfBank = value & 15;
+				break;
+			case 8:
+				for(uint8 i = 0; i < RFChannels; i++)
+				{
+					const bool enable = !((value >> i) & 1);
+					if(enable && !rf[i].enabled)
+						rfKeyOn(i, sample);
+					else if(!enable && rf[i].enabled)
+						rfFinish(i, sample);
+					rf[i].enabled = enable;
+				}
+				break;
+			}
+		} else if(code == 0xC2)
+		{
+			if(pos + 3 > data.size())
+				break;
+			rfAdvance(sample);
+			const uint16 offset = static_cast<uint16>(data[pos] | (data[pos + 1] << 8));
+			rfRam[(offset | (rfBank << 12)) & 0xFFFF] = data[pos + 2];
+			pos += 3;
+		} else if(code == 0x68)
+		{
+			// Запись в память PCM из блока данных: тип блока, откуда, куда, сколько.
+			if(pos + 11 > data.size())
+				break;
+			const uint8 type = data[pos + 1] & 0x3F;
+			const uint32 from = data[pos + 2] | (data[pos + 3] << 8) | (data[pos + 4] << 16);
+			const uint32 to = data[pos + 5] | (data[pos + 6] << 8) | (data[pos + 7] << 16);
+			uint32 count = data[pos + 8] | (data[pos + 9] << 8) | (data[pos + 10] << 16);
+			if(!count)
+				count = 0x01000000;
+			pos += 11;
+			if(type == 0x02)
+			{
+				rfAdvance(sample);
+				const auto &source = streamData[0x02];
+				// Адрес записи — внутри окна памяти, выбранного регистром 7 (как в libvgm).
+				const uint32 base = to | (static_cast<uint32>(rfBank) << 12);
+				for(uint32 i = 0; i < count && from + i < source.size() && base + i < 0x10000; i++)
+					rfRam[base + i] = source[from + i];
+			}
+		} else if(code == 0xB8)
+		{
+			if(pos + 2 > data.size())
+				break;
+			const uint8 chipIndex = data[pos] >> 7, reg = data[pos] & 0x7F, value = data[pos + 1];
+			pos += 2;
+			OkiChip &chip = oki[chipIndex];
+			if(reg == 0x00)
+			{
+				const double rate = header.okiClock / (chip.pin7 ? 132.0 : 165.0);
+				if(chip.pendingPhrase >= 0)
+				{
+					// Второй байт: какие голоса (биты 4–7) и ослабление.
+					static constexpr uint8 Volume[16] = {64, 44, 32, 22, 16, 12, 8, 6, 4, 0, 0, 0, 0, 0, 0, 0};
+					const uint32 entry = static_cast<uint32>(chip.pendingPhrase) * 8;
+					const auto address = [&](uint32 at)
+					{
+						return (static_cast<uint32>(okiByte(chip, chipIndex, at) & 3) << 16) | (okiByte(chip, chipIndex, at + 1) << 8) | okiByte(chip, chipIndex, at + 2);
+					};
+					const uint32 start = address(entry), end = address(entry + 3);
+					const int sound = addPcmSound(okiDecode(chip, chipIndex, start, end), rate, uint32_max, "OKI");
+					for(uint8 v = 0; v < 4; v++)
+					{
+						if(!(value & (0x10 << v)) || sound < 0)
+							continue;
+						const uint8 voice = static_cast<uint8>(OKIBase + chipIndex * 4 + v);
+						pcmVoiceUsed[voice] = true;
+						pcmEvents.push_back({sample, voice, PcmWhat::On, sound, rate, Volume[value & 15]});
+					}
+					chip.pendingPhrase = -1;
+				} else if(value & 0x80)
+				{
+					chip.pendingPhrase = value & 0x7F;
+				} else
+				{
+					for(uint8 v = 0; v < 4; v++)
+					{
+						if(value & (0x08 << v))
+							pcmEvents.push_back({sample, static_cast<uint8>(OKIBase + chipIndex * 4 + v), PcmWhat::Off});
+					}
+				}
+			} else if(reg == 0x0C)
+			{
+				chip.pin7 = value != 0;
+			} else if(reg == 0x0E)
+			{
+				chip.nmkFlags = value;
+			} else if(reg == 0x0F)
+			{
+				chip.bank = value;
+			} else if(reg >= 0x10 && reg <= 0x13)
+			{
+				chip.nmkBank[reg - 0x10] = value;
 			}
 		} else if(code == 0x5D)
 		{
@@ -1116,7 +1756,53 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	}
 
 	closeHit();
-	if(events.empty())
+	rfAdvance(sample);
+	for(uint8 i = 0; i < RFChannels; i++)
+		rfFinish(i, sample);
+	// Куски PWM: значения из данных потока по шагу, относительно середины цикла.
+	for(int stream = 0; stream < 256; stream++)
+		closeSegment(static_cast<uint8>(stream), sample);
+	std::array<bool, VgmChannels> pwmPanned{};
+	for(const auto &seg : pwmSegments)
+	{
+		const auto &source = streamData[seg.bank];
+		if(!seg.frequency || seg.endSample <= seg.startSample)
+			continue;
+		const double center = (seg.cycle ? seg.cycle : 0x1000) / 2.0;
+		const uint64 commands = static_cast<uint64>((seg.endSample - seg.startSample) * static_cast<double>(seg.frequency) / VgmRate);
+		std::vector<int16> pcmData;
+		pcmData.reserve(static_cast<size_t>(std::min<uint64>(commands, MAX_SAMPLE_LENGTH)));
+		// Выход PWM идёт через разделительный конденсатор: постоянную
+		// составляющую (до запуска звука значения стоят у нуля, а не в
+		// середине) убираем фильтром около 20 Гц, иначе на краях щелчки.
+		const double keep = 1.0 - 2.0 * 3.14159265358979323846 * 20.0 / seg.frequency;
+		double previous = center, filtered = 0.0;
+		for(uint64 n = 0; n < commands && pcmData.size() < MAX_SAMPLE_LENGTH; n++)
+		{
+			const uint64 at = seg.byteOffset + (seg.stepBase + n * seg.stepSize) * 2u;
+			if(at + 1 >= source.size())
+				break;
+			const double value = (source[at] | (source[at + 1] << 8)) & 0xFFF;
+			filtered = value - previous + keep * filtered;
+			previous = value;
+			pcmData.push_back(static_cast<int16>(std::clamp(filtered / center * 32767.0, -32768.0, 32767.0)));
+		}
+		const uint32 played = static_cast<uint32>(pcmData.size());
+		const int sound = addPcmSound(std::move(pcmData), seg.frequency, uint32_max, "PWM");
+		if(sound < 0)
+			continue;
+		if(!pwmPanned[seg.voice])
+		{
+			pcmEvents.push_back({seg.startSample, seg.voice, PcmWhat::Pan, -1, 0.0, (seg.voice == PWMBase) ? 0 : 255});
+			pwmPanned[seg.voice] = true;
+		}
+		pcmEvents.push_back({seg.startSample, seg.voice, PcmWhat::On, sound, static_cast<double>(seg.frequency), 64});
+		const uint32 naturalEnd = seg.startSample + static_cast<uint32>(played * static_cast<double>(VgmRate) / seg.frequency);
+		if(seg.endSample < naturalEnd)
+			pcmEvents.push_back({seg.endSample, seg.voice, PcmWhat::Off});
+	}
+	std::stable_sort(pcmEvents.begin(), pcmEvents.end(), [](const PcmEvent &a, const PcmEvent &b) { return a.sample < b.sample; });
+	if(events.empty() && hits.empty() && pcmEvents.empty() && ymzEvents.empty() && blockStarts.empty())
 		return false;
 
 	// Голосов YMZ280B заводим столько, сколько их реально нажималось.
@@ -1135,7 +1821,8 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		const bool present = (voice < FMChannels) ? (header.opn2Clock != 0)
 			: (voice < OPMBase) ? (header.psgClock != 0)
 			: (voice < YMZBase) ? (header.opmClock != 0)
-			: (header.ymzClock != 0 && !ymzRom.empty() && voice - YMZBase < ymzVoicesUsed);
+			: (voice < RFBase) ? (header.ymzClock != 0 && !ymzRom.empty() && voice - YMZBase < ymzVoicesUsed)
+			: pcmVoiceUsed[voice];
 		if(present)
 			moduleChannel[voice] = usedChannels++;
 	}
@@ -1161,7 +1848,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	m_playBehaviour.set(kFurnacePersistentFinetune);
 
 	// Тембры FM становятся инструментами, каналы PSG — четырьмя своими.
-	for(size_t i = 0; i < patches.size() && m_nSamples < MAX_SAMPLES - 1; i++)
+	for(size_t i = 0; i < patches.size() && m_nSamples < MAX_SAMPLES - 1 && m_nInstruments < MAX_INSTRUMENTS - 1; i++)
 	{
 		const SAMPLEINDEX smp = ++m_nSamples;
 		ModSample &smpl = Samples[smp];
@@ -1546,11 +2233,108 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			}
 		}
 	}
+	// Прочие PCM-чипы: сэмпл на каждый разный звук, нота по частоте нажатия.
+	if(!pcmEvents.empty())
+	{
+		std::vector<int> soundInstrument(pcmSounds.size(), -1);
+		// Место под тембры FM, голоса PSG и режимы шума оставляем.
+		const size_t reserve = patches.size() + PSGChannels + 3;
+		for(size_t i = 0; i < pcmSounds.size(); i++)
+		{
+			if(m_nSamples + reserve >= MAX_SAMPLES - 1 || m_nInstruments + reserve >= MAX_INSTRUMENTS - 1)
+				break;
+			const PcmSound &sound = pcmSounds[i];
+			const SAMPLEINDEX smp = ++m_nSamples;
+			ModSample &smpl = Samples[smp];
+			smpl.Initialize(MOD_TYPE_MPT);
+			smpl.nLength = std::min<SmpLength>(static_cast<SmpLength>(sound.data.size()), MAX_SAMPLE_LENGTH);
+			smpl.uFlags.set(CHN_16BIT);
+			smpl.nC5Speed = std::clamp<uint32>(mpt::saturate_round<uint32>(sound.rate), 1000, 192000);
+			if(sound.loopStart < smpl.nLength)
+			{
+				smpl.nLoopStart = sound.loopStart;
+				smpl.nLoopEnd = smpl.nLength;
+				smpl.uFlags.set(CHN_LOOP);
+			}
+			if(smpl.AllocateSample() && smpl.sample16() != nullptr)
+			{
+				std::copy(sound.data.begin(), sound.data.begin() + smpl.nLength, smpl.sample16());
+				smpl.PrecomputeLoops(*this, false);
+			}
+			m_szNames[smp] = sound.name + " " + std::to_string(i + 1);
+			const INSTRUMENTINDEX ins = ++m_nInstruments;
+			if(auto *instrument = AllocateInstrument(ins, smp); instrument != nullptr)
+			{
+				instrument->name = m_szNames[smp];
+				instrument->midiPWD = 1;
+			}
+			soundInstrument[i] = static_cast<int>(m_nInstruments) - 1;
+		}
+		std::array<ModCommand::NOTE, VgmChannels> sounding{}, pitchNote{};
+		std::array<int, VgmChannels> fineNow;
+		fineNow.fill(0x80);
+		std::array<double, VgmChannels> baseRate{};
+		for(const auto &e : pcmEvents)
+		{
+			const uint8 voice = e.voice;
+			switch(e.what)
+			{
+			case PcmWhat::On:
+			{
+				if(e.sound < 0 || soundInstrument[e.sound] < 0 || !(e.rate > 0.0))
+					break;
+				baseRate[voice] = pcmSounds[e.sound].rate;
+				const double exact = static_cast<int>(NOTE_MIDDLEC) + 12.0 * std::log2(e.rate / baseRate[voice]);
+				const auto note = static_cast<ModCommand::NOTE>(std::clamp(static_cast<int>(std::lround(exact)), int(NOTE_MIN), int(NOTE_MAX)));
+				const int fine = FineFromOffset(exact - note);
+				events.push_back({e.sample, voice, note, static_cast<uint8>(std::clamp(e.value, 0, 64)), soundInstrument[e.sound], -1, false, fine != fineNow[voice] ? fine : -1});
+				fineNow[voice] = fine;
+				sounding[voice] = note;
+				pitchNote[voice] = note;
+				break;
+			}
+			case PcmWhat::Pitch:
+			{
+				if(sounding[voice] == NOTE_NONE || !(baseRate[voice] > 0.0) || !(e.rate > 0.0))
+					break;
+				const double exact = static_cast<int>(NOTE_MIDDLEC) + 12.0 * std::log2(e.rate / baseRate[voice]);
+				VgmEvent event{e.sample, voice, NOTE_NONE, 255, -1};
+				if(std::abs(exact - pitchNote[voice]) > 127.0 / 128.0)
+				{
+					event.note = static_cast<ModCommand::NOTE>(std::clamp(static_cast<int>(std::lround(exact)), int(NOTE_MIN), int(NOTE_MAX)));
+					event.legato = true;
+					pitchNote[voice] = event.note;
+				}
+				const int fine = FineFromOffset(exact - pitchNote[voice]);
+				if(fine != fineNow[voice])
+				{
+					event.fine = fine;
+					fineNow[voice] = fine;
+				}
+				if(event.legato || event.fine >= 0)
+					events.push_back(event);
+				break;
+			}
+			case PcmWhat::Off:
+				if(sounding[voice] != NOTE_NONE)
+					events.push_back({e.sample, voice, NOTE_NOTECUT, 255, -1});
+				sounding[voice] = NOTE_NONE;
+				break;
+			case PcmWhat::Volume:
+				if(sounding[voice] != NOTE_NONE)
+					events.push_back({e.sample, voice, NOTE_NONE, static_cast<uint8>(std::clamp(e.value, 0, 64)), -1});
+				break;
+			case PcmWhat::Pan:
+				events.push_back({e.sample, voice, NOTE_NONE, 255, -1, std::clamp(e.value, 0, 255)});
+				break;
+			}
+		}
+	}
 	std::stable_sort(events.begin(), events.end(),
 		[](const VgmEvent &a, const VgmEvent &b) { return a.sample < b.sample; });
 
 	const INSTRUMENTINDEX firstPSG = m_nInstruments;
-	for(uint8 lane = 0; lane < PSGChannels; lane++)
+	for(uint8 lane = 0; lane < PSGChannels && m_nSamples < MAX_SAMPLES - 1 && m_nInstruments < MAX_INSTRUMENTS - 1; lane++)
 	{
 		const SAMPLEINDEX smp = ++m_nSamples;
 		ModSample &smpl = Samples[smp];
@@ -1622,6 +2406,9 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			continue;
 		const CHANNELINDEX chn = static_cast<CHANNELINDEX>(moduleChannel[voice]);
 		ChnSettings[chn].szName = (voice < FMChannels) ? "YM2612 " + std::to_string(voice + 1)
+			: (voice >= OKIBase) ? "OKIM6295 " + std::to_string(voice - OKIBase + 1)
+			: (voice >= PWMBase) ? std::string((voice == PWMBase) ? "PWM L" : "PWM R")
+			: (voice >= RFBase) ? "RF5C164 " + std::to_string(voice - RFBase + 1)
 			: (voice >= YMZBase) ? "YMZ280B " + std::to_string(voice - YMZBase + 1)
 			: (voice >= OPMBase) ? "YM2151 " + std::to_string(voice - OPMBase + 1)
 			: (voice == OPMBase - 1) ? "PSG Noise" : "PSG " + std::to_string(voice - FMChannels + 1);
