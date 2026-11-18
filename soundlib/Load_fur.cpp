@@ -596,18 +596,30 @@ void SetFurEnvelope(ModInstrument &ins, const FurInstrument &fur, int maxVolume,
 			tick += count * step;
 			env.push_back(static_cast<uint16>(std::min<int64>(tick, 60000)), scale(value));
 		};
-		const auto holdHere = [&](int32 levelFrom)
+		// Отпускание у Furnace начинается с того места, где фаза застала `===`,
+		// даже посреди медленного спада. Обычная огибающая OpenMPT после `===`
+		// шла бы дальше по спаду (в athletic rrt DR=1 — это 180 тиков) и до
+		// отпускания не доходила. Поэтому отпускание — отдельный хвост с точкой
+		// release node: по `===` огибающая прыгает туда, а значения хвоста
+		// берутся от уровня в момент прыжка. Длительность хвоста считается от
+		// вершины; у Furnace от меньшего уровня отпускание чуть короче.
+		const auto finish = [&]()
 		{
-			// Фаза стоит: здесь sustain, а после `===` — отпускание к низу.
 			env.nSustainStart = env.nSustainEnd = env.LastPoint();
 			env.dwFlags.set(ENV_SUSTAIN);
-			if(const int64 r = steps(levelFrom - bottom, release); r > 0)
-				add(r, low);
+			const int32 from = std::max(top, bottom);
+			if(scale(from) == 0)
+				return;
+			tick++;
+			env.push_back(static_cast<uint16>(std::min<int64>(tick, 60000)), scale(from));
+			env.nReleaseNode = static_cast<uint8>(env.LastPoint());
+			const int64 r = steps(from - bottom, release);
+			add(r > 0 ? r : 1, r >= 0 ? low : from);
 		};
 		const int64 a = steps(top - bottom, attack);
 		if(a < 0)
 		{
-			holdHere(bottom);
+			finish();
 			return;
 		}
 		add(a, high);
@@ -616,7 +628,7 @@ void SetFurEnvelope(ModInstrument &ins, const FurInstrument &fur, int maxVolume,
 		const int64 d = steps(top - sus, decay);
 		if(d < 0)
 		{
-			holdHere(top);
+			finish();
 			return;
 		}
 		add(d, sustainLevel);
@@ -625,12 +637,11 @@ void SetFurEnvelope(ModInstrument &ins, const FurInstrument &fur, int maxVolume,
 		const int64 sr = steps(sus - bottom, sustainRate);
 		if(sr < 0)
 		{
-			holdHere(sus);
+			finish();
 			return;
 		}
 		add(sr, low);
-		env.nSustainStart = env.nSustainEnd = env.LastPoint();
-		env.dwFlags.set(ENV_SUSTAIN);
+		finish();
 		return;
 	}
 	if(fur.volume.empty())
