@@ -532,7 +532,7 @@ public:
 	std::array<uint16, ChipKinds> m_chipVolume;
 	// Полифония: сколько чипов YM2612 и YM2151 у песни (1..4). Импорт Furnace
 	// оставляет по одному, как у оригинала.
-	std::array<uint8, 2> m_fmChipCount{1, 1};
+	std::array<uint8, 3> m_fmChipCount{1, 1, 1};  // YM2612, YM2151, SN76489
 	uint32 m_nSamplePreAmp, m_nVSTiVolume;
 	uint32 m_OPLVolumeFactor;  // 16.16
 	static constexpr uint32 m_OPLVolumeFactorScale = 1 << 16;

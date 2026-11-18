@@ -298,9 +298,11 @@ void OPL::Volume(CHANNELINDEX c, uint8 vol, bool applyToModulator)
 }
 
 
-void OPL::SetFMChipCount(uint8 opn2, uint8 opm)
+void OPL::SetFMChipCount(uint8 opn2, uint8 opm, uint8 psg)
 {
-	m_fmChipCount = {opn2, opm};
+	m_fmChipCount = {opn2, opm, psg};
+	if(m_psg)
+		m_psg->SetChipCount(psg);
 	if(m_opn2)
 	{
 		m_opn2->SetChipCount(false, opn2);
@@ -369,6 +371,7 @@ void OPL::Patch(CHANNELINDEX c, const ModSample &sample)
 			return;
 		if(!m_psg)
 			m_psg = std::make_unique<SN76489>(m_sampleRate);
+		m_psg->SetChipCount(m_fmChipCount[2]);
 		if(!m_psg->HasChannel(c))
 			NoteCut(c);
 		m_psg->Patch(c, sample.psg);

@@ -100,7 +100,7 @@ public:
 	void Patch(CHANNELINDEX c, const OPLPatch &patch);
 	void Patch(CHANNELINDEX c, const ModSample &sample);
 	// Сколько чипов YM2612 и YM2151 у песни (полифония), 1..4.
-	void SetFMChipCount(uint8 opn2, uint8 opm);
+	void SetFMChipCount(uint8 opn2, uint8 opm, uint8 psg = 1);
 	bool IsActive(CHANNELINDEX c) const;
 	void MoveChannel(CHANNELINDEX from, CHANNELINDEX to);
 	void Reset();
@@ -134,7 +134,7 @@ protected:
 
 	std::unique_ptr<Opal> m_opl;
 	std::unique_ptr<OPN2> m_opn2;
-	std::array<uint8, 2> m_fmChipCount{1, 1};
+	std::array<uint8, 3> m_fmChipCount{1, 1, 1};
 	std::unique_ptr<SN76489> m_psg;
 	uint32 m_sampleRate = OPL_BASERATE;
 	IRegisterLogger *m_logger = nullptr;

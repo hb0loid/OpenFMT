@@ -200,7 +200,7 @@ void CSoundFile::InitializeGlobals(MODTYPE type, CHANNELINDEX numChannels)
 	m_nVSTiVolume = 48;
 	m_furnaceSlides = 0;
 	m_chipVolume.fill(ChipVolumeUnity);
-	m_fmChipCount = {1, 1};
+	m_fmChipCount = {1, 1, 1};
 	m_OPLVolumeFactor = m_OPLVolumeFactorScale;
 	m_nDefaultGlobalVolume = MAX_GLOBAL_VOLUME;
 	m_SongFlags.reset();

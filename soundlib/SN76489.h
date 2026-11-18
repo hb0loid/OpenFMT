@@ -113,8 +113,26 @@ class SN76489
 	std::array<Chip, 32> m_chips;
 	std::array<Voice *, MAX_CHANNELS> m_channels{};
 	uint32 m_rate;
+	// Полифония: при нескольких чипах нота берёт любой голос своего вида (тон
+	// или шум) на первых m_chipCount чипах. При одном чипе — как раньше, голос
+	// задан инструментом (чип и дорожка), как у импорта Furnace.
+	uint8 m_chipCount = 1;
+	uint8 m_nextSteal = 0;
+	uint64 m_keyCounter = 0;
 
 	Voice *Find(CHANNELINDEX c) const { return c < m_channels.size() ? m_channels[c] : nullptr; }
+
+	// Чип, которому принадлежит голос: при полифонии это не обязательно чип
+	// из инструмента.
+	Chip &ChipOf(const Voice *voice)
+	{
+		for(auto &chip : m_chips)
+		{
+			if(voice >= chip.voices.data() && voice < chip.voices.data() + chip.voices.size())
+				return chip;
+		}
+		return m_chips[0];
+	}
 
 public:
 	explicit SN76489(uint32 rate) : m_rate(rate) {}
@@ -125,11 +143,53 @@ public:
 	{
 		m_channels.fill(nullptr);
 		m_chips = {};
+		m_nextSteal = 0;
+	}
+
+	void SetChipCount(uint8 count) { m_chipCount = std::clamp<uint8>(count, 1, 4); }
+
+	// Голос для ноты при полифонии: свой прежний, если он того же вида; иначе
+	// свободный (без ноты), потом отпущенный, и только потом по кругу отбираем.
+	Voice &PickVoice(CHANNELINDEX c, const PSGPatch &patch)
+	{
+		const bool noise = patch.lane == 3;
+		const auto suits = [&](uint8 lane) { return noise ? lane == 3 : lane < 3; };
+		if(Voice *own = Find(c); own != nullptr)
+		{
+			for(uint8 chip = 0; chip < m_chipCount; chip++)
+			{
+				for(uint8 lane = 0; lane < 4; lane++)
+				{
+					if(&m_chips[chip].voices[lane] == own && suits(lane))
+						return *own;
+				}
+			}
+		}
+		Voice *released = nullptr;
+		for(uint8 chip = 0; chip < m_chipCount; chip++)
+		{
+			for(uint8 lane = 0; lane < 4; lane++)
+			{
+				Voice &voice = m_chips[chip].voices[lane];
+				if(!suits(lane))
+					continue;
+				if(voice.channel == CHANNELINDEX_INVALID || (!voice.keyed && !voice.gate))
+					return voice;
+				if(voice.released && released == nullptr)
+					released = &voice;
+			}
+		}
+		if(released)
+			return *released;
+		const uint8 lanes = noise ? 1 : 3;
+		const uint8 total = static_cast<uint8>(m_chipCount * lanes);
+		const uint8 pick = static_cast<uint8>(m_nextSteal++ % total);
+		return m_chips[pick / lanes].voices[noise ? 3 : pick % lanes];
 	}
 
 	void Patch(CHANNELINDEX c, std::shared_ptr<const PSGPatch> patch)
 	{
-		auto &voice = m_chips[patch->chip].voices[patch->lane];
+		auto &voice = (m_chipCount > 1) ? PickVoice(c, *patch) : m_chips[patch->chip].voices[patch->lane];
 		if(Find(c) != &voice)
 		{
 			NoteCut(c, true);
@@ -200,7 +260,7 @@ public:
 	{
 		if(auto *voice = Find(c); voice && voice->patch->lane == 3)
 		{
-			auto &chip = m_chips[voice->patch->chip];
+			auto &chip = ChipOf(voice);
 			chip.SetNoise(mode, chip.preset, true);
 		}
 	}
@@ -257,7 +317,7 @@ public:
 				voice->period = period;
 		} else
 		{
-			auto &chip = m_chips[patch.chip];
+			auto &chip = ChipOf(voice);
 			const auto mode = changed[PSGPatch::Duty] ? static_cast<uint8>(voice->macros[PSGPatch::Duty].value & 3) : chip.mode;
 			auto preset = chip.preset;
 			const int note = static_cast<int>(std::lround(12.0 * std::log2(frequency / 16351.6)));

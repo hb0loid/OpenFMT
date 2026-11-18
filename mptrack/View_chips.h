@@ -60,7 +60,7 @@ protected:
 	};
 	std::array<Strip, NumStrips> m_strips;
 	// Полифония: сколько чипов YM2612 и YM2151 у песни — под их полосками.
-	std::array<CComboBox, 2> m_chipCount;
+	std::array<CComboBox, 3> m_chipCount;  // YM2612, YM2151, SN76489
 	// Осциллографы по каналам живут под полосками: место справа от микшера
 	// всё равно пустовало, а смотреть на них надо вместе с балансом.
 	ChannelScopeGrid m_scopes;

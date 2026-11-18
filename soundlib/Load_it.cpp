@@ -2645,8 +2645,15 @@ void CSoundFile::SaveExtendedSongProperties(std::ostream &f) const
 		WriteModular(f, MagicLE("FCHV"), packed);
 	}
 	// Число чипов (полифония). Старые сборки поле пропустят и сыграют на одном.
-	if(m_fmChipCount[0] != 1 || m_fmChipCount[1] != 1)
-		WriteModular(f, MagicLE("FCCN"), static_cast<uint16>(m_fmChipCount[0] | (m_fmChipCount[1] << 8)));
+	// Число чипов: байт на YM2612, YM2151 и SN76489. Старые сборки читали два
+	// байта и третий пропустят.
+	if(m_fmChipCount[0] != 1 || m_fmChipCount[1] != 1 || m_fmChipCount[2] != 1)
+	{
+		if(m_fmChipCount[2] != 1)
+			WriteModular(f, MagicLE("FCCN"), static_cast<uint32>(m_fmChipCount[0] | (m_fmChipCount[1] << 8) | (m_fmChipCount[2] << 16)));
+		else
+			WriteModular(f, MagicLE("FCCN"), static_cast<uint16>(m_fmChipCount[0] | (m_fmChipCount[1] << 8)));
+	}
 
 	if(GetType() == MOD_TYPE_XM && m_nDefaultGlobalVolume != MAX_GLOBAL_VOLUME)
 	{
@@ -2937,10 +2944,11 @@ bool CSoundFile::LoadExtendedSongProperties(FileReader &file, bool ignoreChannel
 				break;
 			case MagicLE("FCCN"):
 				{
-					uint16 counts = 0;
+					uint32 counts = 0;
 					ReadField(chunk, size, counts);
-					m_fmChipCount[0] = static_cast<uint8>(std::clamp(counts & 0xFF, 1, 4));
-					m_fmChipCount[1] = static_cast<uint8>(std::clamp(counts >> 8, 1, 4));
+					m_fmChipCount[0] = static_cast<uint8>(std::clamp<int>(counts & 0xFF, 1, 4));
+					m_fmChipCount[1] = static_cast<uint8>(std::clamp<int>((counts >> 8) & 0xFF, 1, 4));
+					m_fmChipCount[2] = static_cast<uint8>(std::clamp<int>(size >= 3 ? (counts >> 16) & 0xFF : 1, 1, 4));
 				}
 				break;
 			case MagicLE("FCHV"):

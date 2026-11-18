@@ -49,7 +49,7 @@ IMPLEMENT_SERIAL(CViewChips, CModScrollView, 0)
 BEGIN_MESSAGE_MAP(CViewChips, CModScrollView)
 	ON_WM_SIZE()
 	ON_WM_VSCROLL()
-	ON_CONTROL_RANGE(CBN_SELCHANGE, FirstChipCountID, FirstChipCountID + 1, &CViewChips::OnChipCountChanged)
+	ON_CONTROL_RANGE(CBN_SELCHANGE, FirstChipCountID, FirstChipCountID + 2, &CViewChips::OnChipCountChanged)
 	ON_WM_ERASEBKGND()
 	ON_WM_RBUTTONUP()
 END_MESSAGE_MAP()
@@ -150,12 +150,12 @@ void CViewChips::CreateStrips()
 		strip.value.Create(_T(""), WS_CHILD | WS_VISIBLE | SS_CENTER, empty, this);
 		strip.value.SendMessage(WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
 	}
-	for(uint8 type = 0; type < 2; type++)
+	for(uint8 type = 0; type < 3; type++)
 	{
 		CComboBox &combo = m_chipCount[type];
 		combo.Create(WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, CRect(0, 0, 0, 0), this, FirstChipCountID + type);
 		combo.SendMessage(WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
-		const int voices = (type == 0) ? 6 : 8;
+		const int voices = (type == 0) ? 6 : (type == 1) ? 8 : 3;  // у PSG — тоновые голоса
 		for(int count = 1; count <= 4; count++)
 		{
 			CString text;
@@ -221,10 +221,10 @@ void CViewChips::LayoutStrips()
 			SWP_NOZORDER | SWP_NOACTIVATE);
 		top += sliderHeight;
 		strip.value.SetWindowPos(nullptr, left, top, stripWidth, valueHeight, SWP_NOZORDER | SWP_NOACTIVATE);
-		if(i == ChipOPN2 || i == ChipOPM)
+		if(i == ChipOPN2 || i == ChipOPM || i == ChipPSG)
 		{
 			// Выпадающему списку высоту задаём с запасом на раскрытие.
-			m_chipCount[i == ChipOPM ? 1 : 0].SetWindowPos(nullptr, left + 2, top + valueHeight + 2, stripWidth - 4, lineHeight * 8,
+			m_chipCount[i == ChipOPM ? 1 : (i == ChipPSG ? 2 : 0)].SetWindowPos(nullptr, left + 2, top + valueHeight + 2, stripWidth - 4, lineHeight * 8,
 				SWP_NOZORDER | SWP_NOACTIVATE);
 		}
 	}
@@ -266,7 +266,7 @@ void CViewChips::ReadSong()
 		ShowValue(i, value);
 	}
 	const CSoundFile &sndFile = GetDocument()->GetSoundFile();
-	for(uint8 type = 0; type < 2; type++)
+	for(uint8 type = 0; type < 3; type++)
 		m_chipCount[type].SetCurSel(std::clamp<int>(sndFile.m_fmChipCount[type], 1, 4) - 1);
 }
 
