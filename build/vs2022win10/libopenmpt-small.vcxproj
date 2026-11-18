@@ -1730,6 +1730,7 @@
     <ClCompile Include="..\..\soundlib\Load_fmt.cpp" />
     <ClCompile Include="..\..\soundlib\Load_fur.cpp" />
     <ClCompile Include="..\..\soundlib\Load_vgm.cpp" />
+    <ClCompile Include="..\..\soundlib\Load_2sf.cpp" />
     <ClCompile Include="..\..\soundlib\Load_ftm.cpp" />
     <ClCompile Include="..\..\soundlib\Load_gdm.cpp" />
     <ClCompile Include="..\..\soundlib\Load_gmc.cpp" />

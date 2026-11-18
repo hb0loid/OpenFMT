@@ -83,6 +83,8 @@ static constexpr ModFormatInfo modFormatInfo[] =
 	{ UL_("DefleMask"),                          "dmf" },
 	{ UL_("VGM register log"),                   "vgm" },
 	{ UL_("VGM register log"),                   "vgz" },
+	{ UL_("Nintendo DS Sound Format"),           "mini2sf" },
+	{ UL_("Nintendo DS Sound Format"),           "2sf" },
 	{ UL_("ProTracker"),                         "fst" },
 	{ UL_("Face The Music"),                     "ftm" },
 	{ UL_("Imago Orpheus"),                      "imf" },

@@ -853,6 +853,7 @@ public:
 	static ProbeResult ProbeFileHeaderFUR(MemoryFileReader file, const uint64 *pfilesize);
 	static ProbeResult ProbeFileHeaderDefleMask(MemoryFileReader file, const uint64 *pfilesize);
 	static ProbeResult ProbeFileHeaderVGM(MemoryFileReader file, const uint64 *pfilesize);
+	static ProbeResult ProbeFileHeader2SF(MemoryFileReader file, const uint64 *pfilesize);
 	static ProbeResult ProbeFileHeaderFTM(MemoryFileReader file, const uint64 *pfilesize);
 	static ProbeResult ProbeFileHeaderGDM(MemoryFileReader file, const uint64 *pfilesize);
 	static ProbeResult ProbeFileHeaderGMC(MemoryFileReader file, const uint64 *pfilesize);
@@ -924,6 +925,7 @@ public:
 	bool ReadDefleMask(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
 	bool BuildFurSong(FurSong &song, ModLoadingFlags loadFlags);
 	bool ReadVGM(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
+	bool Read2SF(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
 	bool ReadFTM(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
 	bool ReadGDM(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
 	bool ReadGMC(FileReader &file, ModLoadingFlags loadFlags = loadCompleteModule);
