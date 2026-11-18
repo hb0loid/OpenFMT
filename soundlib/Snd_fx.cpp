@@ -1235,6 +1235,8 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 					int32 setPan = chn.nPan;
 					if(chn.nNewIns != 0) InstrumentChange(playState, nChn, chn.nNewIns, porta);
 					NoteChange(chn, m.note, porta);
+					if(!porta)
+						chn.furnaceSlide.noteTime = memory.elapsedTime;
 					HandleNoteChangeFilter(chn);
 					HandleDigiSamplePlayDirection(playState, nChn);
 					memory.chnSettings[nChn].incChanged = true;
@@ -1341,6 +1343,13 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 					case CMD_TONEPORTAVOL:
 					case CMD_VOLUMESLIDE:
 					case CMD_VIBRATOVOL:
+						// В режиме Furnace слайд громкости ведёт свой цикл ниже, по
+						// тикам и в своих единицах. Здесь он шёл второй раз, и при
+						// перемотке громкость съезжала вдвое быстрее: держащиеся
+						// ноты к точке старта стихали в ноль (hidden palace, death
+						// egg alt 2 — тишина по 1–4 с после старта с середины).
+						if(m_furnaceSlides && m.command == CMD_VOLUMESLIDE)
+							break;
 						if(m.param || (GetType() != MOD_TYPE_MOD))
 						{
 							// ST3 compatibility: Do not run combined slides (Kxy / Lxy) on first tick
@@ -1576,6 +1585,7 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 			const auto midiMacroEvaluationResults = std::move(playState.m_midiMacroEvaluationResults);
 			playState.m_midiMacroEvaluationResults.reset();
 			// Target found, or there is no target (i.e. play whole song)...
+			playState.m_chipSeekTime = memory.elapsedTime;
 			m_PlayState = std::move(playState);
 			m_PlayState.ResetGlobalVolumeRamping();
 			m_PlayState.m_nNextRow = m_PlayState.m_nRow;
@@ -4384,6 +4394,7 @@ void CSoundFile::RestoreChipVoices()
 	if(m_opl == nullptr)
 		return;
 	m_opl->Reset();
+	std::vector<std::pair<double, CHANNELINDEX>> heldNotes;
 	for(CHANNELINDEX n = 0; n < GetNumChannels(); n++)
 	{
 		const ModChannel &chn = m_PlayState.Chn[n];
@@ -4391,7 +4402,14 @@ void CSoundFile::RestoreChipVoices()
 			continue;
 		m_opl->SetFMChipCount(m_fmChipCount[0], m_fmChipCount[1]);
 		m_opl->Patch(n, *chn.pModSample);
-		m_opl->NoteCut(n);
+		// Нота, которая к точке старта ещё держится, звучит дальше (ниже).
+		// Раньше глушили всё подряд, и длинные ноты, взятые до точки старта,
+		// молчали до следующей ноты канала — в hidden palace по 1–4 секунды.
+		const bool held = ModCommand::IsNote(chn.nNote) && !chn.dwFlags[CHN_KEYOFF | CHN_NOTEFADE] && chn.nLength != 0;
+		if(held)
+			heldNotes.emplace_back(chn.furnaceSlide.noteTime, n);
+		else
+			m_opl->NoteCut(n);
 		const auto &state = chn.furnaceSlide;
 		if(state.opLevelsOwner == chn.pModSample)
 		{
@@ -4404,6 +4422,50 @@ void CSoundFile::RestoreChipVoices()
 		if(state.psgNoise >= 0)
 			m_opl->PSGNoiseMode(n, static_cast<uint8>(state.psgNoise));
 	}
+
+	// Держащиеся ноты: нажимаем заново в том же порядке, в каком они были
+	// взяты, и между нажатиями прогоняем чип вхолостую. Тогда огибающая FM к
+	// точке старта стоит там же, где при игре с начала, а не начинается с
+	// атаки: иначе давно затухшая нота звучала на 5–9 дБ громче. Прогон не
+	// длиннее 10 секунд — огибающие к тому времени давно установились.
+	if(heldNotes.empty())
+		return;
+	const double now = m_PlayState.m_chipSeekTime;
+	constexpr double MaxRewind = 10.0;
+	for(auto &[time, n] : heldNotes)
+	{
+		if(now < 0.0 || time < 0.0 || time > now)
+			time = now < 0.0 ? 0.0 : now;
+		time = std::max(time, now - MaxRewind);
+	}
+	std::stable_sort(heldNotes.begin(), heldNotes.end());
+	std::vector<int32> scratch;
+	const auto advance = [&](double seconds)
+	{
+		auto frames = static_cast<size_t>(std::max(0.0, seconds) * m_MixerSettings.gdwMixingFreq);
+		constexpr size_t Chunk = 1024;
+		scratch.assign(Chunk * 2, 0);
+		while(frames)
+		{
+			const size_t count = std::min(frames, Chunk);
+			std::fill(scratch.begin(), scratch.end(), 0);
+			m_opl->Mix(scratch.data(), count, m_OPLVolumeFactor * m_nVSTiVolume / 48, m_PlayState.Chn.data(), m_chipVolume.data(), nullptr);
+			frames -= count;
+		}
+	};
+	double clock = heldNotes.front().first;
+	for(const auto &[time, n] : heldNotes)
+	{
+		advance(time - clock);
+		clock = time;
+		const ModChannel &chn = m_PlayState.Chn[n];
+		const uint32 freq = GetChannelIncrement(chn, chn.nPeriod, 0).second;
+		const uint32 milliHertz = Util::muldivr_unsigned(freq, 261625, 8363 << FREQ_FRACBITS);
+		if(milliHertz)
+			m_opl->Frequency(n, milliHertz, false, m_playBehaviour[kOPLBeatingOscillators]);
+	}
+	if(now > clock)
+		advance(now - clock);
 }
 
 

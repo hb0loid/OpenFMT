@@ -135,6 +135,11 @@ struct ModChannel
 		std::array<int16, 4> opLevels{-1, -1, -1, -1};
 		const ModSample *opLevelsOwner = nullptr;
 		int8 psgNoise = -1;
+		// Когда (в секундах от начала, по счёту перемотки) на канале нажата
+		// последняя нота чипа; -1 — неизвестно. Нужно, чтобы после перемотки
+		// нажать держащуюся ноту заново и прогнать чип до того же места её
+		// огибающей.
+		double noteTime = -1.0;
 	} furnaceSlide;
 	int32 cachedPeriod, glissandoPeriod;
 	int32 nCalcVolume;                 // Calculated channel volume, 14-Bit (without global volume, pre-amp etc applied) - for MIDI macros
