@@ -257,7 +257,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	VgmHeader header;
 	if(!ParseHeader(data, header))
 		return false;
-	if(header.foreignChip || (!header.opn2Clock && !header.opmClock))
+	if(header.foreignChip || (!header.opn2Clock && !header.opmClock && !header.psgClock))
 		return false;  // Не Mega Drive: чужие микросхемы мы не изображаем
 	if(loadFlags == onlyVerifyHeader)
 		return true;
@@ -282,6 +282,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// нужна ли новая нота, смена громкости или снятие.
 	std::array<ModCommand::NOTE, PSGChannels> psgSounding{};
 	std::array<uint8, PSGChannels> psgLastVolume{};
+	std::array<int, PSGChannels> psgPan{128, 128, 128, 128};
 	std::array<int, PSGChannels> psgFine;
 	psgFine.fill(0x80);
 	uint8 psgLatch = 0, psgLatchType = 0;
@@ -1050,7 +1051,23 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 					break;
 				}
 			}
-		} else if(code == 0x4F || (code >= 0x30 && code <= 0x3F))
+		} else if(code == 0x4F)
+		{
+			// Стерео Game Gear: биты 4–7 — левый выход голосов PSG, 0–3 — правый.
+			if(pos >= data.size())
+				break;
+			const uint8 value = data[pos++];
+			for(uint8 lane = 0; lane < PSGChannels; lane++)
+			{
+				const bool left = (value >> (4 + lane)) & 1, right = (value >> lane) & 1;
+				const int pan = (left && right) ? 128 : left ? 0 : right ? 255 : -1;
+				if(pan >= 0 && pan != psgPan[lane])
+				{
+					psgPan[lane] = pan;
+					events.push_back({sample, static_cast<uint8>(FMChannels + lane), NOTE_NONE, 255, -1, pan});
+				}
+			}
+		} else if(code >= 0x30 && code <= 0x3F)
 		{
 			pos += 1;
 		} else if((code >= 0x40 && code <= 0x4E) || (code >= 0x55 && code <= 0x5F) || (code >= 0xA0 && code <= 0xBF))
@@ -1086,7 +1103,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	for(uint8 voice = 0; voice < VgmChannels; voice++)
 	{
 		const bool present = (voice < FMChannels) ? (header.opn2Clock != 0)
-			: (voice < OPMBase) ? (header.psgClock != 0 && header.opn2Clock != 0)
+			: (voice < OPMBase) ? (header.psgClock != 0)
 			: (voice < YMZBase) ? (header.opmClock != 0)
 			: (header.ymzClock != 0 && !ymzRom.empty() && voice - YMZBase < ymzVoicesUsed);
 		if(present)
@@ -1531,6 +1548,50 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 #else
 	const bool compact = (std::getenv("OPENFMT_VGM_COMPACT") != nullptr);  // По умолчанию точный режим, как в трекере
 #endif
+	// Где внутри кадра драйвер пишет регистры. Игровой драйвер работает по
+	// кадровому прерыванию, и его записи за кадр идут пачкой в одном месте
+	// кадра, но лог VGM начат не с края кадра: у многих треков пачка ложится
+	// ровно на границу 735 отсчётов. Тогда ноты одного кадра разлетались то в
+	// этот кадр, то в следующий, и ритм дрожал на кадр. Сетку сдвигаем так,
+	// чтобы пачка оказалась посередине кадра. Сдвиг один на все каналы (так
+	// точнее, чем по каналу: пачка одна на весь драйвер) и выбирается из двух
+	// вариантов — раньше или позже — тот, что ближе к времени лога, чтобы трек
+	// не съезжал больше чем на полкадра. Драйверу, который идёт не от кадра
+	// (нажатия по всему кадру), сдвиг не поможет — там сетка как есть.
+	int32 gridShift = 0;
+	{
+		constexpr double TwoPi = 2.0 * 3.14159265358979323846;
+		double sumSin = 0.0, sumCos = 0.0;
+		uint32 count = 0;
+		for(const auto &event : events)
+		{
+			if(event.note == NOTE_NONE || event.legato)
+				continue;
+			const double angle = TwoPi * (event.sample % samplesPerRow) / samplesPerRow;
+			sumSin += std::sin(angle);
+			sumCos += std::cos(angle);
+			count++;
+		}
+		// Насколько записи сбиты в одно место кадра: 1 — все в одной точке,
+		// 0 — размазаны по всему кадру.
+		const double focus = count ? std::hypot(sumSin, sumCos) / count : 0.0;
+		if(count >= 8 && focus >= 0.7)
+		{
+			double center = std::atan2(sumSin, sumCos) / TwoPi * samplesPerRow;
+			if(center < 0.0)
+				center += samplesPerRow;
+			gridShift = mpt::saturate_round<int32>(samplesPerRow / 2.0 - center);
+			// Строка звучит с начала кадра, а пачка теперь в его середине: при
+			// отрицательном сдвиге трек ушёл бы почти на кадр раньше лога.
+			if(gridShift < 0)
+				gridShift += samplesPerRow;
+		}
+	}
+	const auto frameIndex = [&](const VgmEvent &event) -> uint32
+	{
+		return static_cast<uint32>(std::max<int64>(int64(event.sample) + gridShift, 0) / samplesPerRow);
+	};
+
 	uint32 framesPerRow = 1, phase = 0;
 	if(compact)
 	{
@@ -1538,7 +1599,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		for(const auto &event : events)
 		{
 			if(ModCommand::IsNote(event.note) && !event.legato)
-				noteFrames.push_back(event.sample / samplesPerRow);
+				noteFrames.push_back(frameIndex(event));
 		}
 		const auto bestPhase = [&](uint32 step) -> std::pair<double, uint32>
 		{
@@ -1569,7 +1630,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// Сетка начинается с кадра phase: первая строка — это он. Сдвигать весь
 	// трек позже нельзя — всё звучало бы на кадр-два позже лога; поэтому
 	// раньше сетки только самые первые события, и они встают на её начало.
-	const auto frameOf = [&](const VgmEvent &event) { return std::max(event.sample / samplesPerRow, phase) - phase; };
+	const auto frameOf = [&](const VgmEvent &event) { return std::max(frameIndex(event), phase) - phase; };
 
 	const uint32 lastRow = frameOf(events.back()) / framesPerRow;
 	const ROWINDEX totalRows = static_cast<ROWINDEX>(std::min<uint32>(lastRow + 2, MAX_PATTERN_ROWS * 1000u));
@@ -1626,9 +1687,43 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 
 	if(!compact)
 	{
+		// Удар длиной в кадр (хет шумом, щелчок FM) и его отпускание из-за
+		// дрожания времени лога попадают в один кадр, и отпускание затирало
+		// ноту — удар пропадал целиком. Тогда отпускание встаёт на кадр позже.
+		// Сдвигается только отпускание и без накопления: два удара в одном кадре
+		// (быстрое арпеджио у драйвера, который чаще кадра) так и остаются —
+		// второй побеждает, иначе всё дальше уползало бы.
+		// Если же в том же кадре нота нажата снова, отпускание отменяется:
+		// иначе оно оборвало бы эту, держащуюся ноту. Нажатие и отпускание
+		// в один миг (драйвер так сбрасывает голос при старте) — не удар, его
+		// по-прежнему затирает отпускание.
+		constexpr uint32 NoFrame = std::numeric_limits<uint32>::max();
+		std::array<uint32, VgmChannels> notedFrame;  // кадр последнего удара канала
+		notedFrame.fill(NoFrame);
+		std::array<uint32, VgmChannels> pushedFrame;  // куда отложено отпускание
+		std::array<uint32, VgmChannels> notedSample{};  // когда был последний удар
+		pushedFrame.fill(NoFrame);
 		for(const auto &event : events)
 		{
-			ModCommand *found = cellAt(frameOf(event), event.channel);
+			uint32 frame = frameOf(event);
+			const bool strike = ModCommand::IsNote(event.note) && !event.legato;
+			if((event.note == NOTE_KEYOFF || event.note == NOTE_NOTECUT) && notedFrame[event.channel] == frame
+				&& event.sample >= notedSample[event.channel] + samplesPerRow / 4)
+			{
+				frame++;
+				pushedFrame[event.channel] = frame;
+			} else if(strike && pushedFrame[event.channel] == frame + 1)
+			{
+				if(ModCommand *pushed = cellAt(frame + 1, event.channel); pushed != nullptr && (pushed->note == NOTE_KEYOFF || pushed->note == NOTE_NOTECUT))
+					pushed->note = NOTE_NONE;
+				pushedFrame[event.channel] = NoFrame;
+			}
+			if(strike)
+			{
+				notedFrame[event.channel] = frame;
+				notedSample[event.channel] = event.sample;
+			}
+			ModCommand *found = cellAt(frame, event.channel);
 			if(!found)
 				continue;
 			ModCommand &cell = *found;
@@ -1828,7 +1923,13 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 				continue;
 			}
 			const bool hasLevel = std::any_of(event.level.begin(), event.level.end(), [](int8 l) { return l >= 0; });
-			if(hasRealNote && tick > state.noteTick && (event.note != NOTE_NONE || event.volume != 255 || event.fine >= 0 || hasLevel))
+			// Отпускание или новый удар на том же тике, что и нота строки,
+			// затёр бы её: короткий удар в кадр (хет шумом, щелчок FM) и его
+			// отпускание из-за дрожания времени лога попадают в одну строку, и
+			// удар пропадал целиком. Такое тоже переезжает дальше.
+			const bool sameTickNote = hasRealNote && tick == state.noteTick
+				&& (realNote || event.note == NOTE_KEYOFF || event.note == NOTE_NOTECUT);
+			if(sameTickNote || (hasRealNote && tick > state.noteTick && (event.note != NOTE_NONE || event.volume != 255 || event.fine >= 0 || hasLevel)))
 			{
 				state.carry.push_back(event);
 				continue;
