@@ -153,16 +153,38 @@ public:
 	Voice &PickVoice(CHANNELINDEX c, const PSGPatch &patch)
 	{
 		const bool noise = patch.lane == 3;
-		const auto suits = [&](uint8 lane) { return noise ? lane == 3 : lane < 3; };
+		// Шум в режиме «от третьего тона» сам пишет период третьего голоса
+		// своего чипа. Тон, севший на этот голос, вдруг играл бы высоту шума —
+		// поэтому, пока такой шум звучит, третий голос его чипа тону не даём.
+		const auto noiseHoldsThird = [&](const Chip &chip)
+		{
+			const Voice &n = chip.voices[3];
+			return (chip.mode & 2) && n.channel != CHANNELINDEX_INVALID && (n.keyed || n.gate) && !n.released;
+		};
+		const auto suitsOn = [&](const Chip &chip, uint8 lane) { return noise ? lane == 3 : (lane < 3 && !(lane == 2 && noiseHoldsThird(chip))); };
 		if(Voice *own = Find(c); own != nullptr)
 		{
 			for(uint8 chip = 0; chip < m_chipCount; chip++)
 			{
 				for(uint8 lane = 0; lane < 4; lane++)
 				{
-					if(&m_chips[chip].voices[lane] == own && suits(lane))
+					if(&m_chips[chip].voices[lane] == own && suitsOn(m_chips[chip], lane))
 						return *own;
 				}
+			}
+		}
+		// Шум — на чип, где третий тон свободен: в режиме «от третьего тона»
+		// он его переписывает.
+		if(noise)
+		{
+			for(uint8 chip = 0; chip < m_chipCount; chip++)
+			{
+				Voice &voice = m_chips[chip].voices[3];
+				const Voice &third = m_chips[chip].voices[2];
+				const bool free = voice.channel == CHANNELINDEX_INVALID || (!voice.keyed && !voice.gate);
+				const bool thirdFree = third.channel == CHANNELINDEX_INVALID || (!third.keyed && !third.gate);
+				if(free && thirdFree)
+					return voice;
 			}
 		}
 		Voice *released = nullptr;
@@ -171,7 +193,7 @@ public:
 			for(uint8 lane = 0; lane < 4; lane++)
 			{
 				Voice &voice = m_chips[chip].voices[lane];
-				if(!suits(lane))
+				if(!suitsOn(m_chips[chip], lane))
 					continue;
 				if(voice.channel == CHANNELINDEX_INVALID || (!voice.keyed && !voice.gate))
 					return voice;

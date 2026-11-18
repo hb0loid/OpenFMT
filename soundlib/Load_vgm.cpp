@@ -131,6 +131,9 @@ struct VgmEvent
 	// Перед записью в паттерн отсюда остаются только отличия от того, что
 	// канал уже держит: они становятся эффектами 12xx–15xx.
 	std::array<int8, 4> level{-1, -1, -1, -1};
+	// Режим шума в понятиях движка (бит 0 — белый, бит 1 — от третьего тона),
+	// -1 — не шум.
+	int8 noiseMode = -1;
 };
 
 // Голоса микросхем в этой сборке живут по нотной шкале Furnace, где до первой
@@ -281,6 +284,8 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// Что сейчас звучит на голосе и с какой громкостью: по ним и решается,
 	// нужна ли новая нота, смена громкости или снятие.
 	std::array<ModCommand::NOTE, PSGChannels> psgSounding{};
+	int8 psgSoundingMode = -1;  // режим, в котором звучит шум
+	std::array<bool, 4> noiseModesUsed{};
 	std::array<uint8, PSGChannels> psgLastVolume{};
 	std::array<int, PSGChannels> psgPan{128, 128, 128, 128};
 	std::array<int, PSGChannels> psgFine;
@@ -850,11 +855,28 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 					event.volume = volume;
 				if(event.note != NOTE_NONE || event.fine >= 0 || event.volume != 255)
 					events.push_back(event);
-			} else if(note != NOTE_NONE && note != psgSounding[lane])
+			} else if(note != NOTE_NONE && lane == 3)
 			{
-				// Шум: новая нота — только когда сменился полутон.
-				events.push_back({sample, channel, note, volume, -1});
-				psgSounding[lane] = note;
+				// Шум. Режим у движка свой: бит 0 — белый, бит 1 — частота от
+				// третьего тона. На фиксированной скорости (в играх Master System
+				// так почти всегда) движок берёт скорость по ноте C, C# или D, и
+				// третий тон тогда не трогает; иначе шум переписывал высоту
+				// третьего голоса, и тот вдруг пищал высоко.
+				const int8 engineMode = static_cast<int8>(((noiseMode & 4) ? 1 : 0) | (((noiseMode & 3) == 3) ? 2 : 0));
+				const auto noiseNote = (engineMode & 2) ? note : static_cast<ModCommand::NOTE>(NOTE_MIDDLEC + 2 - (noiseMode & 3));
+				// Новая нота — только когда сменился полутон или режим.
+				if(noiseNote != psgSounding[lane] || engineMode != psgSoundingMode)
+				{
+					VgmEvent event{sample, channel, noiseNote, volume, -1};
+					event.noiseMode = engineMode;
+					events.push_back(event);
+					psgSounding[lane] = noiseNote;
+					psgSoundingMode = engineMode;
+					noiseModesUsed[engineMode] = true;
+				} else if(volume != psgLastVolume[lane])
+				{
+					events.push_back({sample, channel, NOTE_NONE, volume, -1});
+				}
 			} else if(volume != psgLastVolume[lane])
 			{
 				events.push_back({sample, channel, NOTE_NONE, volume, -1});
@@ -1160,12 +1182,12 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		}
 	}
 	// Удары ЦАПа, записанные побайтно: одинаковые удары становятся одним
-	// сэмплом (самый длинный вариант), а каждый удар — нотой на шестом канале;
-	// если удар в логе короче сэмпла, нота обрывается там же. Одинаковость — по
-	// последовательности записанных значений (короткий удар может быть
-	// оборванным началом длинного). Тот же удар, сыгранный драйвером быстрее
-	// или медленнее (томы), — тот же сэмпл другой нотой: высота считается по
-	// числу записей в секунду.
+	// сэмплом, а каждый удар — нотой на шестом канале. Одинаковость — по
+	// последовательности записанных значений: звук снят по времени лога, и два
+	// одинаковых удара из-за дрожания записей дают чуть разные байты.
+	// Звук сэмпла — у самого длинного удара; удар короче обрывается там же,
+	// где в логе. Тот же удар, сыгранный быстрее или медленнее (томы), — тот же
+	// сэмпл другой нотой.
 	const INSTRUMENTINDEX firstDAC = m_nInstruments;
 	constexpr size_t MaxDacSamples = 200;
 	struct DacSample { uint32 hit = 0; double writeRate = 0.0; };
@@ -1173,6 +1195,53 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	std::vector<int> hitSample(hits.size(), -1);
 	std::vector<int> hitNote(hits.size(), NOTE_MIDDLEC);
 	const auto writeRate = [&](const Hit &h) { return (h.last > h.first) ? static_cast<double>(h.writeCount) * VgmRate / (h.last - h.first) : 0.0; };
+	// Тот же ли это звук и на сколько полутонов он выше. Драйвер играет один
+	// барабан на разной высоте, шагая по сэмплу, а не меняя скорость записей,
+	// поэтому высоту ищем подбором: сжимаем звук на целое число полутонов и
+	// сравниваем средние по блокам в 8 отсчётов (записи дрожат на отсчёт-два).
+	// Возвращает сдвиг в полутонах или NoMatch.
+	constexpr int NoMatch = 999;
+	const auto soundShift = [&](const Hit &h, const Hit &k) -> int
+	{
+		const auto error = [&](double ratio) -> double  // время h -> время k
+		{
+			const uint32 length = static_cast<uint32>(std::min<double>(h.bytes, k.bytes / ratio));
+			if(length < 16)
+				return 0.0;
+			double diff = 0.0, energy = 0.0;
+			for(uint32 block = 0; block + 8 <= length; block += 8)
+			{
+				int x = 0, y = 0;
+				for(uint32 t = block; t < block + 8; t++)
+				{
+					x += raw[h.start + t] - 128;
+					y += raw[k.start + std::min<uint32>(static_cast<uint32>(t * ratio), k.bytes - 1)] - 128;
+				}
+				diff += std::abs(x - y);
+				energy += std::abs(x) + std::abs(y);
+			}
+			return (energy > 0.0) ? diff / energy : 0.0;
+		};
+		constexpr double Limit = 0.3;
+		if(error(1.0) < Limit)
+			return 0;
+		// Шаг в десятую полутона: драйвер ещё и плавает по скорости на
+		// несколько процентов, и за полсекунды удара волна уезжает.
+		int best = NoMatch;
+		double bestError = Limit;
+		for(int tenths = -120; tenths <= 120; tenths++)
+		{
+			if(tenths == 0)
+				continue;
+			const double e = error(std::exp2(tenths / 120.0));
+			if(e < bestError)
+			{
+				bestError = e;
+				best = static_cast<int>(std::lround(tenths / 10.0));
+			}
+		}
+		return best;
+	};
 	for(size_t i = 0; i < hits.size(); i++)
 	{
 		const Hit &h = hits[i];
@@ -1181,19 +1250,39 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		{
 			DacSample &known = dacSamples[s];
 			const Hit &k = hits[known.hit];
-			// Удар обрывается следующим ударом где угодно, а дальше начала
-			// записи одного и того же барабана расходятся: драйвер шагает по
-			// сэмплу с переменным шагом. Поэтому тот же удар — это то же начало,
-			// первые 16 записей (короткий кусок — целиком).
+			// Тот же удар начинается с тех же записей (первые 16, короткий
+			// кусок — целиком). Но одинаковое начало ещё не тот же звук: у
+			// Furnace прямой ЦАП — смесь всех PCM-каналов, и дальше куски разные;
+			// а склейка «удар + следующий» тоже начинается как удар. Поэтому
+			// нужно совпадение записей на всей общей длине, а при совпавшем
+			// лишь начале — сверка самого звука.
 			const uint32 common = std::min<uint32>(16, std::min(h.writeCount, k.writeCount));
-			if(common < 4)
+			if(common < 4 || std::memcmp(dacWrites.data() + h.writeStart, dacWrites.data() + k.writeStart, common))
 				continue;
-			if(std::memcmp(dacWrites.data() + h.writeStart, dacWrites.data() + k.writeStart, common))
+			const uint32 shorter = std::min(h.writeCount, k.writeCount), longer = std::max(h.writeCount, k.writeCount);
+			const bool similar = shorter * 10 >= longer * 9;
+			const bool whole = shorter >= 16 && !std::memcmp(dacWrites.data() + h.writeStart, dacWrites.data() + k.writeStart, shorter);
+			int shift = NoMatch;
+			// Записи совпали на всей общей длине — тот же удар (короткий —
+			// оборванное начало длинного); высота — по скорости записей.
+			if(whole)
+			{
+				const double rh = writeRate(h), rk = writeRate(k);
+				shift = (rh > 0.0 && rk > 0.0) ? mpt::saturate_round<int>(12.0 * std::log2(rh / rk)) : 0;
+				if(std::abs(shift) > 1)
+					shift = soundShift(h, k);
+			} else if(similar)
+			{
+				// Совпало лишь начало: решает сам звук, и только у кусков
+				// похожей длины — иначе это склейка с чужим продолжением.
+				shift = soundShift(h, k);
+			}
+			if(shift == NoMatch)
 				continue;
 			match = static_cast<int>(s);
-			// Звук берём у более длинного удара той же скорости.
-			const double ratio = (known.writeRate > 0.0) ? writeRate(h) / known.writeRate : 1.0;
-			if(h.writeCount > k.writeCount && std::abs(std::log2(std::max(ratio, 1e-6))) < 0.02)
+			hitNote[i] = std::clamp(NOTE_MIDDLEC + shift, int(NOTE_MIN), int(NOTE_MAX));
+			// Звук берём у более длинного удара той же высоты.
+			if(shift == 0 && h.bytes > k.bytes)
 				known.hit = static_cast<uint32>(i);
 		}
 		if(match < 0 && dacSamples.size() < MaxDacSamples)
@@ -1201,12 +1290,8 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			match = static_cast<int>(dacSamples.size());
 			dacSamples.push_back({static_cast<uint32>(i), writeRate(h)});
 		}
-		if(match < 0)
-			continue;
-		hitSample[i] = match;
-		const double base = dacSamples[match].writeRate, own = writeRate(h);
-		if(base > 0.0 && own > 0.0)
-			hitNote[i] = std::clamp(NOTE_MIDDLEC + mpt::saturate_round<int>(12.0 * std::log2(own / base)), int(NOTE_MIN), int(NOTE_MAX));
+		if(match >= 0)
+			hitSample[i] = match;
 	}
 	const auto addDacSample = [&](const uint8 *source, uint32 length, uint32 rate, bool loop, std::string name) -> bool
 	{
@@ -1255,8 +1340,9 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			continue;
 		events.push_back({hits[i].first, 5, static_cast<ModCommand::NOTE>(hitNote[i]), 64,
 			static_cast<int>(firstDAC) + hitSample[i]});
+		// Удар короче звука своего сэмпла — обрываем там же, где в логе.
 		const Hit &sound = hits[dacSamples[hitSample[i]].hit];
-		if(hits[i].writeCount + 8 < sound.writeCount)
+		if(hits[i].bytes + 64 < sound.bytes)
 			events.push_back({hits[i].last, 5, NOTE_NOTECUT, 255, -1});
 	}
 
@@ -1484,6 +1570,10 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			// значения по умолчанию — белый шум от периода третьего тона,
 			// а другого в логах Mega Drive и не встречается.
 			patch->fastNoise = true;
+			// Если в песне есть шум других режимов, режим основного задаём
+			// явно: иначе чип оставался бы в режиме предыдущего удара.
+			if(noiseModesUsed[0] || noiseModesUsed[1] || noiseModesUsed[2])
+				patch->macros[PSGPatch::Duty].values = {3};
 		} else
 		{
 			patch->furnacePitch = true;  // Те же две октавы, что и у импорта из Furnace
@@ -1496,6 +1586,34 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			instrument->name = m_szNames[smp];
 			instrument->midiPWD = 1;  // E5xx: шаг 1/128 полутона
 		}
+	}
+	// Шум в других режимах — свои инструменты, режим задан постоянным
+	// значением макроса Duty. Основной («PSG noise») — белый от третьего тона.
+	std::array<INSTRUMENTINDEX, 4> noiseInstrument{};
+	for(uint8 mode = 0; mode < 3; mode++)
+	{
+		if(!noiseModesUsed[mode] || m_nSamples >= MAX_SAMPLES - 1 || m_nInstruments >= MAX_INSTRUMENTS - 1)
+			continue;
+		const SAMPLEINDEX smp = ++m_nSamples;
+		ModSample &smpl = Samples[smp];
+		smpl.Initialize(MOD_TYPE_MPT);
+		smpl.SetAdlib(true);
+		smpl.uFlags.set(SMP_NODEFAULTVOLUME);
+		auto patch = std::make_shared<PSGPatch>();
+		patch->lane = 3;
+		patch->chip = 0;
+		patch->easyPitch = false;
+		patch->fastNoise = true;
+		patch->macros[PSGPatch::Duty].values = {mode};
+		smpl.psg = std::move(patch);
+		m_szNames[smp] = std::string("PSG noise") + ((mode & 1) ? " white" : " periodic") + ((mode & 2) ? "" : " fixed");
+		const INSTRUMENTINDEX ins = ++m_nInstruments;
+		if(auto *instrument = AllocateInstrument(ins, smp); instrument != nullptr)
+		{
+			instrument->name = m_szNames[smp];
+			instrument->midiPWD = 1;
+		}
+		noiseInstrument[mode] = ins;
 	}
 
 	for(uint8 voice = 0; voice < VgmChannels; voice++)
@@ -1680,6 +1798,8 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	{
 		if(event.patch >= 0)
 			return event.patch + 1;
+		if(event.noiseMode >= 0 && event.noiseMode < 3 && noiseInstrument[event.noiseMode])
+			return noiseInstrument[event.noiseMode];
 		if(event.channel >= FMChannels && event.channel < OPMBase && !event.legato && ModCommand::IsNote(event.note))
 			return firstPSG + event.channel - FMChannels + 1;
 		return 0;
