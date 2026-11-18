@@ -150,6 +150,7 @@ BOOL COptionsGeneral::OnInitDialog()
 	}
 	// Свои пункты OpenFMT идут после флагов OpenMPT.
 	m_CheckList.SetCheck(m_CheckList.AddString(_T("Compact VGM import")), TrackerSettings::Instance().vgmCompactRows ? BST_CHECKED : BST_UNCHECKED);
+	m_CheckList.SetCheck(m_CheckList.AddString(_T("Compact 2SF import")), TrackerSettings::Instance().twoSFCompactRows ? BST_CHECKED : BST_UNCHECKED);
 	m_CheckList.SetCurSel(0);
 	m_CheckList.SetItemHeight(0, 0);  // Workaround to force MFC to correctly compute the height of the first list item, in particular on high-DPI setups
 	OnOptionSelChanged();
@@ -184,6 +185,7 @@ void COptionsGeneral::OnOK()
 	}
 	TrackerSettings::Instance().patternSetup = patternSetup;
 	TrackerSettings::Instance().vgmCompactRows = m_CheckList.GetCheck(mpt::saturate_cast<int>(std::size(generalOptionsList))) != BST_UNCHECKED;
+	TrackerSettings::Instance().twoSFCompactRows = m_CheckList.GetCheck(mpt::saturate_cast<int>(std::size(generalOptionsList)) + 1) != BST_UNCHECKED;
 
 	CMainFrame::GetMainFrame()->SetupMiscOptions();
 
@@ -208,6 +210,9 @@ void COptionsGeneral::OnOptionSelChanged()
 	} else if(sel == mpt::saturate_cast<int>(std::size(generalOptionsList)))
 	{
 		desc = "Off (default): every frame of a VGM file is its own row. The sound is exact, the patterns are long. On: several frames go into one row for shorter, more readable patterns; note timing stays exact, but vibrato and volume changes inside a row are smoothed, so it sounds less like the original.";
+	} else if(sel == mpt::saturate_cast<int>(std::size(generalOptionsList)) + 1)
+	{
+		desc = "On (default): a 2SF (Nintendo DS) sequence is imported in DS sequencer ticks, several ticks per row (1/16 or finer, chosen per song), for readable patterns; off-grid notes use note delays, vibrato and pan LFO become effects. Off: every DS frame is its own row. That is exact to the frame, but the patterns scroll very fast.";
 	}
 	SetDlgItemText(IDC_TEXT1, mpt::ToCString(mpt::Charset::ASCII, desc));
 }

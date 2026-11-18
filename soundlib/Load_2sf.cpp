@@ -37,6 +37,9 @@
 #include <functional>
 #include <map>
 #include <unordered_map>
+#ifdef MODPLUG_TRACKER
+#include "../mptrack/TrackerSettings.h"
+#endif
 
 OPENMPT_NAMESPACE_BEGIN
 
@@ -268,9 +271,10 @@ struct Variant
 	uint8 program = 0;
 	uint8 attack = 0, decay = 0, sustain = 0, release = 0;
 	uint8 pwd = 2;
+	uint16 tempo = 120;  // огибающая идёт тиками модуля, а это тики DS
 	bool operator<(const Variant &o) const
 	{
-		return std::tie(program, attack, decay, sustain, release, pwd) < std::tie(o.program, o.attack, o.decay, o.sustain, o.release, o.pwd);
+		return std::tie(program, attack, decay, sustain, release, pwd, tempo) < std::tie(o.program, o.attack, o.decay, o.sustain, o.release, o.pwd, o.tempo);
 	}
 };
 
@@ -280,6 +284,7 @@ struct Cell
 	uint8 note = NOTE_NONE, instr = 0;
 	bool hasVolume = false;
 	uint8 volume = 0;
+	bool fastRelease = false;  // у отпускаемой ноты хвоста почти нет
 	std::vector<std::pair<EffectCommand, uint8>> effects;
 };
 
@@ -287,6 +292,7 @@ struct Row
 {
 	uint32 frame = 0;
 	uint32 tick = 0;  // сколько тиков секвенсора прошло к концу кадра
+	uint32 tempo = 120;
 	std::vector<Cell> cells;
 	Cell &At(uint16 channel)
 	{
@@ -350,8 +356,9 @@ struct Slot
 {
 	uint32 voice = 0;  // 0 — пусто
 	bool held = false;
+	uint32 lastEventRow = uint32_max;  // строка модуля с последним нажатием или ===
 	// Что уже записано в канал: пишем только изменения.
-	int volume = -1, channelVolume = -1, pan = -1, finetune = -1;
+	int volume = -1, channelVolume = -1, pan = -1, finetune = -1, lfo = -1;
 };
 
 // Секвенсор DS и запись его работы в строки модуля.
@@ -372,6 +379,7 @@ public:
 	std::array<int16, 32> variables{};
 	uint32 random = 0x12345678;
 	uint32 forgetTick = uint32_max;
+	uint32 rowTicks = 0;  // тиков DS в строке модуля; 0 — строка = кадр (точный импорт)
 	// Все ноты по порядку: дорожка, голос, тик нажатия и отпускания.
 	struct NoteLog { uint8 track, slot; uint32 start, release; };
 	std::vector<NoteLog> log;
@@ -465,6 +473,7 @@ public:
 		v.sustain = t.adsr[2] != 0xFF ? t.adsr[2] : def.sustain;
 		v.release = t.adsr[3] != 0xFF ? t.adsr[3] : def.release;
 		v.pwd = pwd;
+		v.tempo = rowTicks ? static_cast<uint16>(std::clamp<uint32>(tempo, 1, 1023)) : 240;  // 240 — тик = кадр
 		if(auto it = variantIndex.find(v); it != variantIndex.end())
 			return it->second;
 		if(variants.size() >= MAX_INSTRUMENTS - 1)
@@ -531,11 +540,14 @@ public:
 		// Голос дорожки: любой, где нота не держится. Отзвучивающий хвост
 		// новая нота уводит в фон (NNA «отпустить»), а если старая нота
 		// отпускается в той же строке, нота модуля просто встаёт на место ===.
+		// В одной строке модуля у канала одно событие ноты, поэтому голос,
+		// уже нажатый или отпущенный в этой строке, не берём.
 		auto &trackSlots = slots[trackIndex];
+		const uint32 compactRow = rowTicks ? tick / rowTicks : uint32_max - 1;
 		uint8 slot = 0;
 		for(; slot < trackSlots.size(); slot++)
 		{
-			if(!trackSlots[slot].held)
+			if(!trackSlots[slot].held && (!rowTicks || trackSlots[slot].lastEventRow != compactRow))
 				break;
 		}
 		if(slot == trackSlots.size())
@@ -549,6 +561,7 @@ public:
 		log.push_back({trackIndex, slot, tick, uint32_max});
 		trackSlots[slot].voice = v.id;
 		trackSlots[slot].held = true;
+		trackSlots[slot].lastEventRow = compactRow;
 		voices.push_back(v);
 		Cell &cell = rows.back().At(static_cast<uint16>(trackIndex * 256 + slot));
 		cell.note = static_cast<uint8>(key + NOTE_MIN);
@@ -566,9 +579,14 @@ public:
 		if(s.voice == v.id)
 		{
 			s.held = false;
+			if(rowTicks)
+				s.lastEventRow = tick / rowTicks;
 			Cell &cell = rows.back().At(static_cast<uint16>(v.track * 256 + v.slot));
 			if(cell.note == NOTE_NONE)
+			{
 				cell.note = NOTE_KEYOFF;
+				cell.fastRelease = v.release >= 0x3C00;  // хвост не длиннее 6 кадров
+			}
 		}
 	}
 
@@ -827,9 +845,34 @@ public:
 		int32 pitch = (t.bend * t.range) >> 1;
 		if(v.sweepLength && v.sweepCount < v.sweepLength)
 			pitch += v.sweepPitch * (v.sweepLength - v.sweepCount) / v.sweepLength;
-		if(t.modType == 0)
+		// В сжатых строках LFO высоты идёт вибрато модуля, в покадровых —
+		// прямо подстройкой.
+		if(!rowTicks && t.modType == 0)
 			pitch += (v.lfo * 60) >> 14;
 		return pitch;
+	}
+
+	// LFO DS как вибрато (Hxy/Uxy) или панбрелло (Yxy). Период LFO — 512/скорость
+	// кадров, у вибрато модуля — 64/x тиков, у панбрелло — 256/x тиков.
+	// 0 — LFO молчит. LFO громкости остаётся в колонке громкости.
+	int LfoEffect(const Voice &v) const
+	{
+		const Track &t = tracks[v.track];
+		if(!rowTicks || !t.modDepth || !t.modRange || !t.modSpeed || v.modDelayCount < t.modDelay || t.modType == 1)
+			return 0;
+		const double periodTicks = 512.0 / t.modSpeed * static_cast<double>(std::max<uint32>(tempo, 1)) / 240.0;
+		const double amplitude = 127.0 * t.modRange * t.modDepth;
+		if(t.modType == 0)
+		{
+			const double fine = amplitude * 60.0 / 16384.0;  // в 1/64 полутона
+			const int x = std::clamp(static_cast<int>(std::lround(64.0 / periodTicks)), 1, 15);
+			if(fine < 15.5)
+				return (CMD_FINEVIBRATO << 8) | (x << 4) | std::clamp(static_cast<int>(std::lround(fine)), 1, 15);
+			return (CMD_VIBRATO << 8) | (x << 4) | std::clamp(static_cast<int>(std::lround(fine / 4.0)), 1, 15);
+		}
+		const double pan = 2.0 * amplitude * 64.0 / 16384.0;  // в единицах панорамы 0–256
+		const int x = std::clamp(static_cast<int>(std::lround(256.0 / periodTicks)), 1, 15);
+		return (CMD_PANBRELLO << 8) | (x << 4) | std::clamp(static_cast<int>(std::lround(pan / 8.0)), 1, 15);
 	}
 
 	// Состояние голоса в строку: только то, что изменилось.
@@ -844,10 +887,9 @@ public:
 			volDb += (v.lfo * 60) >> 14;
 		const int volume = static_cast<int>(std::lround(64.0 * DecibelToLinear(std::min(volDb, 0))));
 		const int channelVolume = static_cast<int>(std::lround(64.0 * DecibelToLinear(SquareDecibel(t.vol) + SquareDecibel(masterVolume))));
-		int pan = t.pan + v.def->pan - 64;
-		if(t.modType == 2)
-			pan += (v.lfo * 64) >> 14;
-		pan = std::clamp(pan, 0, 127) * 2;
+		const int panLfo = (!rowTicks && t.modType == 2) ? ((v.lfo * 64) >> 14) : 0;
+		const int pan = std::clamp(t.pan + v.def->pan - 64 + panLfo, 0, 127) * 2;
+		const int lfo = LfoEffect(v);
 		const int finetune = std::clamp(0x80 + static_cast<int>(std::lround(PitchOffset(v) * 2.0 / v.pwd)), 0, 255);
 		const uint16 key = static_cast<uint16>(v.track * 256 + v.slot);
 		Cell *cell = noteOn ? &rows.back().At(key) : nullptr;
@@ -873,6 +915,11 @@ public:
 			get().effects.emplace_back(CMD_CHANNELVOLUME, static_cast<uint8>(channelVolume));
 			s.channelVolume = channelVolume;
 		}
+		if(lfo != s.lfo)
+		{
+			get().effects.emplace_back(lfo ? static_cast<EffectCommand>(lfo >> 8) : CMD_DUMMY, static_cast<uint8>(lfo & 0xFF));
+			s.lfo = lfo;
+		}
 	}
 
 	// Один кадр DS — одна строка модуля.
@@ -887,6 +934,7 @@ public:
 		}
 		counter += tempo;
 		rows.back().tick = tick;
+		rows.back().tempo = tempo;
 		if(tick > forgetTick)
 		{
 			ForgetEmitted();
@@ -906,7 +954,14 @@ public:
 			{
 				Slot &s = slots[v.track][v.slot];
 				if(s.voice == v.id)
+				{
 					s.voice = 0;
+					if(s.lfo > 0)
+					{
+						rows.back().At(static_cast<uint16>(v.track * 256 + v.slot)).effects.emplace_back(CMD_DUMMY, uint8(0));
+						s.lfo = 0;
+					}
+				}
 			}
 		}
 		voices.erase(std::remove_if(voices.begin(), voices.end(), [](const Voice &v) { return v.dead; }), voices.end());
@@ -929,7 +984,7 @@ public:
 		for(auto &trackSlots : slots)
 		{
 			for(auto &s : trackSlots)
-				s.volume = s.channelVolume = s.pan = s.finetune = -1;
+				s.volume = s.channelVolume = s.pan = s.finetune = s.lfo = -1;
 		}
 	}
 };
@@ -962,6 +1017,26 @@ void BuildEnvelope(InstrumentEnvelope &env, const Variant &v)
 	for(int32 a = -release; a > AmplMin && tail.size() < 60000; a -= release)
 		tail.push_back(level(a));
 	tail.push_back(0.0);
+	// Тик модуля — тик DS, а огибающая DS идёт кадрами: 240/темп кадров на тик.
+	const double framesPerTick = 240.0 / std::max<int>(v.tempo, 1);
+	const auto toTicks = [framesPerTick](const std::vector<double> &frames)
+	{
+		std::vector<double> ticks;
+		for(size_t k = 0; ; k++)
+		{
+			const size_t f = static_cast<size_t>(k * framesPerTick);
+			if(f >= frames.size())
+			{
+				if(ticks.empty() || ticks.back() != frames.back())
+					ticks.push_back(frames.back());
+				break;
+			}
+			ticks.push_back(frames[f]);
+		}
+		return ticks;
+	};
+	curve = toTicks(curve);
+	tail = toTicks(tail);
 
 	// Точки ломаной: жадно, пока отклонение не больше tol.
 	const auto reduce = [](const std::vector<double> &c, size_t budget)
@@ -1019,6 +1094,220 @@ void BuildEnvelope(InstrumentEnvelope &env, const Variant &v)
 			continue;
 		env.push_back(static_cast<EnvelopeNode::tick_t>(std::min<size_t>(nodeTick + p, 65000)), value(released[p]));
 	}
+}
+
+// Строки модуля из покадровых строк секвенсора. Тик модуля — тик DS, строка —
+// rowTicks тиков. Событие ноты не на сетке ставится задержкой SDx, короткая
+// нота с мгновенным отпусканием — задержкой с обрезкой (:xy). Изгиб,
+// меняющийся внутри строки, идёт плавной подстройкой (*xx), одиночная смена
+// в конце строки — уже в следующей. Громкость без ноты тоже ставится
+// задержкой. LFO высоты и панорамы повторяется в каждой строке, пока звучит.
+struct OutCell
+{
+	uint8 note = NOTE_NONE, instr = 0;
+	bool hasVolume = false;
+	uint8 volume = 0;
+	std::vector<std::pair<EffectCommand, uint8>> effects;
+};
+
+struct Compact
+{
+	std::vector<std::vector<std::pair<uint16, OutCell>>> rows;
+	std::vector<uint32> tempo;  // темп DS в начале строки
+	uint32 deferred = 0;        // отпускания, сдвинутые к следующей строке
+};
+
+Compact CompactRows(const std::vector<Row> &frames, uint32 rowTicks, uint32 endTick, uint32 restartTick)
+{
+	Compact out;
+	if(frames.empty())
+		return out;
+	struct Acc
+	{
+		int ev = 0;  // 0 — нет, 1 — нажатие, 2 — ===
+		uint8 note = NOTE_NONE, instr = 0, noteVolume = 0;
+		uint32 sub = 0;
+		int cutSub = -1;
+		bool volumeChanged = false;
+		uint32 volumeSub = 0;
+		int fineCount = 0, panCount = 0, cvCount = 0;
+		uint32 fineSub = 0, panSub = 0, cvSub = 0;
+	};
+	struct State { int volume = -1, cv = -1, pan = -1, fine = -1, lfo = 0; };
+	struct Chan { Acc acc; State want, have; bool pendingOff = false; };
+	std::map<uint16, Chan> chans;
+	for(const auto &f : frames)
+	{
+		for(const auto &c : f.cells)
+			chans[c.channel];
+	}
+	const uint32 totalTicks = std::min(endTick, frames.back().tick);
+	const uint32 numRows = (totalTicks + rowTicks - 1) / rowTicks;
+	out.rows.resize(numRows);
+	out.tempo.assign(numRows, 0);
+	const uint32 restartRow = restartTick != uint32_max ? restartTick / rowTicks : uint32_max;
+
+	const auto startRow = [&](uint32 r)
+	{
+		for(auto &[key, ch] : chans)
+		{
+			ch.acc = {};
+			if(ch.pendingOff)
+			{
+				ch.acc.ev = 2;
+				ch.pendingOff = false;
+			}
+			if(r == restartRow)
+				ch.have = {};
+		}
+	};
+	const auto finalize = [&](uint32 r)
+	{
+		for(auto &[key, ch] : chans)
+		{
+			Acc &a = ch.acc;
+			State &want = ch.want, &have = ch.have;
+			OutCell cell;
+			int delay = 0;
+			if(a.ev == 1)
+			{
+				cell.note = a.note;
+				cell.instr = a.instr;
+				cell.hasVolume = true;
+				cell.volume = a.noteVolume;
+				have.volume = a.noteVolume;
+				if(a.cutSub >= 0)
+					cell.effects.emplace_back(CMD_DELAYCUT, static_cast<uint8>((a.sub << 4) | std::min<uint32>(15, a.cutSub - a.sub)));
+				else
+					delay = static_cast<int>(a.sub);
+			} else if(a.ev == 2)
+			{
+				cell.note = NOTE_KEYOFF;
+				delay = static_cast<int>(a.sub);
+			}
+			if(a.ev != 1 && want.volume >= 0 && want.volume != have.volume)
+			{
+				cell.hasVolume = true;
+				cell.volume = static_cast<uint8>(want.volume);
+				have.volume = want.volume;
+				if(a.ev == 0 && a.volumeChanged)
+					delay = static_cast<int>(a.volumeSub);
+			}
+			if(delay > 0)
+				cell.effects.insert(cell.effects.begin(), {CMD_S3MCMDEX, static_cast<uint8>(0xD0 | std::min(delay, 15))});
+			const auto late = [&](int count, uint32 sub) { return count == 1 && sub * 2 > rowTicks && a.ev != 1; };
+			const auto room = [&]() { return cell.effects.size() < ModCommand::Effects(); };
+			if(want.fine >= 0 && want.fine != have.fine && !late(a.fineCount, a.fineSub) && room())
+			{
+				cell.effects.emplace_back((a.fineCount >= 2 && have.fine >= 0) ? CMD_FINETUNE_SMOOTH : CMD_FINETUNE, static_cast<uint8>(want.fine));
+				have.fine = want.fine;
+			}
+			if(want.lfo && room())
+				cell.effects.emplace_back(static_cast<EffectCommand>(want.lfo >> 8), static_cast<uint8>(want.lfo & 0xFF));
+			// Панбрелло в OpenMPT оставляет сдвиг панорамы до следующей ноты
+			// или команды панорамы: когда LFO панорамы смолкает, пишем её заново.
+			if((have.lfo >> 8) == CMD_PANBRELLO && (want.lfo >> 8) != CMD_PANBRELLO)
+				have.pan = -1;
+			have.lfo = want.lfo;
+			if(want.pan >= 0 && want.pan != have.pan && !late(a.panCount, a.panSub) && room())
+			{
+				cell.effects.emplace_back(CMD_PANNING8, static_cast<uint8>(want.pan));
+				have.pan = want.pan;
+			}
+			if(want.cv >= 0 && want.cv != have.cv && !late(a.cvCount, a.cvSub) && room())
+			{
+				cell.effects.emplace_back(CMD_CHANNELVOLUME, static_cast<uint8>(want.cv));
+				have.cv = want.cv;
+			}
+			if(cell.note != NOTE_NONE || cell.hasVolume || !cell.effects.empty())
+				out.rows[r].emplace_back(key, std::move(cell));
+		}
+	};
+
+	uint32 curRow = 0, prevTick = 0;
+	startRow(0);
+	for(const auto &f : frames)
+	{
+		const bool ticked = f.tick > prevTick;
+		const uint32 tick = ticked ? prevTick : (prevTick ? prevTick - 1 : 0);
+		prevTick = f.tick;
+		if(tick >= totalTicks)
+			break;
+		const uint32 row = tick / rowTicks, sub = tick % rowTicks;
+		while(curRow < row)
+		{
+			finalize(curRow);
+			startRow(++curRow);
+		}
+		if(!out.tempo[row])
+			out.tempo[row] = f.tempo;
+		for(const auto &c : f.cells)
+		{
+			Chan &ch = chans[c.channel];
+			Acc &a = ch.acc;
+			const bool noteOn = c.note >= NOTE_MIN && c.note <= NOTE_MAX;
+			if(noteOn)
+			{
+				if(a.ev != 1)
+				{
+					a.ev = 1;
+					a.note = c.note;
+					a.instr = c.instr;
+					a.sub = sub;
+					a.noteVolume = c.volume;
+					a.cutSub = -1;
+				}
+				ch.want.volume = c.volume;
+			} else if(c.note == NOTE_KEYOFF)
+			{
+				if(a.ev == 1)
+				{
+					if(c.fastRelease && sub > a.sub)
+					{
+						a.cutSub = static_cast<int>(sub);
+					} else
+					{
+						ch.pendingOff = true;
+						out.deferred++;
+					}
+				} else if(a.ev == 0)
+				{
+					a.ev = 2;
+					a.sub = sub;
+				}
+			}
+			if(c.hasVolume && !noteOn)
+			{
+				ch.want.volume = c.volume;
+				a.volumeChanged = true;
+				a.volumeSub = sub;
+			}
+			for(const auto &[cmd, param] : c.effects)
+			{
+				switch(cmd)
+				{
+				case CMD_FINETUNE: ch.want.fine = param; a.fineCount++; a.fineSub = sub; break;
+				case CMD_PANNING8: ch.want.pan = param; a.panCount++; a.panSub = sub; break;
+				case CMD_CHANNELVOLUME: ch.want.cv = param; a.cvCount++; a.cvSub = sub; break;
+				case CMD_VIBRATO: case CMD_FINEVIBRATO: case CMD_PANBRELLO: ch.want.lfo = (cmd << 8) | param; break;
+				case CMD_DUMMY: ch.want.lfo = 0; break;
+				default: break;
+				}
+			}
+		}
+	}
+	while(curRow < numRows)
+	{
+		finalize(curRow);
+		if(++curRow < numRows)
+			startRow(curRow);
+	}
+	for(uint32 r = 1; r < numRows; r++)
+	{
+		if(!out.tempo[r])
+			out.tempo[r] = out.tempo[r - 1];
+	}
+	return out;
 }
 
 }  // namespace
@@ -1249,12 +1538,13 @@ bool CSoundFile::Read2SF(FileReader &file, ModLoadingFlags loadFlags)
 	const double tagLength = psf.tags.count("length") ? ParseTime(psf.tags["length"]) : 0.0;
 	uint32 stopTick = uint32_max, loopStartTick = uint32_max, loopEndTick = uint32_max;
 	bool heldAcross = false, consistent = false, finished = false;
-	const auto play = [&](DsSequencer &seq, uint32 forgetTick)
+	const auto play = [&](DsSequencer &seq, uint32 forgetTick, uint32 rowTicks)
 	{
 	stopTick = loopStartTick = loopEndTick = uint32_max;
 	consistent = finished = false;
 	seq.seqVolume = seqVolume;
 	seq.forgetTick = forgetTick;
+	seq.rowTicks = rowTicks;
 	uint32 tailFrames = 0;
 	for(uint32 frame = 0; frame < MaxFrames; frame++)
 	{
@@ -1319,7 +1609,42 @@ bool CSoundFile::Read2SF(FileReader &file, ModLoadingFlags loadFlags)
 	}
 	};
 	DsSequencer scout(seqData, programs);
-	play(scout, uint32_max);
+	play(scout, uint32_max, 1);
+	if(scout.rows.empty() || scout.variants.empty())
+		return false;
+
+	// Шаг строки: самый крупный из 1/16, 1/32, ... доли такта, при котором
+	// почти все события ложатся в строки без сдвига (вне сетки — задержкой).
+	// Сдвиг бывает у короткой ноты с долгим хвостом: нажатие и отпускание
+	// попадают в одну строку, и отпускание уходит в следующую. Петля должна
+	// начинаться и кончаться на границе строки.
+	// Сжатые строки — только в трекере и по настройке: тик модуля там — тик
+	// DS, а на DS тик ложится на границу кадра, так что время нот плывёт в
+	// пределах кадра (5 мс). Покадровый импорт точен, но строк в нём много.
+#ifdef MODPLUG_TRACKER
+	const bool compactRows = TrackerSettings::Instance().twoSFCompactRows;
+#else
+	const bool compactRows = false;
+#endif
+	uint32 rowTicks = compactRows ? 1 : 0;
+	for(uint32 candidate : {12u, 6u, 4u, 3u, 2u})
+	{
+		if(!compactRows)
+			break;
+		if(consistent && (loopStartTick % candidate || loopEndTick % candidate))
+			continue;
+		DsSequencer test(seqData, programs);
+		play(test, uint32_max, candidate);
+		const Compact trial = CompactRows(test.rows, candidate, uint32_max, uint32_max);
+		if(trial.deferred * 100 <= test.log.size())
+		{
+			rowTicks = candidate;
+			break;
+		}
+	}
+	DsSequencer layout(seqData, programs);
+	play(layout, uint32_max, rowTicks);
+
 	// Ноты, которые держатся через конец петли. Их отпускание приходится уже
 	// на следующий проход: переносим его в начало петли, на тот же отступ.
 	// Если в этом месте голос на первом проходе занят другой нотой, перенос
@@ -1330,7 +1655,7 @@ bool CSoundFile::Read2SF(FileReader &file, ModLoadingFlags loadFlags)
 	bool doubled = false;
 	if(consistent)
 	{
-		for(const auto &n : scout.log)
+		for(const auto &n : layout.log)
 		{
 			if(n.start >= loopEndTick || n.release < loopEndTick)
 				continue;
@@ -1342,51 +1667,84 @@ bool CSoundFile::Read2SF(FileReader &file, ModLoadingFlags loadFlags)
 		for(const auto &c : crossing)
 		{
 			const uint32 at = loopStartTick + c.offset;
-			for(const auto &n : scout.log)
+			for(const auto &n : layout.log)
 			{
-				if(n.track == c.track && n.slot == c.slot && n.start < at && n.release >= loopStartTick && n.start < loopEndTick)
+				// Голос занят на первом проходе — или им же что-то нажимается
+				// в той же строке, куда легло бы отпускание.
+				if(n.track == c.track && n.slot == c.slot && n.start < loopEndTick && n.release >= loopStartTick
+					&& (n.start < at || (rowTicks && n.start / rowTicks == at / rowTicks)))
 					doubled = true;
 			}
 		}
 	}
-	// Повтор петли застаёт счётчик темпа в ином состоянии, чем первый проход
-	// (во вступлении мог быть другой темп), поэтому тики повтора ложатся на
-	// кадры чуть иначе: сдвиг меньше тика и не копится — длины проходов
-	// совпадают с точностью до кадра. Первый проход оставляем точным.
+	// Тик модуля — тик DS, поэтому разная кадровая фаза тиков на первом
+	// проходе петли и на повторах модуля не касается.
 	DsSequencer seq(seqData, programs);
-	play(seq, consistent ? (doubled ? loopEndTick : loopStartTick) : uint32_max);
+	const uint32 restartTick = consistent ? (doubled ? loopEndTick : loopStartTick) : uint32_max;
+	const uint32 endTick = consistent ? (doubled ? 2 * loopEndTick - loopStartTick : loopEndTick) : uint32_max;
+	play(seq, restartTick, rowTicks);
 	heldAcross = doubled;
 	if(seq.rows.empty() || seq.variants.empty())
 		return false;
-
-	ROWINDEX numRows = static_cast<ROWINDEX>(seq.rows.size()), restartRow = ROWINDEX_INVALID;
-	if(consistent)
+	if(consistent && !doubled)
 	{
-		const auto rowOfTick = [&](uint32 tk) -> ROWINDEX
+		const auto frameOfTick = [&](uint32 tk) -> size_t
 		{
 			const auto it = std::upper_bound(seq.rows.begin(), seq.rows.end(), tk, [](uint32 value, const Row &row) { return value < row.tick; });
-			return static_cast<ROWINDEX>(it - seq.rows.begin());
+			return static_cast<size_t>(it - seq.rows.begin());
 		};
-		const uint32 startTick = doubled ? loopEndTick : loopStartTick;
-		const uint32 endTick = doubled ? loopEndTick + (loopEndTick - loopStartTick) : loopEndTick;
-		restartRow = rowOfTick(startTick);
-		numRows = rowOfTick(endTick);
-		if(restartRow >= numRows)
-			restartRow = ROWINDEX_INVALID;
-		if(!doubled)
+		for(const auto &c : crossing)
 		{
-			for(const auto &c : crossing)
-			{
-				const ROWINDEX r = rowOfTick(loopStartTick + c.offset);
-				if(r >= seq.rows.size())
-					continue;
-				Cell &cell = seq.rows[r].At(static_cast<uint16>(c.track * 256 + c.slot));
-				if(cell.note == NOTE_NONE)
-					cell.note = NOTE_KEYOFF;
-			}
+			const size_t f = frameOfTick(loopStartTick + c.offset);
+			if(f >= seq.rows.size())
+				continue;
+			Cell &cell = seq.rows[f].At(static_cast<uint16>(c.track * 256 + c.slot));
+			if(cell.note == NOTE_NONE)
+				cell.note = NOTE_KEYOFF;
 		}
 	}
-	numRows = std::min<ROWINDEX>(numRows, static_cast<ROWINDEX>(seq.rows.size()));
+	// Строки модуля и тик, с которого каждая начинается.
+	Compact compact;
+	std::vector<uint32> rowStartTick;
+	ROWINDEX restartRow = ROWINDEX_INVALID;
+	if(rowTicks)
+	{
+		compact = CompactRows(seq.rows, rowTicks, endTick, restartTick);
+		for(uint32 r = 0; r < compact.rows.size(); r++)
+			rowStartTick.push_back(r * rowTicks);
+		if(consistent && restartTick / rowTicks < compact.rows.size())
+			restartRow = static_cast<ROWINDEX>(restartTick / rowTicks);
+	} else
+	{
+		// Строка — кадр: строки секвенсора идут как есть.
+		const auto frameOfTick = [&](uint32 tk) -> size_t
+		{
+			const auto it = std::upper_bound(seq.rows.begin(), seq.rows.end(), tk, [](uint32 value, const Row &row) { return value < row.tick; });
+			return static_cast<size_t>(it - seq.rows.begin());
+		};
+		const size_t frames = std::min(seq.rows.size(), consistent ? frameOfTick(endTick) : seq.rows.size());
+		compact.rows.resize(frames);
+		compact.tempo.assign(frames, 0);
+		for(size_t f = 0; f < frames; f++)
+		{
+			for(const auto &cell : seq.rows[f].cells)
+			{
+				OutCell out;
+				out.note = cell.note;
+				out.instr = cell.instr;
+				out.hasVolume = cell.hasVolume;
+				out.volume = cell.volume;
+				out.effects = cell.effects;
+				compact.rows[f].emplace_back(cell.channel, std::move(out));
+			}
+			rowStartTick.push_back(f ? seq.rows[f - 1].tick : 0);
+		}
+		if(consistent && frameOfTick(restartTick) < frames)
+			restartRow = static_cast<ROWINDEX>(frameOfTick(restartTick));
+	}
+	const ROWINDEX numRows = static_cast<ROWINDEX>(compact.rows.size());
+	if(!numRows)
+		return false;
 
 	// Каналы: дорожки по порядку, у каждой столько, сколько держалось нот.
 	std::array<CHANNELINDEX, 16> trackBase{};
@@ -1403,16 +1761,27 @@ bool CSoundFile::Read2SF(FileReader &file, ModLoadingFlags loadFlags)
 	m_playBehaviour = GetDefaultPlaybackBehaviour(MOD_TYPE_MPT);
 	m_playBehaviour.set(kFurnacePersistentFinetune);  // изгиб — состояние дорожки, переживает ноты
 	m_SongFlags.set(SONG_LINEARSLIDES);
-	// Строка и тик модуля — кадр DS. В классическом режиме длина тика
-	// округляется до целых отсчётов (250 вместо 250,06 при 48 кГц, при
-	// 44,1 кГц ошибка уже 0,3 %), и модуль уходил вперёд. Современный режим
-	// копит дробную часть. 96 строк на долю: при темпе DS 120 доля ровно
-	// 96 кадров, и темп модуля выходит те же ~120.
+	// Тик модуля — тик DS, 48 на долю: скорость — тиков в строке, строк на
+	// долю 48 / скорость. Темп модуля почти равен темпу DS (тик DS длится
+	// 240 / темп кадров). Классический режим округлял бы длину тика до целых
+	// отсчётов, и модуль уходил бы вперёд; современный копит дробную часть.
+	// В покадровом импорте строка и тик — кадр DS, 96 строк на долю: при
+	// темпе DS 120 доля ровно 96 кадров, и темп модуля выходит те же ~120.
+	const double tempoFactor = 60.0 / (240.0 * DSFrameSeconds * 48.0);
 	m_nTempoMode = TempoMode::Modern;
-	m_nDefaultRowsPerBeat = 96;
-	m_nDefaultRowsPerMeasure = 384;
-	Order().SetDefaultTempo(TEMPO(60.0 / (DSFrameSeconds * m_nDefaultRowsPerBeat)));
-	Order().SetDefaultSpeed(1);
+	if(rowTicks)
+	{
+		m_nDefaultRowsPerBeat = 48 / rowTicks;
+		m_nDefaultRowsPerMeasure = 192 / rowTicks;
+		Order().SetDefaultTempo(TEMPO(std::clamp(compact.tempo[0] * tempoFactor, 32.0, 1000.0)));
+		Order().SetDefaultSpeed(rowTicks);
+	} else
+	{
+		m_nDefaultRowsPerBeat = 96;
+		m_nDefaultRowsPerMeasure = 384;
+		Order().SetDefaultTempo(TEMPO(60.0 / (DSFrameSeconds * m_nDefaultRowsPerBeat)));
+		Order().SetDefaultSpeed(1);
+	}
 	m_nDefaultGlobalVolume = static_cast<uint32>(std::lround(MAX_GLOBAL_VOLUME * DecibelToLinear(SquareDecibel(seqVolume))));
 	m_nSamplePreAmp = 80;  // DS: полный сэмпл на одном канале — около -4 дБ от потолка
 
@@ -1596,17 +1965,17 @@ bool CSoundFile::Read2SF(FileReader &file, ModLoadingFlags loadFlags)
 		BuildEnvelope(instrument->VolEnv, v);
 	}
 
-	// Узоры: такт DS (192 тика) — узор, но не длиннее 1024 строк.
+	// Узоры: такт DS (192 тика) — узор, но не длиннее 1024 строк. Такт
+	// открывает строка, в которой исполняется его первый тик.
 	std::vector<ROWINDEX> patternStart{0};
 	{
 		uint32 nextBar = 192;
 		for(ROWINDEX r = 1; r < numRows; r++)
 		{
-			// Строка, в которой исполняется тик nextBar, открывает такт.
-			const bool bar = seq.rows[r - 1].tick <= nextBar && seq.rows[r].tick > nextBar;
+			const bool bar = rowStartTick[r] >= nextBar && rowStartTick[r - 1] < nextBar;
 			if(r == restartRow || bar || r - patternStart.back() >= 1024)
 				patternStart.push_back(r);
-			while(seq.rows[r].tick > nextBar)
+			while(rowStartTick[r] >= nextBar)
 				nextBar += 192;
 		}
 	}
@@ -1627,11 +1996,11 @@ bool CSoundFile::Read2SF(FileReader &file, ModLoadingFlags loadFlags)
 	std::vector<uint8> used(numChannels, 1);
 	for(ROWINDEX r = 0; r < numRows; r++)
 	{
-		// На начале петли каналы приходят с конца петли: состояние там
-		// другое, поэтому эта строка пишет всё, что держит голос, заново.
-		for(const auto &cell : seq.rows[r].cells)
+		for(const auto &[key, cell] : compact.rows[r])
 		{
-			const uint8 track = static_cast<uint8>(cell.channel >> 8), slot = static_cast<uint8>(cell.channel & 0xFF);
+			const uint8 track = static_cast<uint8>(key >> 8), slot = static_cast<uint8>(key & 0xFF);
+			if(slot >= seq.slots[track].size())
+				continue;
 			const CHANNELINDEX c = static_cast<CHANNELINDEX>(trackBase[track] + slot);
 			ModCommand &m = rowPointer[r][c];
 			m.note = cell.note;
@@ -1649,6 +2018,23 @@ bool CSoundFile::Read2SF(FileReader &file, ModLoadingFlags loadFlags)
 				m.SetEffect(slotIndex++, cmd, param);
 			}
 			used[c] = std::max(used[c], slotIndex);
+		}
+		// Смена темпа DS — в любой свободной колонке строки.
+		const bool tempoChanged = rowTicks && r > 0 && compact.tempo[r] != compact.tempo[r - 1];
+		const bool tempoAtRestart = rowTicks && r == restartRow && compact.tempo[r] != compact.tempo[numRows - 1];
+		if(tempoChanged || tempoAtRestart)
+		{
+			const uint8 param = static_cast<uint8>(std::clamp(static_cast<int>(std::lround(compact.tempo[r] * tempoFactor)), 32, 255));
+			for(CHANNELINDEX c = 0; c < numChannels; c++)
+			{
+				ModCommand &m = rowPointer[r][c];
+				if(const uint8 slot = m.FreeEffectSlot(); slot < ModCommand::Effects())
+				{
+					m.SetEffect(slot, CMD_TEMPO, param);
+					used[c] = std::max<uint8>(used[c], slot + 1);
+					break;
+				}
+			}
 		}
 	}
 #ifdef MODPLUG_TRACKER
@@ -1687,12 +2073,13 @@ bool CSoundFile::Read2SF(FileReader &file, ModLoadingFlags loadFlags)
 	const std::string utf8Message = mpt::ToCharset(mpt::Charset::UTF8, mpt::ToUnicode(charset, message));
 	m_songMessage.Read(reinterpret_cast<const std::byte *>(utf8Message.data()), utf8Message.size(), SongMessage::leAutodetect);
 
+	const mpt::ustring rowText = rowTicks ? MPT_UFORMAT("{} ticks per row")(rowTicks) : U_("one frame per row");
 	if(consistent)
-		AddToLog(LogInformation, MPT_UFORMAT("2SF: sequence {} loops from tick {} to {}{}.")(seqNo, heldAcross ? loopEndTick : loopStartTick, heldAcross ? 2 * loopEndTick - loopStartTick : loopEndTick, heldAcross ? U_(" (second pass: notes held across the loop end)") : U_("")));
+		AddToLog(LogInformation, MPT_UFORMAT("2SF: sequence {} loops from tick {} to {}{}; {}.")(seqNo, heldAcross ? loopEndTick : loopStartTick, heldAcross ? 2 * loopEndTick - loopStartTick : loopEndTick, heldAcross ? U_(" (second pass: notes held across the loop end)") : U_(""), rowText));
 	else
 		AddToLog(LogInformation, finished
-			? MPT_UFORMAT("2SF: sequence {} does not loop ({} ticks).")(seqNo, seq.tick)
-			: MPT_UFORMAT("2SF: sequence {} has no common loop, {} ticks are imported.")(seqNo, seq.tick));
+			? MPT_UFORMAT("2SF: sequence {} does not loop ({} ticks, {}).")(seqNo, seq.tick, rowText)
+			: MPT_UFORMAT("2SF: sequence {} has no common loop, {} ticks are imported ({}).")(seqNo, seq.tick, rowText));
 	m_modFormat.formatName = UL_("Nintendo DS Sound Format");
 	m_modFormat.type = UL_("2sf");
 	m_modFormat.madeWithTracker = UL_("Nintendo DS sequence (SSEQ)");

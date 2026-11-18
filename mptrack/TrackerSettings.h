@@ -872,6 +872,8 @@ public:
 	Setting<uint8> midiImportTicks;
 	// OpenFMT: импорт VGM строками из нескольких кадров (true) или кадр на строку.
 	Setting<bool> vgmCompactRows;
+	// OpenFMT: импорт 2SF строками по нескольку тиков DS (true) или кадр на строку.
+	Setting<bool> twoSFCompactRows;
 
 	// Pattern Editor
 

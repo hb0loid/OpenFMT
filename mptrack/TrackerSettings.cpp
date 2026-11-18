@@ -268,6 +268,7 @@ TrackerSettings::TrackerSettings(SettingsContainer &conf)
 	, midiImportQuantize(conf, UL_("MIDI Settings"), UL_("MidiImportQuantize"), 32)
 	, midiImportTicks(conf, UL_("MIDI Settings"), UL_("MidiImportTicks"), 6)
 	, vgmCompactRows(conf, UL_("Import"), UL_("VgmCompactRows"), false)  // точный импорт по умолчанию: компактный сглаживает звук
+	, twoSFCompactRows(conf, UL_("Import"), UL_("TwoSFCompactRows"), true)  // покадровый 2SF пролетает слишком быстро
 	// Pattern Editor
 	, gbLoopSong(conf, UL_("Pattern Editor"), UL_("LoopSong"), true)
 	, gnPatternSpacing(conf, UL_("Pattern Editor"), UL_("Spacing"), 0)
