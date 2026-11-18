@@ -260,7 +260,7 @@ BOOL CAboutDlg::OnInitDialog()
 			mpt::OS::Windows::Name(mpt::OS::Windows::GetProcessArchitecture()),
 			mpt::arch_bits)
 		+ UL_("Version ") + U_(OPENFMT_VERSION_A) + UL_("\r\n\r\n")
-		+ UL_("Based on OpenMPT ") + Build::GetVersionStringSimple() + UL_("\r\n");
+		+ UL_("Based on OpenMPT ") + Build::GetVersionStringPure() + UL_("\r\n");
 	SetDlgItemText(IDC_EDIT3, mpt::ToCString(app));
 	SetWindowText(_T("About ") _T(OPENFMT_NAME));
 
