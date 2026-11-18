@@ -300,7 +300,11 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// PCM-каналов, непрерывно и около 32 кГц, поэтому кусок режется не только
 	// по паузе в записях, но и по тишине внутри них.
 	std::vector<uint8> raw;
-	struct Hit { uint32 start = 0, bytes = 0, first = 0, last = 0; };
+	struct Hit { uint32 start = 0, bytes = 0, first = 0, last = 0, writeStart = 0, writeCount = 0; };
+	// Сами записанные значения удара, по порядку. Звук снимается по времени
+	// лога, и два одинаковых удара из-за дрожания записей дают чуть разные
+	// байты, а последовательность записей у одного барабана одна и та же.
+	std::vector<uint8> dacWrites;
 	Hit hit;
 	bool hitOpen = false;
 
@@ -308,7 +312,10 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	const auto flushHit = [&]()
 	{
 		if(hitOpen && hit.bytes > 64)
+		{
+			hit.writeCount = static_cast<uint32>(dacWrites.size()) - hit.writeStart;
 			hits.push_back(hit);
+		}
 		hitOpen = false;
 	};
 	// ЦАП держит записанное значение до следующей записи, а пишут в него
@@ -350,9 +357,10 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		{
 			if(!hitOpen)
 			{
-				hit = Hit{static_cast<uint32>(raw.size()), 0, when, when};
+				hit = Hit{static_cast<uint32>(raw.size()), 0, when, when, static_cast<uint32>(dacWrites.size()), 0};
 				hitOpen = true;
 			}
+			dacWrites.push_back(value);
 			lastChange = when;
 		}
 		dacLevel = value;
@@ -1151,15 +1159,20 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			instrument->midiPWD = 1;  // E5xx: шаг 1/128 полутона
 		}
 	}
-	// Удары ЦАПа, записанные побайтно: одинаковые куски становятся одним
-	// сэмплом (сравниваем содержимое: у прямых записей адреса в блоке нет), а
-	// каждый удар — нотой на шестом канале. Частота считается по самому удару:
-	// сколько байт он занял и сколько времени играл.
+	// Удары ЦАПа, записанные побайтно: одинаковые удары становятся одним
+	// сэмплом (самый длинный вариант), а каждый удар — нотой на шестом канале;
+	// если удар в логе короче сэмпла, нота обрывается там же. Одинаковость — по
+	// последовательности записанных значений (короткий удар может быть
+	// оборванным началом длинного). Тот же удар, сыгранный драйвером быстрее
+	// или медленнее (томы), — тот же сэмпл другой нотой: высота считается по
+	// числу записей в секунду.
 	const INSTRUMENTINDEX firstDAC = m_nInstruments;
 	constexpr size_t MaxDacSamples = 200;
-	struct DacSample { uint32 start = 0, length = 0; double rate = 0.0; int count = 0; };
+	struct DacSample { uint32 hit = 0; double writeRate = 0.0; };
 	std::vector<DacSample> dacSamples;
 	std::vector<int> hitSample(hits.size(), -1);
+	std::vector<int> hitNote(hits.size(), NOTE_MIDDLEC);
+	const auto writeRate = [&](const Hit &h) { return (h.last > h.first) ? static_cast<double>(h.writeCount) * VgmRate / (h.last - h.first) : 0.0; };
 	for(size_t i = 0; i < hits.size(); i++)
 	{
 		const Hit &h = hits[i];
@@ -1167,30 +1180,33 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		for(size_t s = 0; s < dacSamples.size() && match < 0; s++)
 		{
 			DacSample &known = dacSamples[s];
-			const uint32 common = std::min(h.bytes, known.length);
-			if(!std::memcmp(raw.data() + h.start, raw.data() + known.start, common))
-			{
-				match = static_cast<int>(s);
-				if(h.bytes > known.length)
-				{
-					known.start = h.start;
-					known.length = h.bytes;
-				}
-			}
+			const Hit &k = hits[known.hit];
+			// Удар обрывается следующим ударом где угодно, а дальше начала
+			// записи одного и того же барабана расходятся: драйвер шагает по
+			// сэмплу с переменным шагом. Поэтому тот же удар — это то же начало,
+			// первые 16 записей (короткий кусок — целиком).
+			const uint32 common = std::min<uint32>(16, std::min(h.writeCount, k.writeCount));
+			if(common < 4)
+				continue;
+			if(std::memcmp(dacWrites.data() + h.writeStart, dacWrites.data() + k.writeStart, common))
+				continue;
+			match = static_cast<int>(s);
+			// Звук берём у более длинного удара той же скорости.
+			const double ratio = (known.writeRate > 0.0) ? writeRate(h) / known.writeRate : 1.0;
+			if(h.writeCount > k.writeCount && std::abs(std::log2(std::max(ratio, 1e-6))) < 0.02)
+				known.hit = static_cast<uint32>(i);
 		}
 		if(match < 0 && dacSamples.size() < MaxDacSamples)
 		{
 			match = static_cast<int>(dacSamples.size());
-			dacSamples.push_back({h.start, h.bytes});
+			dacSamples.push_back({static_cast<uint32>(i), writeRate(h)});
 		}
 		if(match < 0)
 			continue;
 		hitSample[i] = match;
-		if(h.last > h.first)
-		{
-			dacSamples[match].rate += static_cast<double>(h.bytes) * VgmRate / (h.last - h.first);
-			dacSamples[match].count++;
-		}
+		const double base = dacSamples[match].writeRate, own = writeRate(h);
+		if(base > 0.0 && own > 0.0)
+			hitNote[i] = std::clamp(NOTE_MIDDLEC + mpt::saturate_round<int>(12.0 * std::log2(own / base)), int(NOTE_MIN), int(NOTE_MAX));
 	}
 	const auto addDacSample = [&](const uint8 *source, uint32 length, uint32 rate, bool loop, std::string name) -> bool
 	{
@@ -1226,8 +1242,10 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	size_t dacMade = 0;
 	for(const auto &known : dacSamples)
 	{
-		const uint32 rate = known.count ? mpt::saturate_round<uint32>(known.rate / known.count) : 16000;
-		if(!addDacSample(raw.data() + known.start, known.length, rate, false, "DAC " + std::to_string(dacMade + 1)))
+		// Звук снят по времени лога, на его частоте; отличие скорости удара от
+		// эталонного учтено нотой.
+		const Hit &h = hits[known.hit];
+		if(!addDacSample(raw.data() + h.start, h.bytes, VgmRate, false, "DAC " + std::to_string(dacMade + 1)))
 			break;
 		dacMade++;
 	}
@@ -1235,8 +1253,11 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	{
 		if(hitSample[i] < 0 || static_cast<size_t>(hitSample[i]) >= dacMade)
 			continue;
-		events.push_back({hits[i].first, 5, static_cast<ModCommand::NOTE>(NOTE_MIDDLEC), 64,
+		events.push_back({hits[i].first, 5, static_cast<ModCommand::NOTE>(hitNote[i]), 64,
 			static_cast<int>(firstDAC) + hitSample[i]});
+		const Hit &sound = hits[dacSamples[hitSample[i]].hit];
+		if(hits[i].writeCount + 8 < sound.writeCount)
+			events.push_back({hits[i].last, 5, NOTE_NOTECUT, 255, -1});
 	}
 
 	// Потоковый ЦАП: сэмпл на каждый использованный блок. Его частота — та,
@@ -1970,6 +1991,90 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			flush(voice);
 			flush(voice);  // и то, что переехало
 		}
+	}
+
+	// У каждого вида эффекта в канале — своя постоянная колонка. Иначе одна и
+	// та же подстройка (+xx) стояла то в первой колонке, то во второй, смотря
+	// что ещё было в строке, и читать узор было нельзя. Портаменто и задержка
+	// всегда в первой (движок ищет их только там), остальные — по частоте
+	// употребления. Колонок в редакторе показывается столько, сколько нужно.
+	for(CHANNELINDEX chn = 0; chn < GetNumChannels(); chn++)
+	{
+		const auto firstColumn = [](EffectCommand command) { return command == CMD_TONEPORTAMENTO || command == CMD_S3MCMDEX; };
+		std::map<EffectCommand, uint32> uses;
+		bool anyFirst = false;
+		for(const auto &pat : Patterns)
+		{
+			for(ROWINDEX row = 0; row < pat.GetNumRows(); row++)
+			{
+				const ModCommand &cell = *pat.GetpModCommand(row, chn);
+				for(uint8 slot = 0; slot < ModCommand::Effects(); slot++)
+				{
+					const EffectCommand command = cell.GetEffect(slot).first;
+					if(command == CMD_NONE)
+						continue;
+					if(firstColumn(command))
+						anyFirst = true;
+					else
+						uses[command]++;
+				}
+			}
+		}
+		std::vector<std::pair<uint32, EffectCommand>> order;
+		for(const auto &[command, count] : uses)
+			order.emplace_back(count, command);
+		std::stable_sort(order.begin(), order.end(), [](const auto &a, const auto &b) { return a.first > b.first; });
+		std::map<EffectCommand, uint8> column;
+		uint8 next = anyFirst ? 1 : 0;
+		for(const auto &[count, command] : order)
+		{
+			if(next < ModCommand::Effects())
+				column[command] = next++;
+		}
+		uint8 used = 1;
+		for(auto &pat : Patterns)
+		{
+			for(ROWINDEX row = 0; row < pat.GetNumRows(); row++)
+			{
+				ModCommand &cell = *pat.GetpModCommand(row, chn);
+				std::array<std::pair<EffectCommand, uint8>, ModCommand::Effects()> effects;
+				for(uint8 slot = 0; slot < ModCommand::Effects(); slot++)
+				{
+					effects[slot] = cell.GetEffect(slot);
+					cell.SetEffect(slot, CMD_NONE, 0);
+				}
+				std::vector<std::pair<EffectCommand, uint8>> homeless;
+				for(const auto &[command, param] : effects)
+				{
+					if(command == CMD_NONE)
+						continue;
+					uint8 slot = ModCommand::Effects();
+					if(firstColumn(command))
+						slot = 0;
+					else if(auto it = column.find(command); it != column.end())
+						slot = it->second;
+					if(slot < ModCommand::Effects() && cell.GetEffect(slot).first == CMD_NONE)
+						cell.SetEffect(slot, command, param);
+					else
+						homeless.emplace_back(command, param);
+				}
+				for(const auto &[command, param] : homeless)
+				{
+					if(const uint8 slot = cell.FreeEffectSlot(); slot < ModCommand::Effects())
+						cell.SetEffect(slot, command, param);
+				}
+				for(uint8 slot = 0; slot < ModCommand::Effects(); slot++)
+				{
+					if(cell.GetEffect(slot).first != CMD_NONE)
+						used = std::max<uint8>(used, slot + 1);
+				}
+			}
+		}
+#ifdef MODPLUG_TRACKER
+		ChnSettings[chn].effectColumns = used;
+#else
+		MPT_UNUSED(used);
+#endif
 	}
 
 	m_modFormat.formatName = UL_("VGM (register log)");
