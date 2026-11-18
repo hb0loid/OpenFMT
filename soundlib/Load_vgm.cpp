@@ -1529,7 +1529,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 #ifdef MODPLUG_TRACKER
 	const bool compact = TrackerSettings::Instance().vgmCompactRows;
 #else
-	const bool compact = (std::getenv("OPENFMT_VGM_FRAMES") == nullptr);  // Для сверок: кадр на строку
+	const bool compact = (std::getenv("OPENFMT_VGM_COMPACT") != nullptr);  // По умолчанию точный режим, как в трекере
 #endif
 	uint32 framesPerRow = 1, phase = 0;
 	if(compact)
@@ -1573,7 +1573,9 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 
 	const uint32 lastRow = frameOf(events.back()) / framesPerRow;
 	const ROWINDEX totalRows = static_cast<ROWINDEX>(std::min<uint32>(lastRow + 2, MAX_PATTERN_ROWS * 1000u));
-	constexpr ROWINDEX RowsPerPattern = 64;
+	// Кадр на строку — это 60 строк в секунду; паттерн по 128 строк держит
+	// около двух секунд. В компактном режиме строки длиннее, хватает 64.
+	const ROWINDEX RowsPerPattern = compact ? 64 : 128;
 	const PATTERNINDEX patternCount = static_cast<PATTERNINDEX>((totalRows + RowsPerPattern - 1) / RowsPerPattern);
 	Order().resize(patternCount);
 	for(PATTERNINDEX pat = 0; pat < patternCount; pat++)

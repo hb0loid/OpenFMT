@@ -25,8 +25,9 @@ files for editing.
   PSG), TFM Music Maker `.tfi`, `.opni`. They can be previewed and dragged
   from the instrument library in the tree view.
 - VGM import (YM2612, YM2151, SN76489, YM2612 DAC and YMZ280B), with slides,
-  vibrato and detune. By default several frames go into one row, with note
-  delays keeping note timing exact (Setup → General → *Compact VGM import*).
+  vibrato and detune, one frame per row. *Setup → General → Compact VGM
+  import* packs several frames per row for readability, at some cost in
+  sound.
 - Polyphony: up to four YM2612, YM2151 and SN76489 chips per song (Chips tab).
 - One to four effect columns per channel (channel header menu, or drag the
   header edge).
@@ -112,8 +113,9 @@ OpenFMT — трекер для Windows на основе [OpenMPT](https://open
   PSG SMS), `.tfi`, `.opni`. Их можно прослушивать и перетаскивать из
   библиотеки инструментов в дереве слева.
 - Импорт VGM (YM2612, YM2151, SN76489, ЦАП YM2612 и YMZ280B) со слайдами,
-  вибрато и подстройкой. По умолчанию несколько кадров в строке, время нот
-  точное благодаря задержкам (Setup → General → *Compact VGM import*).
+  вибрато и подстройкой, кадр на строку. *Setup → General → Compact VGM
+  import* упаковывает несколько кадров в строку ради читаемости, ценой
+  точности звука.
 - Полифония: до четырёх чипов YM2612, YM2151 и SN76489 в песне (вкладка Chips).
 - От одной до четырёх колонок эффектов на канал (меню шапки канала или
   перетаскивание края шапки).

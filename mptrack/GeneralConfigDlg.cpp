@@ -207,7 +207,7 @@ void COptionsGeneral::OnOptionSelChanged()
 		desc = generalOptionsList[sel].description;
 	} else if(sel == mpt::saturate_cast<int>(std::size(generalOptionsList)))
 	{
-		desc = "VGM files are imported with rows of several frames, as the song was written: note timing stays exact (note delays where needed), pitch and volume changes inside a row are smoothed. When off, every frame is its own row: exact, but long patterns.";
+		desc = "Off (default): every frame of a VGM file is its own row. The sound is exact, the patterns are long. On: several frames go into one row for shorter, more readable patterns; note timing stays exact, but vibrato and volume changes inside a row are smoothed, so it sounds less like the original.";
 	}
 	SetDlgItemText(IDC_TEXT1, mpt::ToCString(mpt::Charset::ASCII, desc));
 }

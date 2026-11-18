@@ -267,7 +267,7 @@ TrackerSettings::TrackerSettings(SettingsContainer &conf)
 	, midiImportPatternLen(conf, UL_("MIDI Settings"), UL_("MidiImportPatLen"), 128)
 	, midiImportQuantize(conf, UL_("MIDI Settings"), UL_("MidiImportQuantize"), 32)
 	, midiImportTicks(conf, UL_("MIDI Settings"), UL_("MidiImportTicks"), 6)
-	, vgmCompactRows(conf, UL_("Import"), UL_("VgmCompactRows"), true)
+	, vgmCompactRows(conf, UL_("Import"), UL_("VgmCompactRows"), false)  // точный импорт по умолчанию: компактный сглаживает звук
 	// Pattern Editor
 	, gbLoopSong(conf, UL_("Pattern Editor"), UL_("LoopSong"), true)
 	, gnPatternSpacing(conf, UL_("Pattern Editor"), UL_("Spacing"), 0)
