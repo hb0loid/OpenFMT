@@ -37,6 +37,13 @@
 
 OPENMPT_NAMESPACE_BEGIN
 
+// Подсказка для обычного OpenMPT в комментарии сохранённой песни (OpenFMT).
+static constexpr char OpenFMTSongMarker[] = "-- Made with OpenFMT --";
+static constexpr char OpenFMTSongNote[] = "-- Made with OpenFMT --\r"
+	"This song uses FM and PSG chips (YM2612, YM2151, SN76489)\r"
+	"that only OpenFMT can play. Download it here:\r"
+	"https://github.com/hb0loid/OpenFMT";
+
 
 const uint16 verMptFileVer = 0x891;
 const uint16 verMptFileVerLoadLimit = 0x1000; // If cwtv-field is greater or equal to this value,
@@ -777,6 +784,15 @@ bool CSoundFile::ReadIT(FileReader &file, ModLoadingFlags loadFlags)
 		// if(itHeader.cwtv == 0x0214 && itHeader.cmwt == 0x0214 && itHeader.reserved == ITFileHeader::chibiMagic) --> Chibi detected.
 		// But we'll just use autodetection here:
 		m_songMessage.Read(file, fileHeader.msglength, SongMessage::leAutodetect);
+		// Подсказку «сделано в OpenFMT», которую пишет сохранение, убираем:
+		// иначе она копилась бы с каждым сохранением.
+		if(const auto at = m_songMessage.rfind(OpenFMTSongMarker); at != std::string::npos)
+		{
+			size_t cut = at;
+			while(cut > 0 && m_songMessage[cut - 1] == SongMessage::InternalLineEnding)
+				cut--;
+			m_songMessage.erase(cut);
+		}
 	}
 
 	// Reading Instruments
@@ -1803,11 +1819,26 @@ bool CSoundFile::SaveIT(std::ostream &f, const mpt::PathString &filename, bool c
 	}
 
 	// Comments
+	// OpenFMT: если в песне есть голоса чипов (FM, PSG), в комментарий файла
+	// дописывается подсказка — обычный OpenMPT их не сыграет, а комментарий
+	// покажет. В самой песне её нет, а OpenFMT при загрузке её убирает.
+	std::string message = m_songMessage;
+	{
+		bool chips = false;
+		for(SAMPLEINDEX smp = 1; smp <= GetNumSamples() && !chips; smp++)
+			chips = Samples[smp].isOPN2 || Samples[smp].psg != nullptr;
+		if(chips)
+		{
+			if(!message.empty())
+				message += "\r\r";
+			message += OpenFMTSongNote;
+		}
+	}
 	uint16 msglength = 0;
-	if(!m_songMessage.empty())
+	if(!message.empty())
 	{
 		itHeader.special |= ITFileHeader::embedSongMessage;
-		itHeader.msglength = msglength = mpt::saturate_cast<uint16>(m_songMessage.length() + 1u);
+		itHeader.msglength = msglength = mpt::saturate_cast<uint16>(message.length() + 1u);
 		itHeader.msgoffset = dwHdrPos + dwExtra + (itHeader.insnum + itHeader.smpnum + itHeader.patnum) * 4;
 	}
 
@@ -1878,7 +1909,7 @@ bool CSoundFile::SaveIT(std::ostream &f, const mpt::PathString &filename, bool c
 	if(itHeader.special & ITFileHeader::embedSongMessage)
 	{
 		dwPos += msglength;
-		mpt::IO::WriteRaw(f, m_songMessage.c_str(), msglength);
+		mpt::IO::WriteRaw(f, message.c_str(), msglength);
 	}
 
 	// Writing instruments
