@@ -3,10 +3,10 @@
 OpenFMT is a music tracker for Windows built on [OpenMPT](https://openmpt.org/)
 with native sound chip support: Yamaha **YM2612** (OPN2, Mega Drive / Genesis),
 **YM2151** (OPM, arcade), TI **SN76489** (PSG) and the OPL chips OpenMPT already
-had. It can import **Furnace** (`.fur`), **DefleMask** (`.dmf`) and **VGM**
-files for editing.
+had. It can import **Furnace** (`.fur`), **DefleMask** (`.dmf`), **VGM** and
+Nintendo DS **2SF** (`.mini2sf`) files for editing.
 
-**Status: 0.1.1 — early preview.** Expect rough edges; see *Known issues*.
+**Status: 0.1.2 — early preview.** Expect rough edges; see *Known issues*.
 
 *Русская версия ниже.*
 
@@ -24,7 +24,8 @@ files for editing.
 - Instrument presets: Furnace `.fui`, DefleMask `.dmp` (YM2612, YM2151, SMS
   PSG), TFM Music Maker `.tfi`, `.opni`. They can be previewed and dragged
   from the instrument library in the tree view.
-- VGM import (YM2612, YM2151, SN76489, YM2612 DAC and YMZ280B), with slides,
+- VGM import (YM2612, YM2151, SN76489, YM2612 DAC, YMZ280B, OKIM6295, 32X PWM
+  and Mega CD RF5C164; Master System / Game Gear), with slides,
   vibrato and detune, one frame per row. *Setup → General → Compact VGM
   import* packs several frames per row for readability, at some cost in
   sound.
@@ -96,9 +97,10 @@ developers.
 OpenFMT — трекер для Windows на основе [OpenMPT](https://openmpt.org/) со
 встроенными звуковыми чипами: **YM2612** (OPN2, Mega Drive), **YM2151** (OPM),
 **SN76489** (PSG) и OPL, который был в OpenMPT и раньше. Открывает для
-редактирования файлы **Furnace** (`.fur`), **DefleMask** (`.dmf`) и **VGM**.
+редактирования файлы **Furnace** (`.fur`), **DefleMask** (`.dmf`), **VGM** и
+музыку Nintendo DS **2SF** (`.mini2sf`).
 
-**Версия 0.1.1 — ранняя.** Шероховатости есть, см. «Известные проблемы».
+**Версия 0.1.2 — ранняя.** Шероховатости есть, см. «Известные проблемы».
 
 ## Что умеет
 
@@ -112,7 +114,8 @@ OpenFMT — трекер для Windows на основе [OpenMPT](https://open
 - Пресеты инструментов: `.fui` Furnace, `.dmp` DefleMask (YM2612, YM2151,
   PSG SMS), `.tfi`, `.opni`. Их можно прослушивать и перетаскивать из
   библиотеки инструментов в дереве слева.
-- Импорт VGM (YM2612, YM2151, SN76489, ЦАП YM2612 и YMZ280B) со слайдами,
+- Импорт VGM (YM2612, YM2151, SN76489, ЦАП YM2612, YMZ280B, OKIM6295, PWM 32X
+  и RF5C164 Mega CD; Master System / Game Gear) со слайдами,
   вибрато и подстройкой, кадр на строку. *Setup → General → Compact VGM
   import* упаковывает несколько кадров в строку ради читаемости, ценой
   точности звука.
