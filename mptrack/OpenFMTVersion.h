@@ -13,4 +13,4 @@
 #pragma once
 
 #define OPENFMT_NAME      "OpenFMT"
-#define OPENFMT_VERSION_A "0.1.0"
+#define OPENFMT_VERSION_A "0.1.1"

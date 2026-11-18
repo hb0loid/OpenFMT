@@ -3,9 +3,10 @@
 OpenFMT is a music tracker for Windows built on [OpenMPT](https://openmpt.org/)
 with native sound chip support: Yamaha **YM2612** (OPN2, Mega Drive / Genesis),
 **YM2151** (OPM, arcade), TI **SN76489** (PSG) and the OPL chips OpenMPT already
-had. It can import **Furnace** (`.fur`) and **VGM** files for editing.
+had. It can import **Furnace** (`.fur`), **DefleMask** (`.dmf`) and **VGM**
+files for editing.
 
-**Status: 0.1.0 — early preview.** Expect rough edges; see *Known issues*.
+**Status: 0.1.1 — early preview.** Expect rough edges; see *Known issues*.
 
 *Русская версия ниже.*
 
@@ -15,16 +16,24 @@ had. It can import **Furnace** (`.fur`) and **VGM** files for editing.
   normal OpenMPT module and play through emulated chips (ymfm).
 - Instrument editors for the FM chips (operators, algorithm, feedback, SSG-EG,
   LFO, randomize) and a macro editor for the PSG.
-- Furnace `.fur` import: patterns, orders, instruments, samples and the chip
-  effects that have an equivalent (FM operator levels, PSG noise mode,
-  arpeggio speed, Furnace-style slides and arpeggios).
+- Furnace `.fur` and DefleMask `.dmf` import: patterns, orders, instruments
+  (including ADSR volume macros), samples and the chip effects that have an
+  equivalent (FM operator levels, PSG noise mode, arpeggio speed,
+  Furnace-style slides and arpeggios). YMZ280B sample channels play as
+  samples with the chip's panning.
 - Instrument presets: Furnace `.fui`, DefleMask `.dmp` (YM2612, YM2151, SMS
   PSG), TFM Music Maker `.tfi`, `.opni`. They can be previewed and dragged
   from the instrument library in the tree view.
-- VGM import.
-- Two effect columns per pattern cell.
+- VGM import (YM2612, YM2151, SN76489, YM2612 DAC and YMZ280B), with slides,
+  vibrato and detune. By default several frames go into one row, with note
+  delays keeping note timing exact (Setup → General → *Compact VGM import*).
+- Polyphony: up to four YM2612, YM2151 and SN76489 chips per song (Chips tab).
+- One to four effect columns per channel (channel header menu, or drag the
+  header edge).
 - Per-channel oscilloscopes and a Chips tab with per-chip volume.
 - Optional dark interface.
+- Songs with chip parts saved by OpenFMT tell plain OpenMPT, in the song
+  comments, where to get OpenFMT.
 
 ## Getting started
 
@@ -49,10 +58,9 @@ Older OpenFMT test builds saved `.fmt` files; these still open.
 
 - Furnace import aims at the Furnace versions used by the files it was tested
   with; some macros, effects and chip quirks still sound different.
-- PSG pitch slides can differ slightly from Furnace in some songs.
-- After seeking, a few spots can play quieter than when playing from the start.
-- The second effect column is not yet supported by Find/Replace and
-  interpolation.
+- YM2612 extended channel 3 (separate operator pitches) is not supported yet.
+- In compact VGM import, vibrato and arpeggios stay as per-row finetune and
+  legato notes instead of 4xy / 0xy.
 - Opening modules from `.rar` archives is not available (see *License*).
 - Tested on Windows 11 only so far.
 
@@ -87,9 +95,9 @@ developers.
 OpenFMT — трекер для Windows на основе [OpenMPT](https://openmpt.org/) со
 встроенными звуковыми чипами: **YM2612** (OPN2, Mega Drive), **YM2151** (OPM),
 **SN76489** (PSG) и OPL, который был в OpenMPT и раньше. Открывает для
-редактирования файлы **Furnace** (`.fur`) и **VGM**.
+редактирования файлы **Furnace** (`.fur`), **DefleMask** (`.dmf`) и **VGM**.
 
-**Версия 0.1.0 — ранняя.** Шероховатости есть, см. «Известные проблемы».
+**Версия 0.1.1 — ранняя.** Шероховатости есть, см. «Известные проблемы».
 
 ## Что умеет
 
@@ -97,15 +105,22 @@ OpenFMT — трекер для Windows на основе [OpenMPT](https://open
   OpenMPT и звучат через эмуляцию чипов (ymfm).
 - Редакторы FM-инструментов (операторы, алгоритм, обратная связь, SSG-EG, LFO,
   случайный патч) и редактор макросов PSG.
-- Импорт `.fur`: паттерны, порядок, инструменты, сэмплы и эффекты чипов,
-  у которых есть аналог.
+- Импорт `.fur` и `.dmf`: паттерны, порядок, инструменты (в том числе
+  макросы громкости ADSR), сэмплы и эффекты чипов, у которых есть аналог.
+  Каналы YMZ280B играют сэмплами с панорамой как у чипа.
 - Пресеты инструментов: `.fui` Furnace, `.dmp` DefleMask (YM2612, YM2151,
   PSG SMS), `.tfi`, `.opni`. Их можно прослушивать и перетаскивать из
   библиотеки инструментов в дереве слева.
-- Импорт VGM.
-- Две колонки эффектов в ячейке.
+- Импорт VGM (YM2612, YM2151, SN76489, ЦАП YM2612 и YMZ280B) со слайдами,
+  вибрато и подстройкой. По умолчанию несколько кадров в строке, время нот
+  точное благодаря задержкам (Setup → General → *Compact VGM import*).
+- Полифония: до четырёх чипов YM2612, YM2151 и SN76489 в песне (вкладка Chips).
+- От одной до четырёх колонок эффектов на канал (меню шапки канала или
+  перетаскивание края шапки).
 - Осциллографы по каналам и вкладка Chips с громкостью чипов.
 - Тёмный интерфейс.
+- Песни с партиями чипов, сохранённые в OpenFMT, в комментарии подсказывают
+  обычному OpenMPT, где взять OpenFMT.
 
 ## Как начать
 
@@ -126,9 +141,10 @@ OpenFMT сохраняет обычные `.mptm` с дополнительны�
 
 - Импорт Furnace рассчитан на версии Furnace из проверенных файлов; часть
   макросов, эффектов и особенностей чипов звучит иначе.
-- Слайды PSG в некоторых треках немного расходятся с Furnace по высоте.
-- После перемотки отдельные места могут звучать тише, чем при игре с начала.
-- Вторая колонка эффектов пока не поддерживается в Find/Replace и интерполяции.
+- Расширенный третий канал YM2612 (свои частоты операторов) пока не
+  поддерживается.
+- В компактном импорте VGM вибрато и арпеджио остаются построчной подстройкой
+  и легато, а не 4xy / 0xy.
 - Модули из архивов `.rar` не открываются (см. «Лицензия»).
 - Проверено пока только на Windows 11.
 
