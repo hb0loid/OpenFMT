@@ -140,6 +140,10 @@ struct FurInstrument
 	uint32 volumeRelease = uint32_max;
 	uint8 volumeStep = 1;
 	uint8 volumeDelay = 0;
+	// Макрос громкости типа ADSR (а не последовательность): параметры low,
+	// high, AR, HT, DR, SL, ST, SR, RR — как в macroInt.cpp у Furnace.
+	bool volumeADSR = false;
+	std::array<int32, 9> adsr{};
 	PSGPatch psg;
 };
 
@@ -174,6 +178,28 @@ void ReadMacro(FileReader file, FurInstrument &ins, size_t &unsupported)
 			case 14: psgMacro = &ins.psg.macros[PSGPatch::Reset]; break;
 			default: break;
 			}
+		}
+		// Громкость в виде ADSR. Значения макроса тут не по тикам, а
+		// параметры огибающей; огибающую из них строит SetFurEnvelope.
+		if(code == 0 && !psgMacro && ((flags >> 1) & 3) == 1)
+		{
+			std::vector<int32> params;
+			for(size_t i = 0; i < length; i++)
+			{
+				switch(size)
+				{
+				case 0: params.push_back(file.ReadUint8()); break;
+				case 1: params.push_back(file.ReadInt8()); break;
+				case 2: params.push_back(file.ReadInt16LE()); break;
+				case 3: params.push_back(file.ReadInt32LE()); break;
+				}
+			}
+			ins.volumeADSR = true;
+			for(size_t i = 0; i < ins.adsr.size(); i++)
+				ins.adsr[i] = i < params.size() ? params[i] : 0;
+			ins.volumeStep = std::max<uint8>(1, speed);
+			ins.volumeDelay = delay;
+			continue;
 		}
 		if((code != 0 && !psgMacro) || (flags & 6) != 0)
 		{
@@ -536,6 +562,77 @@ std::pair<EffectCommand, uint8> FurEffect(int code, uint8 value)
 // же логарифмическая таблица с шагом 0,75 дБ, что и у громкости ноты.
 void SetFurEnvelope(ModInstrument &ins, const FurInstrument &fur, int maxVolume, bool dacScale = false)
 {
+	if(fur.volumeADSR)
+	{
+		// ADSR Furnace: за тик позиция прибавляет или отнимает скорость фазы
+		// в единицах самого значения. Новые версии Furnace считают позицию в
+		// 1/256 значения, но эталоны и файлы сделаны в 0.6.7, где это не так:
+		// по поканальному экспорту athletic rrt атака AR=255 до 160 занимает
+		// один тик, а отпускание RR=111 от 160 — два, а не 160 и 370 тиков.
+		// Нулевая скорость держит фазу на месте. Макрос шагает раз в `speed`
+		// тиков, первый шаг — после задержки.
+		const auto [low, high, attack, hold, decay, sustainLevel, sustainTime, sustainRate, release] = fur.adsr;
+		const auto scale = [&](int32 v) -> uint8
+		{
+			if(dacScale)
+			{
+				const int level = std::clamp<int32>(v, 0, 64);
+				const double amplitude = level > 0 ? std::pow(10.0, (level - 64) * 0.75 / 20.0) : 0.0;
+				return static_cast<uint8>(std::clamp<int>(mpt::saturate_round<int>(64.0 * amplitude), 0, 64));
+			}
+			return static_cast<uint8>(std::clamp<int32>(v, 0, maxVolume) * 64 / maxVolume);
+		};
+		const int32 bottom = low, top = high, sus = sustainLevel;
+		const auto steps = [](int32 distance, int32 rate) -> int64 { return rate > 0 ? (std::abs(distance) + rate - 1) / rate : -1; };
+		const int64 step = std::max<uint8>(1, fur.volumeStep);
+		auto &env = ins.VolEnv;
+		env.dwFlags.set(ENV_ENABLED);
+		int64 tick = fur.volumeDelay;
+		if(tick)
+			env.push_back(0, scale(low));
+		env.push_back(static_cast<uint16>(tick), scale(low));
+		const auto add = [&](int64 count, int32 value)
+		{
+			tick += count * step;
+			env.push_back(static_cast<uint16>(std::min<int64>(tick, 60000)), scale(value));
+		};
+		const auto holdHere = [&](int32 levelFrom)
+		{
+			// Фаза стоит: здесь sustain, а после `===` — отпускание к низу.
+			env.nSustainStart = env.nSustainEnd = env.LastPoint();
+			env.dwFlags.set(ENV_SUSTAIN);
+			if(const int64 r = steps(levelFrom - bottom, release); r > 0)
+				add(r, low);
+		};
+		const int64 a = steps(top - bottom, attack);
+		if(a < 0)
+		{
+			holdHere(bottom);
+			return;
+		}
+		add(a, high);
+		if(hold > 0)
+			add(hold, high);
+		const int64 d = steps(top - sus, decay);
+		if(d < 0)
+		{
+			holdHere(top);
+			return;
+		}
+		add(d, sustainLevel);
+		if(sustainTime > 0)
+			add(sustainTime, sustainLevel);
+		const int64 sr = steps(sus - bottom, sustainRate);
+		if(sr < 0)
+		{
+			holdHere(sus);
+			return;
+		}
+		add(sr, low);
+		env.nSustainStart = env.nSustainEnd = env.LastPoint();
+		env.dwFlags.set(ENV_SUSTAIN);
+		return;
+	}
 	if(fur.volume.empty())
 		return;
 	auto &env = ins.VolEnv;
@@ -1610,7 +1707,7 @@ bool CSoundFile::BuildFurSong(FurSong &song, ModLoadingFlags flags)
 						// звенели дальше, чем у Furnace.
 						if(note == 180)
 							cell.note = NOTE_NOTECUT;
-						else if(furIns >= 0 && furInstruments[furIns].volumeRelease < furInstruments[furIns].volume.size())
+						else if(furIns >= 0 && (furInstruments[furIns].volumeADSR || furInstruments[furIns].volumeRelease < furInstruments[furIns].volume.size()))
 							cell.note = NOTE_KEYOFF;
 					}
 					else if(note == 180 || note == 181)
