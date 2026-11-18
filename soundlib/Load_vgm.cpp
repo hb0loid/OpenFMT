@@ -2046,9 +2046,11 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	const bool pwmSong = !pwmSegments.empty();
 	if(header.okiClock && std::any_of(pcmVoiceUsed.begin() + OKIBase, pcmVoiceUsed.begin() + OKIBase + OKIChannels, [](bool b) { return b; }))
 	{
-		// Ещё -6 дБ на оба: удары OKI иначе упираются в потолок.
+		// Ещё -6 дБ на оба: удары OKI иначе упираются в потолок. И OKI ещё
+		// на 5 дБ тише соотношения MAME: так комфортнее на слух (автор
+		// подобрал громкость каналов 36 из 64), 96 * 36 / 64 = 54.
 		m_chipVolume[ChipOPM] = ChipVolumeUnity / 8;
-		m_nSamplePreAmp = 48 * 2;
+		m_nSamplePreAmp = 54;
 	}
 	if(pwmSong)
 	{
