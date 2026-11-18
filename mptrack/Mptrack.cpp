@@ -1646,7 +1646,7 @@ BOOL CTrackApp::InitInstanceImpl(CMPTCommandLineInfo &cmdInfo)
 #if defined(MPT_ENABLE_SYSTEM_SUPPORT_CHECK)
 		bool deprecatedSoundDevice = GetSoundDevicesManager()->FindDeviceInfo(TrackerSettings::Instance().GetSoundDeviceIdentifier()).IsDeprecated();
 		bool showSettings = deprecatedSoundDevice && !TrackerSettings::Instance().m_SoundDeprecatedDeviceWarningShown && (Reporting::Confirm(
-			U_("You have currently selected a sound device which is deprecated. MME/WaveOut support will be removed in a future OpenMPT version.\n") +
+			U_("You have currently selected a sound device which is deprecated. MME/WaveOut support may be removed in a future version.\n") +
 			U_("The recommended sound device type is WASAPI.\n") +
 			U_("Do you want to change your sound device settings now?"),
 			U_("OpenMPT - Deprecated sound device")

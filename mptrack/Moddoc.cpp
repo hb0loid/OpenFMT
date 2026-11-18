@@ -242,8 +242,8 @@ BOOL CModDoc::OnOpenDocument(LPCTSTR lpszPathName)
 	EndWaitCursor();
 
 	logcapturer.ShowLog(
-		MPT_CFORMAT("File: {}\nLast saved with: {}, you are using OpenMPT {}\n\n")
-		(filename, m_SndFile.m_modFormat.madeWithTracker, Version::Current()));
+		MPT_CFORMAT("File: {}\nLast saved with: {}, you are using OpenFMT {}\n\n")
+		(filename, m_SndFile.m_modFormat.madeWithTracker, mpt::ToCString(mpt::Charset::ASCII, OPENFMT_VERSION_A)));
 
 	if((GetModType() == MOD_TYPE_NONE) || (!m_SndFile.GetNumChannels()))
 		return FALSE;
@@ -294,7 +294,7 @@ BOOL CModDoc::OnOpenDocument(LPCTSTR lpszPathName)
 	// Show warning if file was made with more recent version of OpenMPT except
 	if(m_SndFile.m_dwLastSavedWithVersion.WithoutTestNumber() > Version::Current())
 	{
-		Reporting::Notification(MPT_UFORMAT("Warning: this song was last saved with a more recent version of OpenMPT.\r\nSong saved with: v{}. Current version: v{}.\r\n")(
+		Reporting::Notification(MPT_UFORMAT("Warning: this song was last saved with a more recent version of OpenMPT or OpenFMT.\r\nSong saved with: v{}. Current version (OpenMPT base): v{}.\r\n")(
 			m_SndFile.m_dwLastSavedWithVersion,
 			Version::Current()));
 	}

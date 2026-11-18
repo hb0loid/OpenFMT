@@ -502,7 +502,7 @@ bool CSoundFile::ReadIT(FileReader &file, ModLoadingFlags loadFlags)
 						return false;
 					} else if(fileHeader.cwtv > verMptFileVer)
 					{
-						AddToLog(LogInformation, U_("The loaded file was made with a more recent OpenMPT version and this version may not be able to load all the features or play the file correctly."));
+						AddToLog(LogInformation, U_("The loaded file was made with a more recent OpenMPT or OpenFMT version and this version may not be able to load all the features or play the file correctly."));
 					}
 				}
 			}
