@@ -2073,6 +2073,9 @@ bool CSoundFile::Read2SF(FileReader &file, ModLoadingFlags loadFlags)
 	const std::string utf8Message = mpt::ToCharset(mpt::Charset::UTF8, mpt::ToUnicode(charset, message));
 	m_songMessage.Read(reinterpret_cast<const std::byte *>(utf8Message.data()), utf8Message.size(), SongMessage::leAutodetect);
 
+	// В трекере окно после каждого импорта мешает; сведения о петле — для
+	// журнала libopenmpt.
+#ifndef MODPLUG_TRACKER
 	const mpt::ustring rowText = rowTicks ? MPT_UFORMAT("{} ticks per row")(rowTicks) : U_("one frame per row");
 	if(consistent)
 		AddToLog(LogInformation, MPT_UFORMAT("2SF: sequence {} loops from tick {} to {}{}; {}.")(seqNo, heldAcross ? loopEndTick : loopStartTick, heldAcross ? 2 * loopEndTick - loopStartTick : loopEndTick, heldAcross ? U_(" (second pass: notes held across the loop end)") : U_(""), rowText));
@@ -2080,6 +2083,7 @@ bool CSoundFile::Read2SF(FileReader &file, ModLoadingFlags loadFlags)
 		AddToLog(LogInformation, finished
 			? MPT_UFORMAT("2SF: sequence {} does not loop ({} ticks, {}).")(seqNo, seq.tick, rowText)
 			: MPT_UFORMAT("2SF: sequence {} has no common loop, {} ticks are imported ({}).")(seqNo, seq.tick, rowText));
+#endif
 	m_modFormat.formatName = UL_("Nintendo DS Sound Format");
 	m_modFormat.type = UL_("2sf");
 	m_modFormat.madeWithTracker = UL_("Nintendo DS sequence (SSEQ)");
