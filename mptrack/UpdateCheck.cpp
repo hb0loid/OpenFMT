@@ -624,13 +624,13 @@ void CUpdateCheck::StartUpdateCheckAsync(bool isAutoUpdate)
 		{
 			TrackerSettings::Instance().UpdateShowUpdateHint = false;
 			const auto checkIntervalDays = TrackerSettings::Instance().UpdateIntervalDays.Get();
-			CString msg = MPT_CFORMAT("OpenMPT would like to check for updates now, proceed?\n\nNote: In the future, OpenMPT will check for updates {}. If you do not want this, you can disable update checks in the setup.")
+			CString msg = MPT_CFORMAT("OpenFMT would like to check for updates now, proceed?\n\nNote: In the future, OpenFMT will check for updates {}. If you do not want this, you can disable update checks in the setup.")
 				(
 					checkIntervalDays == 0 ? CString(_T("on every program start")) :
 					checkIntervalDays == 1 ? CString(_T("every day")) :
 					MPT_CFORMAT("every {} days")(checkIntervalDays)
 				);
-			if(Reporting::Confirm(msg, _T("OpenMPT Update")) == cnfNo)
+			if(Reporting::Confirm(msg, _T("OpenFMT Update")) == cnfNo)
 			{
 				TrackerSettings::Instance().UpdateLastUpdateCheck = now;
 				return;
@@ -640,12 +640,12 @@ void CUpdateCheck::StartUpdateCheckAsync(bool isAutoUpdate)
 	{
 		if(!IsSuitableUpdateMoment())
 		{
-			Reporting::Notification(_T("Please save all modified modules before updating OpenMPT."), _T("OpenMPT Update"));
+			Reporting::Notification(_T("Please save all modified modules before updating OpenFMT."), _T("OpenFMT Update"));
 			return;
 		}
 		if(!TrackerSettings::Instance().UpdateEnabled)
 		{
-			if(Reporting::Confirm(_T("Update Check is disabled. Do you want to check anyway?"), _T("OpenMPT Update")) != cnfYes)
+			if(Reporting::Confirm(_T("Update Check is disabled. Do you want to check anyway?"), _T("OpenFMT Update")) != cnfYes)
 			{
 				return;
 			}
@@ -1225,9 +1225,9 @@ public:
 	{
 		try
 		{
-			SetTitle(_T("OpenMPT Update"));
+			SetTitle(_T("OpenFMT Update"));
 			SetAbortText(_T("Cancel"));
-			SetText(_T("OpenMPT Update"));
+			SetText(_T("OpenFMT Update"));
 			SetRange(0, 10000);
 			ProcessMessages();
 
@@ -1282,7 +1282,7 @@ public:
 						std::vector<mpt::ustring> keyAnchors = TrackerSettings::Instance().UpdateSigningKeysRootAnchors;
 						if(keyAnchors.empty())
 						{
-							Reporting::Warning(U_("Warning: No update signing public key root anchors configured. Update cannot be verified."), U_("OpenMPT Update"));
+							Reporting::Warning(U_("Warning: No update signing public key root anchors configured. Update cannot be verified."), U_("OpenFMT Update"));
 						}
 						for(const auto & keyAnchor : keyAnchors)
 						{
@@ -1304,10 +1304,10 @@ public:
 								mpt::rethrow_out_of_memory(e);
 							} catch(const std::exception &e)
 							{
-								Reporting::Warning(MPT_UFORMAT("Warning: Retrieving update signing public keys from {} failed: {}")(keyAnchor, mpt::get_exception_text<mpt::ustring>(e)), U_("OpenMPT Update"));
+								Reporting::Warning(MPT_UFORMAT("Warning: Retrieving update signing public keys from {} failed: {}")(keyAnchor, mpt::get_exception_text<mpt::ustring>(e)), U_("OpenFMT Update"));
 							} catch(...)
 							{
-								Reporting::Warning(MPT_UFORMAT("Warning: Retrieving update signing public keys from {} failed.")(keyAnchor), U_("OpenMPT Update"));
+								Reporting::Warning(MPT_UFORMAT("Warning: Retrieving update signing public keys from {} failed.")(keyAnchor), U_("OpenFMT Update"));
 							}
 						}
 					}
@@ -1458,7 +1458,7 @@ public:
 					if(mpt::OS::Windows::IsOriginal() && mpt::osinfo::windows::Version::Current().IsBefore(mpt::osinfo::windows::Version::WinVista))
 					{
 						wantClose = true;
-						Reporting::Information(U_("OpenMPT cannot automatically restart itself after the update is finished on Windows XP. You will need to restart it manually."), U_("OpenMPT Update"));
+						Reporting::Information(U_("OpenMPT cannot automatically restart itself after the update is finished on Windows XP. You will need to restart it manually."), U_("OpenFMT Update"));
 					}
 					if(reinterpret_cast<INT_PTR>(ShellExecute(NULL, NULL,
 						updateFilename.AsNative().c_str(),
@@ -1567,7 +1567,7 @@ public:
 		} catch(mpt::out_of_memory e)
 		{
 			mpt::delete_out_of_memory(e);
-			Reporting::Error(U_("Not enough memory to install update."), U_("OpenMPT Update Error"));
+			Reporting::Error(U_("Not enough memory to install update."), U_("OpenFMT Update Error"));
 			EndDialog(IDCANCEL);
 			return;
 		} catch(const HTTP::Abort &)
@@ -1580,22 +1580,22 @@ public:
 			return;
 		} catch(const Warning &e)
 		{
-			Reporting::Warning(mpt::get_exception_text<mpt::ustring>(e), U_("OpenMPT Update"));
+			Reporting::Warning(mpt::get_exception_text<mpt::ustring>(e), U_("OpenFMT Update"));
 			EndDialog(IDCANCEL);
 			return;
 		} catch(const Error &e)
 		{
-			Reporting::Error(mpt::get_exception_text<mpt::ustring>(e), U_("OpenMPT Update Error"));
+			Reporting::Error(mpt::get_exception_text<mpt::ustring>(e), U_("OpenFMT Update Error"));
 			EndDialog(IDCANCEL);
 			return;
 		} catch(const std::exception &e)
 		{
-			Reporting::Error(MPT_UFORMAT("Error installing update: {}")(mpt::get_exception_text<mpt::ustring>(e)), U_("OpenMPT Update Error"));
+			Reporting::Error(MPT_UFORMAT("Error installing update: {}")(mpt::get_exception_text<mpt::ustring>(e)), U_("OpenFMT Update Error"));
 			EndDialog(IDCANCEL);
 			return;
 		} catch(...)
 		{
-			Reporting::Error(U_("Error installing update."), U_("OpenMPT Update Error"));
+			Reporting::Error(U_("Error installing update."), U_("OpenFMT Update Error"));
 			EndDialog(IDCANCEL);
 			return;
 		}
