@@ -727,6 +727,33 @@ bool CSoundFile::CreateInternal(FileReader file, ModLoadingFlags loadFlags)
 
 	m_pModSpecs = &GetModSpecifications(GetBestSaveFormat());
 
+#ifdef MODPLUG_TRACKER
+	// Ширина каналов не записана в файле: показываем столько колонок
+	// эффектов, сколько в канале реально занято (хотя бы одну).
+	if(!m_effectColumnsFromFile)
+	{
+		for(CHANNELINDEX chn = 0; chn < GetNumChannels(); chn++)
+		{
+			uint8 used = 1;
+			for(const auto &pat : Patterns)
+			{
+				if(!pat.IsValid())
+					continue;
+				for(ROWINDEX row = 0; row < pat.GetNumRows(); row++)
+				{
+					const ModCommand &cell = *pat.GetpModCommand(row, chn);
+					for(uint8 slot = used; slot < ModCommand::Effects(); slot++)
+					{
+						if(cell.GetEffect(slot).first != CMD_NONE)
+							used = slot + 1;
+					}
+				}
+			}
+			ChnSettings[chn].effectColumns = used;
+		}
+	}
+#endif
+
 	// When reading a file made with an older version of MPT, it might be necessary to upgrade some settings automatically.
 	if(m_dwLastSavedWithVersion)
 	{

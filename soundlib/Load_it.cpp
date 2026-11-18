@@ -2993,6 +2993,7 @@ bool CSoundFile::LoadExtendedSongProperties(FileReader &file, bool ignoreChannel
 					const CHANNELINDEX numChannels = std::min(static_cast<CHANNELINDEX>(std::min(size_t(size), size_t(MAX_BASECHANNELS))), GetNumChannels());
 					for(CHANNELINDEX i = 0; i < numChannels; i++)
 						ChnSettings[i].effectColumns = static_cast<uint8>(std::clamp(chunk.ReadUint8(), uint8(1), ModCommand::NumEffects));
+					m_effectColumnsFromFile = true;
 				}
 				break;
 

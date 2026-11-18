@@ -2122,10 +2122,9 @@ bool CSoundFile::BuildFurSong(FurSong &song, ModLoadingFlags flags)
 			Samples[smp].nC5Speed = mpt::saturate_round<uint32>(Samples[smp].nC5Speed * tuningRatio);
 		}
 	}
-#ifdef MODPLUG_TRACKER
-	if(unsupported || extraSubsongs || std::find(voices.begin(), voices.end(), FurVoice::PCM) != voices.end())
-		AddToLog(LogWarning, MPT_UFORMAT("Furnace import is approximate. {} unsupported effects or macros, {} extra subsongs. YMZ280B is represented by PCM samples.")(unsupported, extraSubsongs));
-#endif
+	// Окна «импорт приблизительный» после каждого трека автор не хочет.
+	MPT_UNUSED(unsupported);
+	MPT_UNUSED(extraSubsongs);
 	return true;
 }
 

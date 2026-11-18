@@ -3228,11 +3228,17 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		for(const auto &[command, count] : uses)
 			order.emplace_back(count, command);
 		std::stable_sort(order.begin(), order.end(), [](const auto &a, const auto &b) { return a.first > b.first; });
+		// Постоянная колонка — только у частых эффектов. Редкий (уровень
+		// оператора раз за песню, панорама) садится в свободную колонку той
+		// строки, иначе он один раздувал бы канал до трёх-четырёх колонок.
+		uint32 total = 0;
+		for(const auto &[command, count] : uses)
+			total += count;
 		std::map<EffectCommand, uint8> column;
 		uint8 next = anyFirst ? 1 : 0;
 		for(const auto &[count, command] : order)
 		{
-			if(next < ModCommand::Effects())
+			if(next < ModCommand::Effects() && count >= 16 && count * 50 >= total)
 				column[command] = next++;
 		}
 		uint8 used = 1;
@@ -3285,9 +3291,6 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	m_modFormat.type = UL_("vgm");
 	m_modFormat.madeWithTracker = UL_("Mega Drive sound driver");
 	m_modFormat.charset = mpt::Charset::UTF8;
-#ifdef MODPLUG_TRACKER
-	AddToLog(LogWarning, MPT_UFORMAT("VGM import is approximate: {} voices and {} FM patches were reconstructed from register writes. Rows are single frames.")(events.size(), patches.size()));
-#endif
 	return true;
 }
 
