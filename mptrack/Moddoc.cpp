@@ -332,7 +332,11 @@ bool CModDoc::OnSaveDocument(const mpt::PathString &filename, const bool setPath
 		{
 			// Check if any non-supported playback behaviours are enabled due to being imported from a different format
 			// File saving code will omit those flags automatically, so it's okay if we check and reset them after a successful save only
-			const auto supportedBehaviours = m_SndFile.GetSupportedPlaybackBehaviour(GetModType());
+			auto supportedBehaviours = m_SndFile.GetSupportedPlaybackBehaviour(GetModType());
+			// Подстройка Furnace хранится в MPTM отдельным полем. Без этой строки сохранение
+			// выключало её в открытой песне (VGM, 2SF, .fur) и пугало предупреждением.
+			if(GetModType() == MOD_TYPE_MPT)
+				supportedBehaviours.set(kFurnacePersistentFinetune);
 			bool showWarning = true;
 			for(size_t i = 0; i < kMaxPlayBehaviours; i++)
 			{
