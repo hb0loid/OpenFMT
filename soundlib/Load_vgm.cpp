@@ -1366,8 +1366,11 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			// ставил громкость раньше периода, молчал всю песню: ноты в тот
 			// миг ещё не было, а потом событие уже не возникало.
 			// Период третьего голоса правит высоту шума, если тот на него
-			// настроен, поэтому решение принимается и за шум тоже.
-			const uint8 lane = (psgLatch == 2 && (noiseMode & 3) == 3 && !psgVolume[2]) ? 3 : psgLatch;
+			// настроен, поэтому решение принимается и за шум тоже. Но только
+			// запись периода: громкость третьего голоса — его собственная, и
+			// её выключение раньше уходило шуму, а нота тона 3 так и звучала
+			// (Sonic 2, Casino Night 2P — короткие аккорды тянулись бесконечно).
+			const uint8 lane = (psgLatch == 2 && psgLatchType == 0 && (noiseMode & 3) == 3 && !psgVolume[2]) ? 3 : psgLatch;
 			const uint8 channel = static_cast<uint8>(FMChannels + lane);
 			const uint8 level = psgVolume[lane];
 			// Высота шума. Три значения скорости задают её сами, а четвёртое
