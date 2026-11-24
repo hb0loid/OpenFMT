@@ -73,7 +73,14 @@ class SN76489
 		void SetNoise(uint8 newMode, uint8 newPreset, bool reset)
 		{
 			if(mode != newMode || (!(newMode & 2) && preset != newPreset) || reset)
+			{
+				// Сброс меняет выходной бит — это тоже ступенька на дорожке,
+				// иначе её уровень расходится с регистром и уплывает.
+				const int before = noise & 1, after = NoiseSeed & 1;
+				if(before != after)
+					voices[3].lane.Add(after - before, 0.0);
 				noise = NoiseSeed;
+			}
 			mode = newMode;
 			preset = newPreset;
 		}
@@ -422,8 +429,21 @@ public:
 				for(size_t lane = 0; lane < 4; lane++)
 				{
 					auto &voice = chip.voices[lane];
-					const double signal = voice.lane.Pop();
-					voice.dc += 0.002 * (signal - voice.dc);
+					// Дорожка — уровни 0 и 1, среднее у неё известно заранее:
+					// половина у меандра и белого шума, 1/16 у периодического.
+					// Его и вычитаем сразу. Раньше постоянку снимал только
+					// фильтр, а голос шума до удара стоит (нечем тактировать), и
+					// с первым тактом среднее прыгало на 0,5: фильтр за 10 мс
+					// выдавал «тумп» громче самого шума (Sonic 2, Invincibility).
+					// У тонов фильтр остался для остатка и следит, только пока
+					// голос звучит, — в тишине стоящая дорожка его не сбивает.
+					// Шуму фильтр вреден: после сброса регистр первые ~200
+					// сдвигов выдаёт почти одни нули, фильтр сползал за ними и
+					// потом 40 мс отдавал этот сдвиг обратно выбросом.
+					const double center = (lane == 3 && !(chip.mode & 1)) ? 1.0 / 16.0 : 0.5;
+					const double signal = voice.lane.Pop() - center;
+					if(lane < 3 && (left[lane] != 0.0 || right[lane] != 0.0))
+						voice.dc += 0.002 * (signal - voice.dc);
 					target[2 * i] += static_cast<int32>((signal - voice.dc) * left[lane]);
 					target[2 * i + 1] += static_cast<int32>((signal - voice.dc) * right[lane]);
 					if(scopes != nullptr && voice.channel != CHANNELINDEX_INVALID)
