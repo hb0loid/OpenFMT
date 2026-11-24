@@ -1219,6 +1219,13 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			pos += 2;
 			const uint8 port = (code == 0x52) ? 0 : 1;
 			registers[port][reg] = value;
+			// Драйвер включает ЦАП заново с каждым звуком. Если новый удар
+			// перебивает звучащий и перемотки (0xE0) при этом нет, это
+			// единственный признак начала: в Sonic 1/3/S&K/3D Blast таких 1118, и
+			// после 87% из них идёт начало известного удара. 5 мс — запас: рядом с
+			// перемоткой удар уже открыт, и резать его атаку нельзя.
+			if(code == 0x52 && reg == 0x2B && (value & 0x80) && hitOpen && sample > hit.first + VgmRate / 200)
+				closeHit();
 			if(code == 0x52 && reg == 0x2B)
 				dacEnabled = (value & 0x80) != 0;
 				if(!dacEnabled)
