@@ -479,6 +479,10 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// То же, что у PSG: что звучит на голосе FM и с какой громкостью. Нужно,
 	// чтобы ловить ведение уровня по ходу ноты, а не только в момент нажатия.
 	std::array<ModCommand::NOTE, FMChannels> fmSounding{};
+	// Какие операторы канала сейчас нажаты (биты 4-7 записи 0x28).
+	std::array<uint8, FMChannels> fmKeyMask{};
+	// Тембр звучащей ноты канала.
+	std::array<int, FMChannels> fmPatch{};
 	std::array<uint8, FMChannels> fmLastVolume{};
 	// Подстройка канала, которую сейчас держит движок: E5xx переживает ноты,
 	// поэтому пишем её только когда она меняется.
@@ -1233,7 +1237,29 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 				// Под ЦАПом шестой канал играет сэмплы, а не ноты FM.
 				if(channel == 5 && dacEnabled)
 					continue;
-				if(value & 0xF0)
+				// Атака у чипа начинается только у оператора, который был
+				// отпущен. Повторное нажатие уже нажатого канала ничего не
+				// делает, а драйверы так пишут (Sonic 2, Emerald Hill: KEY ON
+				// без KEY OFF перед ним) — у нас из этого выходила новая нота
+				// и звук переигрывался.
+				const uint8 keyMask = value & 0xF0;
+				const bool rising = (keyMask & ~fmKeyMask[channel]) != 0;
+				fmKeyMask[channel] = keyMask;
+				// Тембр за это время драйвер мог поправить. Уровни модуляторов
+				// (яркость) и громкость уходят в строку без удара: Drowning
+				// так делает крещендо, и без них звук стоял на месте. Если
+				// поменялся весь тембр — это уже другая нота.
+				if(keyMask && !rising && fmSounding[channel] != NOTE_NONE)
+				{
+					const auto [patch, volume] = patchAndVolume(channel);
+					if(patch == fmPatch[channel])
+					{
+						events.push_back({sample, channel, NOTE_NONE, volume != fmLastVolume[channel] ? volume : uint8(255), -1, -1, false, -1, noteLevels});
+						fmLastVolume[channel] = volume;
+						continue;
+					}
+				}
+				if(keyMask)
 				{
 					const double hertz = fmHertz(channel);
 					const auto note = NoteFromFrequency(hertz);
@@ -1246,6 +1272,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 						fmSounding[channel] = note;
 						fmPitchNote[channel] = note;
 						fmLastVolume[channel] = volume;
+						fmPatch[channel] = patch;
 					}
 				} else
 				{
