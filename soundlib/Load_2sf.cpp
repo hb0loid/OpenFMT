@@ -350,6 +350,12 @@ struct Voice
 	uint8 pwd = 2;
 	bool started = false;
 	uint32 startTick = 0, releaseTick = uint32_max;
+	// Фаза LFO модуля: сколько позиций (256 на период) он должен пройти и
+	// сколько прошёл; строка, для которой уже выбрана скорость.
+	int64 lfoTotal = 0;  // счётчик LFO DS без переполнения: 128 на позицию модуля
+	int32 lfoDone = 0;
+	uint32 lfoRow = uint32_max;
+	int lfoSpeed = 0;
 };
 
 struct Slot
@@ -522,6 +528,9 @@ public:
 		// тогда шаг +xx совпадает с шагом изгиба DS (1/128 диапазона). Нота с
 		// портаменто требует запаса на ход высоты; запас берётся из короткого
 		// ряда, чтобы каждая новая ширина скачка не плодила инструмент.
+		// LFO, идущий подстройкой, тоже должен в неё уместиться.
+		if(t.modType == 0 && t.modDepth && LfoBaked(t))
+			maxPitch += static_cast<int>(std::ceil(127.0 * t.modRange * t.modDepth * 60.0 / 16384.0 / 64.0 - 0.01));
 		int pwd = std::max<int>(t.range, 1);
 		if(maxPitch)
 		{
@@ -834,6 +843,7 @@ public:
 			} else
 			{
 				v.modCounter = (v.modCounter + (t.modSpeed << 6)) & 0x7FFF;
+				v.lfoTotal += t.modSpeed << 6;
 				v.lfo = CnvSine(static_cast<int>(v.modCounter >> 8)) * t.modRange * t.modDepth;
 			}
 		}
@@ -845,33 +855,71 @@ public:
 		int32 pitch = (t.bend * t.range) >> 1;
 		if(v.sweepLength && v.sweepCount < v.sweepLength)
 			pitch += v.sweepPitch * (v.sweepLength - v.sweepCount) / v.sweepLength;
-		// В сжатых строках LFO высоты идёт вибрато модуля, в покадровых —
-		// прямо подстройкой.
-		if(!rowTicks && t.modType == 0)
+		// LFO высоты — подстройкой, кроме быстрого в сжатых строках: тот идёт
+		// вибрато модуля.
+		if(t.modType == 0 && LfoBaked(t))
 			pitch += (v.lfo * 60) >> 14;
 		return pitch;
+	}
+
+	// LFO, который идёт не эффектом, а самими значениями строк (подстройкой
+	// или панорамой). Так ведётся всё в покадровых строках и медленный LFO в
+	// сжатых: на его период приходится не меньше шести строк, и плавная
+	// подстройка между ними повторяет синус почти точно. Вибрато модуля
+	// медленнее 64 тиков на период не умеет (у DS бывает и 300), а его шаг
+	// скорости грубый, поэтому эффект — только для быстрого LFO.
+	double LfoPeriodTicks(const Track &t) const
+	{
+		return t.modSpeed ? 512.0 / t.modSpeed * static_cast<double>(std::max<uint32>(tempo, 1)) / 240.0 : 1e9;
+	}
+	bool LfoBaked(const Track &t) const
+	{
+		return !rowTicks || LfoPeriodTicks(t) >= 6.0 * rowTicks;
 	}
 
 	// LFO DS как вибрато (Hxy/Uxy) или панбрелло (Yxy). Период LFO — 512/скорость
 	// кадров, у вибрато модуля — 64/x тиков, у панбрелло — 256/x тиков.
 	// 0 — LFO молчит. LFO громкости остаётся в колонке громкости.
-	int LfoEffect(const Voice &v) const
+	// Скорость эффекта целая, а нужная — дробная (например 3,4). Поэтому в
+	// каждой строке скорость выбирается так, чтобы к концу строки фаза
+	// модуля совпала с фазой LFO DS, предсказанной от его счётчика: в одних
+	// строках 3, в других 4, и фаза не уходит дальше полшага строки. Эффект
+	// модуля идёт с начала строки, даже если LFO DS включился посреди неё, —
+	// это тоже учитывается. Новая нота начинает обе фазы с нуля.
+	int LfoSpeed(Voice &v, double positionsPerTick, int positionsPerSpeed)
+	{
+		const uint32 nowTick = tick ? tick - 1 : 0, row = nowTick / rowTicks;
+		if(row != v.lfoRow)
+		{
+			v.lfoRow = row;
+			const double ticksLeft = static_cast<double>((row + 1) * rowTicks - nowTick);
+			const double wanted = static_cast<double>(v.lfoTotal) / 128.0 + positionsPerTick * (ticksLeft - 0.5);
+			const double step = static_cast<double>(positionsPerSpeed) * rowTicks;
+			v.lfoSpeed = std::clamp(static_cast<int>(std::lround((wanted - v.lfoDone) / step)), 1, 15);
+			v.lfoDone += v.lfoSpeed * positionsPerSpeed * static_cast<int32>(rowTicks);
+		}
+		return v.lfoSpeed;
+	}
+
+	int LfoEffect(Voice &v)
 	{
 		const Track &t = tracks[v.track];
-		if(!rowTicks || !t.modDepth || !t.modRange || !t.modSpeed || v.modDelayCount < t.modDelay || t.modType == 1)
+		if(LfoBaked(t) || !t.modDepth || !t.modRange || !t.modSpeed || v.modDelayCount < t.modDelay || t.modType == 1)
 			return 0;
-		const double periodTicks = 512.0 / t.modSpeed * static_cast<double>(std::max<uint32>(tempo, 1)) / 240.0;
+		const double periodTicks = LfoPeriodTicks(t);
 		const double amplitude = 127.0 * t.modRange * t.modDepth;
 		if(t.modType == 0)
 		{
 			const double fine = amplitude * 60.0 / 16384.0;  // в 1/64 полутона
-			const int x = std::clamp(static_cast<int>(std::lround(64.0 / periodTicks)), 1, 15);
+			// Вибрато модуля: позиция растёт на 4x за тик, 256 на период.
+			const int x = LfoSpeed(v, 256.0 / periodTicks, 4);
 			if(fine < 15.5)
 				return (CMD_FINEVIBRATO << 8) | (x << 4) | std::clamp(static_cast<int>(std::lround(fine)), 1, 15);
 			return (CMD_VIBRATO << 8) | (x << 4) | std::clamp(static_cast<int>(std::lround(fine / 4.0)), 1, 15);
 		}
 		const double pan = 2.0 * amplitude * 64.0 / 16384.0;  // в единицах панорамы 0–256
-		const int x = std::clamp(static_cast<int>(std::lround(256.0 / periodTicks)), 1, 15);
+		// Панбрелло: позиция растёт на x за тик.
+		const int x = LfoSpeed(v, 256.0 / periodTicks, 1);
 		return (CMD_PANBRELLO << 8) | (x << 4) | std::clamp(static_cast<int>(std::lround(pan / 8.0)), 1, 15);
 	}
 
@@ -887,7 +935,7 @@ public:
 			volDb += (v.lfo * 60) >> 14;
 		const int volume = static_cast<int>(std::lround(64.0 * DecibelToLinear(std::min(volDb, 0))));
 		const int channelVolume = static_cast<int>(std::lround(64.0 * DecibelToLinear(SquareDecibel(t.vol) + SquareDecibel(masterVolume))));
-		const int panLfo = (!rowTicks && t.modType == 2) ? ((v.lfo * 64) >> 14) : 0;
+		const int panLfo = (t.modType == 2 && LfoBaked(t)) ? ((v.lfo * 64) >> 14) : 0;
 		const int pan = std::clamp(t.pan + v.def->pan - 64 + panLfo, 0, 127) * 2;
 		const int lfo = LfoEffect(v);
 		const int finetune = std::clamp(0x80 + static_cast<int>(std::lround(PitchOffset(v) * 2.0 / v.pwd)), 0, 255);
@@ -1627,7 +1675,10 @@ bool CSoundFile::Read2SF(FileReader &file, ModLoadingFlags loadFlags)
 	const bool compactRows = false;
 #endif
 	uint32 rowTicks = compactRows ? 1 : 0;
-	for(uint32 candidate : {12u, 6u, 4u, 3u, 2u})
+	// Не крупнее 4 тиков (12 строк на долю). При строке в 1/16 узор в такт был
+	// всего 16 строк, а вибрато модуля в длинной строке заметно уходит от
+	// LFO DS: скорость эффекта целая, и за строку разница набегает.
+	for(uint32 candidate : {4u, 3u, 2u})
 	{
 		if(!compactRows)
 			break;
@@ -1965,18 +2016,25 @@ bool CSoundFile::Read2SF(FileReader &file, ModLoadingFlags loadFlags)
 		BuildEnvelope(instrument->VolEnv, v);
 	}
 
-	// Узоры: такт DS (192 тика) — узор, но не длиннее 1024 строк. Такт
-	// открывает строка, в которой исполняется его первый тик.
+	// Узоры: целые такты DS (192 тика), не меньше 64 строк и не больше 1024.
+	// Такт открывает строка, в которой исполняется его первый тик.
 	std::vector<ROWINDEX> patternStart{0};
 	{
-		uint32 nextBar = 192;
+		const uint32 barsPerPattern = rowTicks ? std::max<uint32>(1, (64 * rowTicks + 191) / 192) : 1;
+		const uint32 patternTicks = 192 * barsPerPattern;
+		uint32 next = patternTicks;
 		for(ROWINDEX r = 1; r < numRows; r++)
 		{
-			const bool bar = rowStartTick[r] >= nextBar && rowStartTick[r - 1] < nextBar;
+			const bool bar = rowStartTick[r] >= next && rowStartTick[r - 1] < next;
 			if(r == restartRow || bar || r - patternStart.back() >= 1024)
+			{
 				patternStart.push_back(r);
-			while(rowStartTick[r] >= nextBar)
-				nextBar += 192;
+				// После начала петли такты считаются от неё.
+				if(r == restartRow && !bar)
+					next = rowStartTick[r];
+			}
+			while(rowStartTick[r] >= next)
+				next += patternTicks;
 		}
 	}
 	Order().resize(static_cast<ORDERINDEX>(patternStart.size()));
