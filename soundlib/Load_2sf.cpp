@@ -1811,7 +1811,7 @@ bool CSoundFile::Read2SF(FileReader &file, ModLoadingFlags loadFlags)
 	InitializeGlobals(MOD_TYPE_MPT, numChannels);
 	m_playBehaviour = GetDefaultPlaybackBehaviour(MOD_TYPE_MPT);
 	m_playBehaviour.set(kFurnacePersistentFinetune);  // изгиб — состояние дорожки, переживает ноты
-	m_SongFlags.set(SONG_LINEARSLIDES);
+	m_SongFlags.set(SONG_LINEARSLIDES | SONG_IMPORTED);
 	// Тик модуля — тик DS, 48 на долю: скорость — тиков в строке, строк на
 	// долю 48 / скорость. Темп модуля почти равен темпу DS (тик DS длится
 	// 240 / темп кадров). Классический режим округлял бы длину тика до целых
@@ -1833,7 +1833,8 @@ bool CSoundFile::Read2SF(FileReader &file, ModLoadingFlags loadFlags)
 		Order().SetDefaultTempo(TEMPO(60.0 / (DSFrameSeconds * m_nDefaultRowsPerBeat)));
 		Order().SetDefaultSpeed(1);
 	}
-	m_nDefaultGlobalVolume = static_cast<uint32>(std::lround(MAX_GLOBAL_VOLUME * DecibelToLinear(SquareDecibel(seqVolume))));
+	// Чётное: в файле модуля громкость хранится с половинной точностью.
+	m_nDefaultGlobalVolume = static_cast<uint32>(std::lround(MAX_GLOBAL_VOLUME / 2 * DecibelToLinear(SquareDecibel(seqVolume))) * 2);
 	m_nSamplePreAmp = 80;  // DS: полный сэмпл на одном канале — около -4 дБ от потолка
 
 	for(uint8 t = 0; t < 16; t++)

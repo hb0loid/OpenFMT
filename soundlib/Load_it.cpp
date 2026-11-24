@@ -318,6 +318,10 @@ size_t CSoundFile::ITInstrToMPT(FileReader &file, ModInstrument &ins, uint16 trk
 		file.ReadStructPartial(instrumentHeader);
 		size_t instSize = instrumentHeader.ConvertToMPT(ins, GetType());
 		file.Seek(offset + instSize);
+		// В карте сэмплов файла 120 нот, а в паттернах MPTM бывают и выше (шум
+		// PSG). Им достаётся сэмпл самой верхней ноты карты.
+		if(GetType() == MOD_TYPE_MPT)
+			std::fill(ins.Keyboard.begin() + 120, ins.Keyboard.end(), ins.Keyboard[119]);
 
 		// Try reading modular instrument data.
 		// Yes, it is completely idiotic that we have both this and LoadExtendedInstrumentProperties.
@@ -1998,7 +2002,10 @@ bool CSoundFile::SaveIT(std::ostream &f, const mpt::PathString &filename, bool c
 				uint8 b = 1;
 				uint8 vol = 0xFF;
 				uint8 note = m->note;
-				if(note >= NOTE_MIN && note <= NOTE_MIN + 119)
+				// MPTM: ноты выше B-9 формат вмещает (до 0x80), и читаются они всеми
+				// версиями. Раньше они молча терялись, а шум PSG на предельной
+				// скорости — это как раз такая нота.
+				if(note >= NOTE_MIN && note <= ((GetType() == MOD_TYPE_MPT && !compatibilityExport) ? static_cast<uint8>(NOTE_MAX) : static_cast<uint8>(NOTE_MIN + 119)))
 					note = m->note - NOTE_MIN;
 				else if(note == NOTE_FADE)
 					note = (GetType() == MOD_TYPE_MPT) ? 0xFD : 0xF6;

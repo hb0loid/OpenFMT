@@ -2136,6 +2136,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			moduleChannel[voice] = usedChannels++;
 	}
 	InitializeGlobals(MOD_TYPE_MPT, usedChannels);
+	m_SongFlags.set(SONG_IMPORTED);  // Ctrl+S спросит имя, а не запишет модуль поверх лога
 	m_nSamplePreAmp = m_nVSTiVolume = 48;
 	// Баланс чипов как у плат в MAME. Сэмплы (PCM) идут через общее
 	// усиление сэмплов, синтезаторы — через громкость своего чипа.

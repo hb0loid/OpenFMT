@@ -1466,7 +1466,8 @@ bool CSoundFile::BuildFurSong(FurSong &song, ModLoadingFlags flags)
 	m_songArtist = mpt::ToUnicode(mpt::Charset::UTF8, song.author);
 	m_songMessage.Read(reinterpret_cast<const std::byte *>(song.comment.data()), song.comment.size(), SongMessage::leAutodetect);
 	if(std::isfinite(song.master) && song.master >= 0)
-		m_nDefaultGlobalVolume = static_cast<uint16>(std::clamp(song.master, 0.0f, 1.0f) * MAX_GLOBAL_VOLUME);
+		// Чётное: в файле модуля громкость хранится с половинной точностью.
+		m_nDefaultGlobalVolume = static_cast<uint16>(std::lround(std::clamp(song.master, 0.0f, 1.0f) * (MAX_GLOBAL_VOLUME / 2)) * 2);
 #ifdef MODPLUG_TRACKER
 	// Цвет шапки канала по микросхеме. Радужная раскладка OpenMPT красит каналы
 	// по именам, а у нас все имена разные, поэтому получался бледный градиент,
