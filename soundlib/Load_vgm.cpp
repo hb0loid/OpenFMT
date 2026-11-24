@@ -2152,6 +2152,14 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		m_chipVolume[ChipOPN2] = ChipVolumeUnity / 4;
 		m_chipVolume[ChipPSG] = ChipVolumeUnity / 2;
 		m_nSamplePreAmp = 79;  // PWM на 6,7 дБ громче FM, как в MAME (замер по Chaotix)
+	} else if(!hits.empty() && !header.okiClock && !header.ymzClock
+		&& std::none_of(pcmVoiceUsed.begin(), pcmVoiceUsed.end(), [](bool b) { return b; }))
+	{
+		// ЦАП YM2612 — единственные сэмплы песни. В микросхеме он подменяет
+		// выход шестого канала на той же шкале, что FM, а при усилении 48 у
+		// нас выходил на 2,1 дБ тише (медиана по 170 трекам семи игр):
+		// барабаны звучали слабее, чем на приставке.
+		m_nSamplePreAmp = 61;
 	}
 	Order().SetDefaultSpeed(1);
 	// Строка равна кадру: при скорости 1 темп задаёт число тиков в секунду.
