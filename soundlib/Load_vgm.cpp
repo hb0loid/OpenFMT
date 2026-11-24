@@ -34,6 +34,8 @@
 #endif
 #include <cmath>
 #include <map>
+#include <set>
+#include <string>
 
 OPENMPT_NAMESPACE_BEGIN
 
@@ -319,7 +321,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// PCM-каналов, непрерывно и около 32 кГц, поэтому кусок режется не только
 	// по паузе в записях, но и по тишине внутри них.
 	std::vector<uint8> raw;
-	struct Hit { uint32 start = 0, bytes = 0, first = 0, last = 0, writeStart = 0, writeCount = 0; };
+	struct Hit { uint32 start = 0, bytes = 0, first = 0, last = 0, writeStart = 0, writeCount = 0; double rate = 0.0; };
 	// Сами записанные значения удара, по порядку. Звук снимается по времени
 	// лога, и два одинаковых удара из-за дрожания записей дают чуть разные
 	// байты, а последовательность записей у одного барабана одна и та же.
@@ -384,6 +386,18 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		}
 		dacLevel = value;
 		dacSince = when;
+	};
+	// Тот же ЦАП, но как журнал: все записи подряд, перемотки (0xE0), включения
+	// и выключения ЦАПа (номер записи, на которой случились). По нему удары
+	// режутся в конце, когда видна вся песня (см. ниже, после разбора лога).
+	struct DacWrite { uint32 when = 0; uint8 value = 0; };
+	std::vector<DacWrite> dacLog;
+	std::vector<size_t> dacSeeks, dacOn, dacOff;
+	bool dacBlockWrites = false, dacLogOn = true;
+	const auto logDAC = [&](uint8 value, uint32 when)
+	{
+		if(when && dacLogOn)
+			dacLog.push_back({when, value});
 	};
 	// Потоковый ЦАП (команды 0x90-0x95): так выгружает Furnace. Каждый блок
 	// данных типа 0 — один сэмпл, команда 0x95 запускает блок с частотой,
@@ -1230,8 +1244,15 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 				dacEnabled = (value & 0x80) != 0;
 				if(!dacEnabled)
 					closeHit();
+			if(code == 0x52 && reg == 0x2B)
+			{
+				dacLogOn = dacEnabled;
+				if(sample)
+					(dacEnabled ? dacOn : dacOff).push_back(dacLog.size());
+			}
 			if(code == 0x52 && reg == 0x2A)
 			{
+				logDAC(value, sample);
 				if(dacEnabled)
 					appendDAC(value, sample);
 				continue;
@@ -1515,6 +1536,8 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		} else if(code >= 0x80 && code <= 0x8F)
 		{
 			// Байт из блока в ЦАП и пауза. Из таких команд и состоит удар.
+			dacBlockWrites = true;
+			logDAC(pcmPointer < pcm.size() ? pcm[pcmPointer] : uint8(0x80), sample);
 			appendDAC(pcmPointer < pcm.size() ? pcm[pcmPointer] : uint8(0x80), sample);
 			pcmPointer++;
 			sample += code & 15;
@@ -1596,6 +1619,8 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			if(pos + 4 > data.size())
 				break;
 			closeHit();
+			if(sample)
+				dacSeeks.push_back(dacLog.size());
 			pcmPointer = ReadLE32(data, pos);
 			pos += 4;
 		} else if(code >= 0x90 && code <= 0x95)
@@ -1992,6 +2017,149 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	}
 
 	closeHit();
+	// Игровые логи (записи 0x8n): нарезка заново, по журналу. Перемотка 0xE0 —
+	// не начало удара, а прыжок сжатия лога: один и тот же барабан Sonic 3 от
+	// включения до выключения ЦАПа всегда 3836 записей, где бы внутри него ни
+	// стояла перемотка. Резка по перемоткам дробила барабаны на десятки
+	// обрывков (Angel Island 2: 73 сэмпла вместо трёх).
+	//  - Драйверы Sonic 1/3/S&K/3D Blast/Spinball включают ЦАП (0x2B) заново с
+	//    каждым ударом — это и есть начало.
+	//  - Драйвер Sonic 2 включает ЦАП один раз. Там достоверно начало после
+	//    тишины, а ещё после паузы драйвера с перемоткой рядом, если такие же
+	//    записи приходят после разных звуков.
+	//  - Удар, перебивший другой без всех этих признаков, узнаётся по перемотке,
+	//    за которой (или чуть раньше) идёт начало уже известного удара.
+	bool dacExact = false;
+	if(dacBlockWrites && !dacLog.empty())
+	{
+		constexpr uint32 IdleSamples = VgmRate * 8 / 1000, StallSamples = VgmRate * 24 / 10000;
+		constexpr size_t SignatureLength = 32, SeekBack = 32, WeakBack = 16;
+		const size_t count = dacLog.size();
+		std::string values(count, char(0));
+		for(size_t i = 0; i < count; i++)
+			values[i] = static_cast<char>(dacLog[i].value);
+		const auto gap = [&](size_t i) { return i ? (dacLog[i].when - dacLog[i - 1].when) : uint32_max; };
+		const auto signature = [&](size_t i) -> std::string
+		{
+			if(i + SignatureLength > count)
+				return {};
+			std::string s = values.substr(i, SignatureLength);
+			return (std::set<char>(s.begin(), s.end()).size() >= 6) ? s : std::string{};
+		};
+		std::set<size_t> cuts;
+		for(size_t i = 0; i < count; i++)
+		{
+			if(gap(i) > IdleSamples)
+				cuts.insert(i);
+		}
+		const bool restarts = dacOn.size() >= 2 && dacOn.size() * 2 >= cuts.size();
+		dacExact = restarts || !dacSeeks.empty();
+		if(restarts)
+		{
+			cuts.clear();
+			cuts.insert(0);  // Лог может начаться с уже включённым ЦАПом
+			for(const size_t i : dacOn)
+			{
+				if(i < count)
+					cuts.insert(i);
+			}
+		}
+		if(dacExact)
+		{
+			std::set<std::string> starts;
+			for(const size_t i : cuts)
+			{
+				if(auto s = signature(i); !s.empty())
+					starts.insert(std::move(s));
+			}
+			if(!restarts)
+			{
+				std::map<std::string, int> candidates;
+				for(size_t i = 0; i < count; i++)
+				{
+					if(gap(i) <= StallSamples || gap(i) > IdleSamples)
+						continue;
+					const auto seek = std::lower_bound(dacSeeks.begin(), dacSeeks.end(), i);
+					if(seek == dacSeeks.end() || *seek > i + WeakBack)
+						continue;
+					if(auto s = signature(i); !s.empty())
+						candidates[std::move(s)]++;
+				}
+				for(const auto &[s, times] : candidates)
+				{
+					if(times < 2 || starts.count(s))
+						continue;
+					std::set<std::string> before;
+					for(size_t at = values.find(s); at != std::string::npos && before.size() < 3; at = values.find(s, at + 1))
+					{
+						const size_t length = std::min<size_t>(at, 12);
+						before.insert(values.substr(at - length, length));
+					}
+					if(before.size() >= 3)
+						starts.insert(s);
+				}
+			}
+			for(const size_t seek : dacSeeks)
+			{
+				for(size_t back = 0; back <= std::min(SeekBack, seek); back++)
+				{
+					if(const auto s = signature(seek - back); !s.empty() && starts.count(s))
+					{
+						cuts.insert(seek - back);
+						break;
+					}
+				}
+			}
+			raw.clear();
+			hits.clear();
+			dacWrites.clear();
+			for(auto cut = cuts.begin(); cut != cuts.end(); ++cut)
+			{
+				size_t end = (std::next(cut) != cuts.end()) ? *std::next(cut) : count;
+				if(const auto off = std::upper_bound(dacOff.begin(), dacOff.end(), *cut); off != dacOff.end() && *off < end)
+					end = *off;
+				for(size_t i = *cut; i < end;)
+				{
+					// Хвост без изменений — тишина; после неё внутри куска новый удар.
+					Hit h{static_cast<uint32>(raw.size()), 0, dacLog[i].when, dacLog[i].when, static_cast<uint32>(dacWrites.size()), 0};
+					size_t lastChanged = i, next = i + 1;
+					uint8 held = dacLog[i].value;
+					for(; next < end && dacLog[next].when - dacLog[lastChanged].when <= SilenceSamples; next++)
+					{
+						if(dacLog[next].value != held)
+						{
+							held = dacLog[next].value;
+							lastChanged = next;
+						}
+					}
+					// Частота записей — без пауз, которые драйвер делает каждый кадр.
+					uint32 steps = 0, stepTime = 0;
+					for(size_t k = i; k <= lastChanged; k++)
+					{
+						dacWrites.push_back(dacLog[k].value);
+						h.writeCount++;
+						if(k < lastChanged)
+						{
+							const uint32 length = dacLog[k + 1].when - dacLog[k].when;
+							raw.insert(raw.end(), length, dacLog[k].value);
+							if(length <= VgmRate / 1000)
+							{
+								steps++;
+								stepTime += length;
+							}
+						}
+					}
+					raw.push_back(dacLog[lastChanged].value);
+					h.last = dacLog[lastChanged].when + 1;
+					h.bytes = h.last - h.first;
+					h.rate = (steps >= 64 && stepTime) ? static_cast<double>(steps) * VgmRate / stepTime : 0.0;
+					if(h.bytes > 64 && h.writeCount >= 16)
+						hits.push_back(h);
+					i = next;
+				}
+			}
+		}
+	}
 	rfAdvance(sample);
 	for(uint8 i = 0; i < RFChannels; i++)
 		rfFinish(i, sample);
@@ -2270,10 +2438,52 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		}
 		return best;
 	};
-	for(size_t i = 0; i < hits.size(); i++)
+	// Нарезка по журналу: удары точные, и один барабан — это одна
+	// последовательность записей. Последние записи удара бывают уже от
+	// следующего (драйвер пишет их до включения ЦАПа), их не сверяем. Высота —
+	// по частоте записей; некратная полутону — отдельный сэмпл. Начинаем с
+	// длинных ударов: короткие — их оборванные начала.
+	const auto exactShift = [&](const Hit &h, const Hit &k) -> int
+	{
+		const uint32 shorter = std::min(h.writeCount, k.writeCount);
+		const uint32 compare = shorter - ((shorter > 24) ? 4u : 0u);
+		if(std::memcmp(dacWrites.data() + h.writeStart, dacWrites.data() + k.writeStart, compare))
+			return NoMatch;
+		if(h.rate <= 0.0 || k.rate <= 0.0)
+			return 0;
+		const double semitones = 12.0 * std::log2(h.rate / k.rate);
+		if(std::abs(semitones) < 0.7)
+			return 0;
+		const int shift = mpt::saturate_round<int>(semitones);
+		return (std::abs(semitones - shift) <= 0.25) ? shift : NoMatch;
+	};
+	std::vector<size_t> hitOrder(hits.size());
+	for(size_t i = 0; i < hitOrder.size(); i++)
+		hitOrder[i] = i;
+	if(dacExact)
+		std::stable_sort(hitOrder.begin(), hitOrder.end(), [&](size_t l, size_t r) { return hits[l].writeCount > hits[r].writeCount; });
+	for(const size_t i : hitOrder)
 	{
 		const Hit &h = hits[i];
 		int match = -1;
+		if(dacExact)
+		{
+			for(size_t s = 0; s < dacSamples.size() && match < 0; s++)
+			{
+				if(const int shift = exactShift(h, hits[dacSamples[s].hit]); shift != NoMatch)
+				{
+					match = static_cast<int>(s);
+					hitNote[i] = std::clamp(NOTE_MIDDLEC + shift, int(NOTE_MIN), int(NOTE_MAX));
+				}
+			}
+			if(match < 0 && dacSamples.size() < MaxDacSamples)
+			{
+				match = static_cast<int>(dacSamples.size());
+				dacSamples.push_back({static_cast<uint32>(i), writeRate(h)});
+			}
+			hitSample[i] = match;
+			continue;
+		}
 		for(size_t s = 0; s < dacSamples.size() && match < 0; s++)
 		{
 			DacSample &known = dacSamples[s];
@@ -2320,6 +2530,24 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		}
 		if(match >= 0)
 			hitSample[i] = match;
+	}
+	if(dacExact)
+	{
+		// Номера сэмплов — по первому появлению в песне.
+		std::vector<int> renumber(dacSamples.size(), -1);
+		std::vector<DacSample> ordered;
+		for(auto &s : hitSample)
+		{
+			if(s < 0)
+				continue;
+			if(renumber[s] < 0)
+			{
+				renumber[s] = static_cast<int>(ordered.size());
+				ordered.push_back(dacSamples[s]);
+			}
+			s = renumber[s];
+		}
+		dacSamples = std::move(ordered);
 	}
 	const auto addDacSample = [&](const uint8 *source, uint32 length, uint32 rate, bool loop, std::string name) -> bool
 	{
