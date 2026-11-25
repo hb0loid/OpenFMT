@@ -6,7 +6,7 @@ with native sound chip support: Yamaha **YM2612** (OPN2, Mega Drive / Genesis),
 had. It can import **Furnace** (`.fur`), **DefleMask** (`.dmf`), **VGM** and
 Nintendo DS **2SF** (`.mini2sf`) files for editing.
 
-**Status: 0.1.2 — early preview.** Expect rough edges; see *Known issues*.
+**Status: 0.1.3 — early preview.** Expect rough edges; see *Known issues*.
 
 *Русская версия ниже.*
 
@@ -26,7 +26,7 @@ Nintendo DS **2SF** (`.mini2sf`) files for editing.
   from the instrument library in the tree view.
 - VGM import (YM2612, YM2151, SN76489, YM2612 DAC, YMZ280B, OKIM6295, 32X PWM
   and Mega CD RF5C164; Master System / Game Gear), with slides,
-  vibrato and detune, one frame per row. *Setup → General → Compact VGM
+  vibrato and detune, one frame (or driver timer tick) per row. *Setup → General → Compact VGM
   import* packs several frames per row for readability, at some cost in
   sound.
 - Polyphony: up to four YM2612, YM2151 and SN76489 chips per song (Chips tab).
@@ -100,7 +100,7 @@ OpenFMT — трекер для Windows на основе [OpenMPT](https://open
 редактирования файлы **Furnace** (`.fur`), **DefleMask** (`.dmf`), **VGM** и
 музыку Nintendo DS **2SF** (`.mini2sf`).
 
-**Версия 0.1.2 — ранняя.** Шероховатости есть, см. «Известные проблемы».
+**Версия 0.1.3 — ранняя.** Шероховатости есть, см. «Известные проблемы».
 
 ## Что умеет
 
@@ -116,7 +116,7 @@ OpenFMT — трекер для Windows на основе [OpenMPT](https://open
   библиотеки инструментов в дереве слева.
 - Импорт VGM (YM2612, YM2151, SN76489, ЦАП YM2612, YMZ280B, OKIM6295, PWM 32X
   и RF5C164 Mega CD; Master System / Game Gear) со слайдами,
-  вибрато и подстройкой, кадр на строку. *Setup → General → Compact VGM
+  вибрато и подстройкой, кадр (или тик таймера игры) на строку. *Setup → General → Compact VGM
   import* упаковывает несколько кадров в строку ради читаемости, ценой
   точности звука.
 - Полифония: до четырёх чипов YM2612, YM2151 и SN76489 в песне (вкладка Chips).
