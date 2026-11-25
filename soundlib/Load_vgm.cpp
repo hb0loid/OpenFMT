@@ -290,6 +290,9 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		else if(data[scan] == 0x63) frames50++;
 	}
 	const uint32 samplesPerRow = frames50 > frames60 ? 882 : 735;
+	// Моменты, когда драйвер перезапускал таймер YM2612 (регистр 0x27): драйвер
+	// без кадрового прерывания отмеряет им свои тики (см. разбор после лога).
+	std::vector<uint32> driverTicks;
 
 	// Состояние микросхем по ходу потока.
 	std::array<std::array<uint8, 256>, 2> registers{};
@@ -1244,6 +1247,8 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 				dacEnabled = (value & 0x80) != 0;
 				if(!dacEnabled)
 					closeHit();
+			if(code == 0x52 && reg == 0x27 && (value & 0x30) && (driverTicks.empty() || sample > driverTicks.back() + 30))
+				driverTicks.push_back(sample);
 			if(code == 0x52 && reg == 0x2B)
 			{
 				dacLogOn = dacEnabled;
@@ -2374,22 +2379,74 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		// барабаны звучали слабее, чем на приставке.
 		m_nSamplePreAmp = 61;
 	}
+	// Драйвер по таймеру (Tiny Toon: тик 4,3 мс): строка — его тик. Барабаны там
+	// собраны прыжками высоты на каждом тике, и в кадр попадал лишь каждый
+	// четвёртый. Берём только ровный таймер: у Thunder Force IV он служит и
+	// другому, и записи по нему не ложатся. Тик, который драйвер пропустил,
+	// становится пустой строкой, иначе сетка уползала бы от лога.
+	double rowLength = samplesPerRow;
+	std::vector<uint32> tickRow;
+	if(driverTicks.size() >= 64)
+	{
+		std::vector<uint32> periods;
+		for(size_t i = 1; i < driverTicks.size(); i++)
+			periods.push_back(driverTicks[i] - driverTicks[i - 1]);
+		std::vector<uint32> sorted = periods;
+		std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
+		const uint32 median = sorted[sorted.size() / 2];
+		uint64 total = 0;
+		uint32 even = 0;
+		for(const uint32 period : periods)
+		{
+			if(period * 10 < median * 9 || period * 10 > median * 11)
+				continue;
+			total += period;
+			even++;
+		}
+		// Короче 2,5 мс — темп выше предела MPTM, от кадра и длиннее — не нужно.
+		if(median >= VgmRate / 400 && median * 2 <= samplesPerRow && even * 20u >= periods.size() * 19u)
+		{
+			rowLength = static_cast<double>(total) / even;
+			uint32 row = mpt::saturate_round<uint32>(driverTicks[0] / rowLength);
+			tickRow.push_back(row);
+			for(size_t i = 1; i < driverTicks.size(); i++)
+			{
+				row++;
+				while(driverTicks[i] > (row + 0.75) * rowLength)
+					row++;
+				tickRow.push_back(row);
+			}
+		}
+	}
+	const bool tickGrid = !tickRow.empty();
+
 	Order().SetDefaultSpeed(1);
 	// Строка равна кадру: при скорости 1 темп задаёт число тиков в секунду.
 	// В классическом счёте тиков в секунду выходит темп * 0,4, поэтому кадр в
 	// секунду переводится в темп умножением на 2,5. В «современном» режиме
 	// счёт идёт от долей, и тот же кадр потребовал бы темпа 900.
-	Order().SetDefaultTempo(TEMPO(static_cast<double>(VgmRate) / samplesPerRow * 2.5));
+	Order().SetDefaultTempo(TEMPO(static_cast<double>(VgmRate) / rowLength * 2.5));
 	m_nTempoMode = TempoMode::Classic;
 	m_nDefaultRowsPerBeat = 4;
 	m_nDefaultRowsPerMeasure = 16;
+	if(tickGrid)
+	{
+		// Тик короче кадра в классическом счёте обрезался бы до целых отсчётов,
+		// и песня уползала бы на полпроцента. «Современный» счёт копит остаток.
+		m_nTempoMode = TempoMode::Modern;
+		m_nDefaultRowsPerBeat = 32;
+		m_nDefaultRowsPerMeasure = 128;
+		Order().SetDefaultTempo(TEMPO(60.0 * VgmRate / (rowLength * m_nDefaultRowsPerBeat)));
+	}
 	m_SongFlags.set(SONG_LINEARSLIDES);
 	// Слайды и подстройка по правилам Furnace: портаменто работает и на первом
 	// тике (строка здесь — один тик), а E5xx держится в канале через ноты.
 	// Остановка у цели обязательна: иначе портаменто Furnace остаётся
 	// включённым и после легато, и следующие настоящие ноты тоже становятся
 	// легато — голос FM не нажимается заново, громкость проседает (Lava Reef 2).
-	m_furnaceSlides = 4 | FurnaceStopAtTarget;
+	// Множитель 4 — до 8 полутонов за тик. Драйверу по таймеру мало: его барабаны
+	// прыгают за тик на две октавы и больше.
+	m_furnaceSlides = static_cast<uint16>((tickGrid ? 64 : 4) | FurnaceStopAtTarget);
 	m_playBehaviour = GetDefaultPlaybackBehaviour(MOD_TYPE_MPT);
 	m_playBehaviour.set(kFurnacePersistentFinetune);
 
@@ -3093,6 +3150,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// не съезжал больше чем на полкадра. Драйверу, который идёт не от кадра
 	// (нажатия по всему кадру), сдвиг не поможет — там сетка как есть.
 	int32 gridShift = 0;
+	if(!tickGrid)
 	{
 		constexpr double TwoPi = 2.0 * 3.14159265358979323846;
 		double sumSin = 0.0, sumCos = 0.0;
@@ -3123,6 +3181,18 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	}
 	const auto frameIndex = [&](const VgmEvent &event) -> uint32
 	{
+		if(tickGrid)
+		{
+			// Записи тика идут после перезапуска таймера и до следующего.
+			const auto next = std::upper_bound(driverTicks.begin(), driverTicks.end(), event.sample);
+			if(next == driverTicks.begin())
+				return std::min(static_cast<uint32>(event.sample / rowLength), tickRow.front());
+			const size_t tick = std::distance(driverTicks.begin(), next) - 1;
+			// После последнего тика лог может ещё тянуться.
+			if(next == driverTicks.end())
+				return tickRow[tick] + static_cast<uint32>((event.sample - driverTicks[tick]) / rowLength);
+			return tickRow[tick];
+		}
 		return static_cast<uint32>(std::max<int64>(int64(event.sample) + gridShift, 0) / samplesPerRow);
 	};
 
@@ -3170,7 +3240,8 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	const ROWINDEX totalRows = static_cast<ROWINDEX>(std::min<uint32>(lastRow + 2, MAX_PATTERN_ROWS * 1000u));
 	// Кадр на строку — это 60 строк в секунду; паттерн по 128 строк держит
 	// около двух секунд. В компактном режиме строки длиннее, хватает 64.
-	const ROWINDEX RowsPerPattern = compact ? 64 : 128;
+	// По тикам драйвера строк вчетверо больше — узор в те же две секунды.
+	const ROWINDEX RowsPerPattern = (compact ? 64 : 128) * (tickGrid ? 4 : 1);
 	const PATTERNINDEX patternCount = static_cast<PATTERNINDEX>((totalRows + RowsPerPattern - 1) / RowsPerPattern);
 	Order().resize(patternCount);
 	for(PATTERNINDEX pat = 0; pat < patternCount; pat++)
@@ -3244,7 +3315,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			uint32 frame = frameOf(event);
 			const bool strike = ModCommand::IsNote(event.note) && !event.legato;
 			if((event.note == NOTE_KEYOFF || event.note == NOTE_NOTECUT) && notedFrame[event.channel] == frame
-				&& event.sample >= notedSample[event.channel] + samplesPerRow / 4)
+				&& event.sample >= notedSample[event.channel] + static_cast<uint32>(rowLength / 4))
 			{
 				frame++;
 				pushedFrame[event.channel] = frame;
