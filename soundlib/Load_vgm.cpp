@@ -299,6 +299,11 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// без кадрового прерывания отмеряет им свои тики (см. разбор после лога).
 	std::vector<uint32> driverTicks;
 	uint32 tickMedian = 0;
+	// Таймеры YM2612 порознь: у Thunder Force IV таймер B отмеряет ноты (темп
+	// свой у каждого трека), а таймер A — эффекты.
+	std::vector<uint32> timerBResets;
+	int timerB = -1;
+	bool timerBChanges = false;
 	// F-number новых нот: по нему видно, как драйвер делит высоту на блок и F-number.
 	std::array<uint32, 2048> fnumUse{}, fnumLowest{}, fnumHighest{};
 	uint16 fnumFloor = 1024;
@@ -312,6 +317,18 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			const auto word = [&](size_t at) { return at + 1 < data.size() ? static_cast<uint32>(data[at] | (data[at + 1] << 8)) : 0u; };
 			if(code == 0x52 && scan + 2 < data.size() && data[scan + 1] == 0x27 && (data[scan + 2] & 0x30) && (driverTicks.empty() || when > driverTicks.back() + 30))
 				driverTicks.push_back(when);
+			if(code == 0x52 && scan + 2 < data.size())
+			{
+				const uint8 reg = data[scan + 1], value = data[scan + 2];
+				if(reg == 0x26)
+				{
+					timerBChanges |= timerB >= 0 && !timerBResets.empty() && value != timerB;
+					timerB = value;
+				} else if(reg == 0x27 && (value & 0x20))
+				{
+					timerBResets.push_back(when);
+				}
+			}
 			if((code == 0x52 || code == 0x53) && scan + 2 < data.size())
 			{
 				const uint8 reg = data[scan + 1], value = data[scan + 2];
@@ -2583,7 +2600,120 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			}
 		}
 	}
-	const bool tickGrid = !tickRow.empty();
+	// Драйвер, у которого ноты отмеряет таймер B, а обработка тика запаздывает
+	// как придётся (Thunder Force IV): период считаем по самому таймеру и
+	// уточняем по логу. Длинный тик делим на строки, чтобы эффекты не грубели.
+	uint32 timerSplit = 1;
+	int32 timerShift = 0;  // На сколько строк сдвинуть, чтобы ноты были ближе к логу
+	std::vector<std::pair<uint32, double>> timerStart;  // С какого отсчёта лога где начало тика
+	if(tickRow.empty() && timerB >= 0 && !timerBChanges && tickMedian)
+	{
+		constexpr double TwoPi = 2.0 * 3.14159265358979323846;
+		const auto &ticks = timerBResets;
+		std::vector<uint32> strikes;
+		for(const auto &event : events)
+		{
+			if(event.channel < FMChannels && ModCommand::IsNote(event.note) && !event.legato)
+				strikes.push_back(event.sample);
+		}
+		// Насколько моменты ложатся на сетку с таким периодом.
+		const auto focus = [](const std::vector<uint32> &times, double period, double until) -> double
+		{
+			double sumSin = 0.0, sumCos = 0.0;
+			uint32 count = 0;
+			for(const uint32 time : times)
+			{
+				if(time > until)
+					break;
+				const double angle = TwoPi * std::fmod(time, period) / period;
+				sumSin += std::sin(angle);
+				sumCos += std::cos(angle);
+				count++;
+			}
+			return count ? std::hypot(sumSin, sumCos) / count : 0.0;
+		};
+		double period = (256 - timerB) * 16.0 * 144.0 / header.opn2Clock * VgmRate;
+		if(ticks.size() >= 64 && strikes.size() >= 16 && period >= VgmRate / 400.0)
+		{
+			double span = period * 0.01;
+			for(double length = VgmRate * 4.0;; length *= 2.0)
+			{
+				const double step = 0.1 * period * period / length;
+				double best = -1.0, bestPeriod = period;
+				for(double candidate = period - span; candidate <= period + span; candidate += step)
+				{
+					if(const double value = focus(ticks, candidate, ticks.front() + length); value > best)
+					{
+						best = value;
+						bestPeriod = candidate;
+					}
+				}
+				period = bestPeriod;
+				span = step * 2.0;
+				if(ticks.front() + length >= ticks.back())
+					break;
+			}
+			const double sharp = focus(ticks, period, uint32_max);
+			// Ноты, которые ложатся на кадр, идут не от таймера.
+			if(sharp >= 0.5 && focus(strikes, samplesPerRow, uint32_max) < 0.3)
+			{
+				timerSplit = std::max<uint32>(1, static_cast<uint32>(std::ceil(period / (samplesPerRow * 1.05))));
+				rowLength = period / timerSplit;
+				// Обработка только запаздывает: начало тика — там, где моменты гуще
+				// всего. Оно понемногу плывёт, поэтому ищем его по участкам.
+				constexpr size_t Bins = 50, Stretch = 400;
+				for(size_t from = 0; from < ticks.size(); from += Stretch)
+				{
+					const size_t to = std::min(from + Stretch, ticks.size());
+					// Короткий хвост лога своего начала не показывает.
+					if(from && to - from < Stretch / 4)
+						break;
+					std::array<uint32, Bins> bins{};
+					for(size_t i = from; i < to; i++)
+						bins[std::min(static_cast<size_t>(std::fmod(ticks[i], period) / period * Bins), Bins - 1)]++;
+					size_t densest = 0;
+					for(size_t i = 1; i < Bins; i++)
+					{
+						if(bins[i] + bins[(i + 1) % Bins] > bins[densest] + bins[(densest + 1) % Bins])
+							densest = i;
+					}
+					// Граница строк — в самом пустом месте перед началом тика: туда
+					// не доходят ни ранние тики, ни самые поздние ноты прошлого.
+					for(const uint32 strike : strikes)
+					{
+						if(strike >= ticks[from] && strike < ticks[to - 1])
+							bins[std::min(static_cast<size_t>(std::fmod(strike, period) / period * Bins), Bins - 1)]++;
+					}
+					size_t gap = 1;
+					uint32 fewest = uint32_max;
+					for(size_t back = 1; back <= Bins / 4; back++)
+					{
+						const uint32 around = bins[(densest + Bins - back) % Bins] + bins[(densest + Bins - back - 1) % Bins];
+						if(around < fewest)
+						{
+							fewest = around;
+							gap = back;
+						}
+					}
+					const double start = (static_cast<double>(densest) - gap) / Bins * period;
+					if(timerStart.empty())
+						timerStart.emplace_back(0, std::remainder(start, period));
+					else
+						timerStart.emplace_back(ticks[from], timerStart.back().second + std::remainder(start - timerStart.back().second, period));
+				}
+				double late = 0.0;
+				for(const uint32 strike : strikes)
+				{
+					const auto next = std::upper_bound(timerStart.begin(), timerStart.end(), strike, [](uint32 time, const auto &start) { return time < start.first; });
+					const double start = std::prev(next)->second;
+					late += start - timerStart.front().second + std::fmod(std::max(0.0, strike - start), period);
+				}
+				timerShift = mpt::saturate_round<int32>((timerStart.front().second + late / strikes.size()) / rowLength);
+			}
+		}
+	}
+	const bool timerGrid = !timerStart.empty();
+	const bool tickGrid = !tickRow.empty() || timerGrid;
 
 	Order().SetDefaultSpeed(1);
 	// Строка равна кадру: при скорости 1 темп задаёт число тиков в секунду.
@@ -3352,6 +3482,16 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	}
 	const auto frameIndex = [&](const VgmEvent &event) -> uint32
 	{
+		if(timerGrid)
+		{
+			const auto next = std::upper_bound(timerStart.begin(), timerStart.end(), event.sample, [](uint32 time, const auto &start) { return time < start.first; });
+			// Ноты тика запаздывают до его середины, поэтому первая из строк тика
+			// дольше, а остальные сдвинуты к концу.
+			const double tick = std::max(0.0, (event.sample - std::prev(next)->second) / (rowLength * timerSplit));
+			const double part = (tick - std::floor(tick)) * timerSplit - 0.25;
+			const int32 row = static_cast<int32>(tick) * static_cast<int32>(timerSplit) + ((timerSplit > 1 && part > 0.0) ? static_cast<int32>(part) : 0);
+			return static_cast<uint32>(std::max(row + timerShift, 0));
+		}
 		if(tickGrid)
 		{
 			// Записи тика идут после перезапуска таймера и до следующего.
@@ -3412,7 +3552,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// Кадр на строку — это 60 строк в секунду; паттерн по 128 строк держит
 	// около двух секунд. В компактном режиме строки длиннее, хватает 64.
 	// По тикам драйвера строк вчетверо больше — узор в те же две секунды.
-	const ROWINDEX RowsPerPattern = (compact ? 64 : 128) * (tickGrid ? 4 : 1);
+	const ROWINDEX RowsPerPattern = (compact ? 64 : 128) * (tickGrid && !timerGrid ? 4 : 1);
 	const PATTERNINDEX patternCount = static_cast<PATTERNINDEX>((totalRows + RowsPerPattern - 1) / RowsPerPattern);
 	Order().resize(patternCount);
 	for(PATTERNINDEX pat = 0; pat < patternCount; pat++)
