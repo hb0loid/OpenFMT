@@ -554,9 +554,6 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// Данные потоков по типу блока (0x00–0x3F), сжатые блоки распакованы.
 	std::array<std::vector<uint8>, 0x40> streamData;
 	std::array<std::vector<DataBlock>, 0x40> streamBlocks;
-	// Сколько бит реально лежит в сжатом блоке, если меньше распакованных
-	// (0 — всё на месте). См. разбор PWM.
-	std::array<uint8, 0x40> streamStoredBits{};
 	// Таблицы распаковки (блок 0x7F) по виду сжатия и подтипу.
 	std::map<uint16, std::vector<uint16>> unpackTables;
 	const auto unpackBlock = [&](const uint8 *src, uint32 size, std::vector<uint8> &out) -> bool
@@ -586,9 +583,17 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		out.reserve(base + outSize);
 		while(out.size() - base + bytesOut <= outSize && bitPos + bitsIn <= inBits)
 		{
+			// Число идёт порциями по 8 бит, младшая первой, биты внутри порции —
+			// от старшего: у 10-битного сначала младший байт, потом два старших бита.
 			uint32 value = 0;
-			for(uint8 b = 0; b < bitsIn; b++, bitPos++)
-				value = (value << 1) | ((in[bitPos >> 3] >> (7 - (bitPos & 7))) & 1);
+			for(uint8 done = 0; done < bitsIn; done += 8)
+			{
+				const uint8 part = std::min<uint8>(8, static_cast<uint8>(bitsIn - done));
+				uint32 piece = 0;
+				for(uint8 b = 0; b < part; b++, bitPos++)
+					piece = (piece << 1) | ((in[bitPos >> 3] >> (7 - (bitPos & 7))) & 1);
+				value |= piece << done;
+			}
 			if(method == 1)
 			{
 				if(value >= table->size())
@@ -1734,11 +1739,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 				auto &target = streamData[blockType - 0x40];
 				const uint32 before = static_cast<uint32>(target.size());
 				if(unpackBlock(data.data() + pos + 6, size, target))
-				{
 					streamBlocks[blockType - 0x40].push_back({before, static_cast<uint32>(target.size()) - before});
-					const uint8 bitsOut = data[pos + 11], bitsIn = data[pos + 12], method = data[pos + 6], subType = data[pos + 13];
-					streamStoredBits[blockType - 0x40] = (method == 0 && subType == 0 && bitsIn < bitsOut) ? bitsIn : 0;
-				}
 				else
 					target.resize(before);
 			} else if(blockType == 0x7F && size >= 6 && pos + 6 + size <= data.size())
@@ -2453,74 +2454,18 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		const uint64 commands = static_cast<uint64>((seg.endSample - seg.startSample) * static_cast<double>(seg.frequency) / VgmRate);
 		std::vector<int16> pcmData;
 		pcmData.reserve(static_cast<size_t>(std::min<uint64>(commands, MAX_SAMPLE_LENGTH)));
-		// Значение PWM — 12 бит со знаком (как читает libvgm). Сжатые блоки
-		// бывают с меньшим числом бит, чем значение (Knuckles' Chaotix: 10 из
-		// 12): в файле лежат только младшие биты, и громкие места переносятся
-		// через край — на слух сплошной рёв. Сигнал восстанавливаем: у каждого
-		// отсчёта несколько вариантов «хранимое + k·диапазон» в пределах 12 бит
-		// со знаком, и из всех путей берём самый плавный по всей длине
-		// (алгоритм Витерби). Выбор «ближе к предыдущему» по одному отсчёту на
-		// атаках барабанов уходил не в ту сторону и давал пики почти до потолка.
+		// Значение PWM — 12 бит со знаком (как читает libvgm).
 		std::vector<double> values;
 		values.reserve(static_cast<size_t>(std::min<uint64>(commands, MAX_SAMPLE_LENGTH)));
-		std::vector<int> stored;
-		const uint8 storedBits = streamStoredBits[seg.bank];
-		const int wrap = storedBits ? (1 << storedBits) : 0;
 		for(uint64 n = 0; n < commands && values.size() < MAX_SAMPLE_LENGTH; n++)
 		{
 			const uint64 at = seg.byteOffset + (seg.stepBase + n * seg.stepSize) * 2u;
 			if(at + 1 >= source.size())
 				break;
 			const int raw = (source[at] | (source[at + 1] << 8)) & 0xFFF;
-			if(wrap)
-				stored.push_back(raw & (wrap - 1));
-			else
-				values.push_back((raw & 0x800) ? raw - 0x1000 : raw);
+			values.push_back((raw & 0x800) ? raw - 0x1000 : raw);
 		}
-		if(wrap && !stored.empty())
-		{
-			constexpr int States = 5;  // k = -2..2
-			const auto candidate = [&](size_t t, int k) { return stored[t] + (k - 2) * wrap; };
-			const auto valid = [](int c) { return c >= -2048 && c < 2048; };
-			constexpr double Impossible = 1e30;
-			std::array<double, States> cost, next;
-			for(int k = 0; k < States; k++)
-				cost[k] = valid(candidate(0, k)) ? std::abs(candidate(0, k)) : Impossible;
-			std::vector<std::array<uint8, States>> from(stored.size());
-			for(size_t t = 1; t < stored.size(); t++)
-			{
-				double lowest = Impossible;
-				for(int k = 0; k < States; k++)
-				{
-					const int c = candidate(t, k);
-					next[k] = Impossible;
-					if(!valid(c))
-						continue;
-					for(int j = 0; j < States; j++)
-					{
-						if(cost[j] >= Impossible)
-							continue;
-						const double total = cost[j] + std::abs(c - candidate(t - 1, j));
-						if(total < next[k])
-						{
-							next[k] = total;
-							from[t][k] = static_cast<uint8>(j);
-						}
-					}
-					next[k] += 0.05 * std::abs(c);
-					lowest = std::min(lowest, next[k]);
-				}
-				for(int k = 0; k < States; k++)
-					cost[k] = (next[k] >= Impossible) ? Impossible : next[k] - lowest;
-			}
-			int state = static_cast<int>(std::distance(cost.begin(), std::min_element(cost.begin(), cost.end())));
-			values.resize(stored.size());
-			for(size_t t = stored.size(); t-- > 0;)
-			{
-				values[t] = candidate(t, state);
-				state = from[t][state];
-			}
-		}
+		const double halfCycle = (seg.cycle >= 64) ? seg.cycle / 2.0 : 2048.0;
 		// Выход PWM идёт через разделительный конденсатор: постоянную
 		// составляющую убираем фильтром около 20 Гц, иначе на краях щелчки.
 		const double keep = 1.0 - 2.0 * 3.14159265358979323846 * 20.0 / seg.frequency;
@@ -2529,8 +2474,8 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		{
 			filtered = value - previous + keep * filtered;
 			previous = value;
-			// Шкала — 12-битный ЦАП, как в MAME.
-			pcmData.push_back(static_cast<int16>(std::clamp(filtered / 2048.0 * 32767.0, -32768.0, 32767.0)));
+			// Полный размах — половина цикла в каждую сторону.
+			pcmData.push_back(static_cast<int16>(std::clamp(filtered / halfCycle * 32767.0, -32768.0, 32767.0)));
 		}
 		const uint32 played = static_cast<uint32>(pcmData.size());
 		const int sound = addPcmSound(std::move(pcmData), seg.frequency, uint32_max, "PWM");
@@ -2579,10 +2524,9 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// усиление сэмплов, синтезаторы — через громкость своего чипа.
 	// Battle Garrega: YM2151 0,3, OKIM6295 0,6; при выходах самих чипов это
 	// OKI на 24 дБ громче, чем у нас вышло бы по умолчанию.
-	// 32X: PWM через 12-битный ЦАП с усилением 0,4, YM2612 приглушён до 0,25;
-	// YM2612 x1/4 (как в MAME, плюс запас), PSG x1/2; сэмплы подобраны так,
-	// чтобы PWM был громче FM, как в MAME, а ЦАП YM2612 (тоже сэмпл) — тише
-	// на столько же, вровень со своим FM.
+	// 32X: PWM в полный размах в 3,5 раза громче полного голоса FM, как в
+	// libvgm (в PicoDrive 4; в MAME 2,5, но FM и ЦАП там приглушены вынужденно).
+	// FM и PSG между собой как на Mega Drive; запас в 6 дБ на сумму с PWM.
 	const bool pwmSong = !pwmSegments.empty();
 	if(header.okiClock && std::any_of(pcmVoiceUsed.begin() + OKIBase, pcmVoiceUsed.begin() + OKIBase + OKIChannels, [](bool b) { return b; }))
 	{
@@ -2594,9 +2538,9 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	}
 	if(pwmSong)
 	{
-		m_chipVolume[ChipOPN2] = ChipVolumeUnity / 4;
+		m_chipVolume[ChipOPN2] = ChipVolumeUnity / 2;
 		m_chipVolume[ChipPSG] = ChipVolumeUnity / 2;
-		m_nSamplePreAmp = 79;  // PWM на 6,7 дБ громче FM, как в MAME (замер по Chaotix)
+		m_nSamplePreAmp = 53;
 	} else if(!hits.empty() && !header.okiClock && !header.ymzClock
 		&& std::none_of(pcmVoiceUsed.begin(), pcmVoiceUsed.end(), [](bool b) { return b; }))
 	{
@@ -2899,7 +2843,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			instrument->name = m_szNames[smp];
 			instrument->midiPWD = 1;  // E5xx: шаг 1/128 полутона
 			if(pwmSong)
-				instrument->nGlobalVol = 10;  // ЦАП YM2612 вровень с FM при усилении 79
+				instrument->nGlobalVol = 37;  // ЦАП YM2612 вровень с FM: 61 / 2 против усиления 53
 		}
 		return true;
 	};
