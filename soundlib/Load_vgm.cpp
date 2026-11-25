@@ -2098,6 +2098,43 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 					if(before.size() >= 3)
 						starts.insert(s);
 				}
+				// Перед ударом драйвер готовит звук (от 1,8 мс), и пауза стоит почти
+				// у каждого его начала. Ложное начало (драйвер задержался посреди
+				// звука или лог начался на пару записей позже) идёт обычно без неё.
+				constexpr uint32 SetupSamples = VgmRate * 15 / 10000, LongestStall = VgmRate * 17 / 1000;
+				constexpr size_t LateStart = 8;
+				std::set<std::string> real;
+				std::vector<size_t> realAt;
+				for(const auto &s : starts)
+				{
+					std::vector<size_t> paused;
+					size_t total = 0;
+					for(size_t at = values.find(s); at != std::string::npos; at = values.find(s, at + 1))
+					{
+						total++;
+						if(gap(at) >= SetupSamples)
+							paused.push_back(at);
+					}
+					if(paused.size() * 2 < total)
+						continue;
+					real.insert(s);
+					realAt.insert(realAt.end(), paused.begin(), paused.end());
+				}
+				for(auto cut = cuts.begin(); cut != cuts.end();)
+				{
+					const auto s = signature(*cut);
+					const bool rejected = !s.empty() && !real.count(s);
+					bool late = false;
+					for(size_t i = *cut + 1; rejected && !late && i <= *cut + LateStart; i++)
+						late = std::find(realAt.begin(), realAt.end(), i) != realAt.end();
+					if(rejected && (late || (*cut && gap(*cut) <= LongestStall)))
+						cut = cuts.erase(cut);
+					else
+						++cut;
+				}
+				// Настоящее начало режет и без перемотки: звуки могли лечь в сжатый лог подряд.
+				cuts.insert(realAt.begin(), realAt.end());
+				starts = std::move(real);
 			}
 			for(const size_t seek : dacSeeks)
 			{
