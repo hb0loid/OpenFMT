@@ -95,6 +95,7 @@ private:
 		std::array<Blip::Lane, 2> lanes;
 		size_t next = 0;
 		bool isOPM = false;
+		bool lfoRestart = false;  // LFO выключен на один отсчёт ради сброса фазы
 		bool keyPending = false;  // Хоть у одного голоса ключ ждёт постановки
 
 		uint8 NumChannels() const { return isOPM ? OPMChannels : OPN2Channels; }
@@ -110,6 +111,8 @@ protected:
 	std::array<Chip, MaxChipsPerType * 2> m_chips;
 	std::array<uint8, 2> m_chipCount{1, 1};
 	std::array<size_t, 2> m_nextSteal{};
+	uint8 m_lfoSpeed = 0x08;  // Регистр 0x22 YM2612 для новых чипов
+	bool m_lfoRunning = false;  // Песня задала LFO командой
 	uint32 m_rate;
 
 	static void Write(Chip &chip, uint16 reg, uint8 value)
@@ -233,7 +236,7 @@ protected:
 			Write(chip, 0x1B, 0x00);
 		} else
 		{
-			Write(chip, 0x22, 0x08);
+			Write(chip, 0x22, m_lfoSpeed);
 		}
 	}
 
@@ -384,6 +387,8 @@ public:
 
 	void Reset()
 	{
+		m_lfoSpeed = 0x08;
+		m_lfoRunning = false;
 		for(auto &chip : m_chips)
 		{
 			if(chip.Exists())
@@ -505,6 +510,41 @@ public:
 			slot->patch[1 + op * 7 + LevelRegister] = level & MaxLevel;
 			slot->levels[op] = static_cast<int16>(level & MaxLevel);
 			WriteLevels(*chip, index);
+		}
+	}
+
+	// Глубина LFO канала посреди ноты: тремоло в старшей цифре, вибрато в
+	// младшей. Следующая нота снова берёт её из инструмента.
+	void LfoDepth(CHANNELINDEX channel, uint8 depth)
+	{
+		Chip *chip = nullptr;
+		uint8 index = 0;
+		if(Slot *slot = Find(channel, &chip, &index); slot != nullptr)
+		{
+			slot->lfo[FMLfoAMS] = (depth >> 4) & 3;
+			slot->lfo[FMLfoFMS] = depth & 7;
+			WriteAlgorithmAndPanning(*chip, index);
+		}
+	}
+
+	// LFO чипа YM2612: 00 — выключен, 1x — скорость x, 2x — она же, но фаза с
+	// начала (драйвер выключил LFO и сразу включил). Чип, который ещё не
+	// заведён, получит её при первой ноте.
+	void LfoSpeed(uint8 speed)
+	{
+		m_lfoSpeed = static_cast<uint8>((speed & 0x30) ? (0x08 | (speed & 7)) : 0x00);
+		m_lfoRunning = true;
+		// LFO идёт непрерывно, и его фаза слышна: первый чип заводим сразу.
+		if(!m_chips[0].Exists())
+			InitChip(m_chips[0], false);
+		for(auto &chip : m_chips)
+		{
+			if(!chip.Exists() || chip.isOPM)
+				continue;
+			// Счётчик LFO обнуляется, только когда чип отработал отсчёт с
+			// выключенным LFO; включим обратно после него, в Mix.
+			chip.lfoRestart = (speed & 0x20) != 0;
+			Write(chip, 0x22, chip.lfoRestart ? uint8(0x00) : m_lfoSpeed);
 		}
 	}
 
@@ -657,7 +697,8 @@ public:
 			bool assigned = false;
 			for(uint8 i = 0; i < chip.NumChannels(); i++)
 				assigned |= chip.slots[i].channel != CHANNELINDEX_INVALID;
-			if(!assigned)
+			// LFO, заданный песней, идёт и без звучащих голосов.
+			if(!assigned && (!m_lfoRunning || chip.isOPM))
 				continue;
 
 			const double gain = static_cast<double>(MixerReference) * volumeFactorQ16 / 65536.0
@@ -715,6 +756,11 @@ public:
 						1.0 - static_cast<double>(chip.phase) / chip.rate, 0.0, 0.999999);
 					for(size_t ch = 0; ch < 2; ch++)
 						chip.lanes[ch].Add(chip.current[ch] - chip.previous[ch], position);
+					if(chip.lfoRestart)
+					{
+						chip.lfoRestart = false;
+						Write(chip, 0x22, m_lfoSpeed);
+					}
 					// Отсчёт со снятым ключом отработан, теперь можно ставить
 					// ключ: огибающая начнётся заново.
 					if(chip.keyPending)

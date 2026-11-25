@@ -426,6 +426,24 @@ void OPL::FMOperatorLevel(CHANNELINDEX c, uint8 op, uint8 level)
 }
 
 
+void OPL::FMLfoDepth(CHANNELINDEX c, uint8 depth)
+{
+	if(m_opn2)
+		m_opn2->LfoDepth(c, depth);
+}
+
+
+void OPL::FMLfoSpeed(uint8 speed)
+{
+	// Команда обычно стоит раньше первой ноты, чипа тогда ещё нет.
+	if(m_logger)
+		return;
+	if(!m_opn2)
+		m_opn2 = std::make_unique<OPN2>(m_sampleRate);
+	m_opn2->LfoSpeed(speed);
+}
+
+
 void OPL::PSGNoiseMode(CHANNELINDEX c, uint8 mode)
 {
 	if(m_psg)

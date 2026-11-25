@@ -522,6 +522,7 @@ bool CSoundFile::ProcessRow()
 						m_PlayState.m_nMusicTempo = Order().GetDefaultTempo();
 						m_PlayState.m_nGlobalVolume = m_nDefaultGlobalVolume;
 						m_PlayState.m_furnaceArpSpeed = 0;
+					m_PlayState.m_fmLfoSpeed = -1;
 						for(CHANNELINDEX i = 0; i < m_PlayState.Chn.size(); i++)
 						{
 							auto &chn = m_PlayState.Chn[i];
@@ -667,6 +668,7 @@ bool CSoundFile::ProcessRow()
 					m_PlayState.m_nMusicTempo = Order().GetDefaultTempo();
 					m_PlayState.m_nGlobalVolume = m_nDefaultGlobalVolume;
 					m_PlayState.m_furnaceArpSpeed = 0;
+					m_PlayState.m_fmLfoSpeed = -1;
 
 					m_PlayState.m_nNextOrder = m_PlayState.m_nCurrentOrder;
 					m_PlayState.m_nNextRow = m_PlayState.m_nRow;

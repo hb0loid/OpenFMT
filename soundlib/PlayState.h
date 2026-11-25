@@ -67,6 +67,7 @@ public:
 	int32 m_nGlobalVolume = MAX_GLOBAL_VOLUME;  // Current global volume (0...MAX_GLOBAL_VOLUME)
 	double m_chipSeekTime = -1.0;  // Время точки старта по счёту перемотки (для голосов чипов)
 	uint8 m_furnaceArpSpeed = 0;  // Скорость арпеджио после `=xx` (E0xx Furnace); 0 — как в свойствах песни
+	int16 m_fmLfoSpeed = -1;      // LFO чипа FM после эффекта; -1 — не менялся
 protected:
 	// Global volume ramping
 	int32 m_nSamplesToGlobalVolRampDest = 0, m_nGlobalVolumeRampAmount = 0;

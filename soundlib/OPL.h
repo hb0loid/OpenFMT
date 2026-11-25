@@ -107,6 +107,8 @@ public:
 	void MuteVoice(CHANNELINDEX c, bool muted);
 	void PSGNoiseMode(CHANNELINDEX c, uint8 mode);
 	void FMOperatorLevel(CHANNELINDEX c, uint8 op, uint8 level);
+	void FMLfoDepth(CHANNELINDEX c, uint8 depth);
+	void FMLfoSpeed(uint8 speed);
 
 	// A list of all registers for channels and operators if oplCh == 0xFF, otherwise all registers for the given channel and its operators
 	static std::vector<Register> AllVoiceRegisters(uint8 oplCh = 0xFF);

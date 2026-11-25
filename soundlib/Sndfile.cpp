@@ -951,6 +951,7 @@ void CSoundFile::ResetPlayPos()
 
 	m_PlayState.m_nGlobalVolume = m_nDefaultGlobalVolume;
 	m_PlayState.m_furnaceArpSpeed = 0;
+	m_PlayState.m_fmLfoSpeed = -1;
 	m_PlayState.m_nMusicSpeed = Order().GetDefaultSpeed();
 	m_PlayState.m_nMusicTempo = Order().GetDefaultTempo();
 

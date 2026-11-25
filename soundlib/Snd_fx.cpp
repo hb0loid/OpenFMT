@@ -96,6 +96,7 @@ public:
 		state->m_ppqPosBeat = 0;
 		state->m_nGlobalVolume = sndFile.m_nDefaultGlobalVolume;
 		state->m_furnaceArpSpeed = 0;
+		state->m_fmLfoSpeed = -1;
 		state->m_lastMovedChannel = CHANNELINDEX_INVALID;
 		state->m_globalScriptState.Initialize(sndFile);
 		chnSettings.assign(sndFile.GetNumChannels(), {});
@@ -1082,6 +1083,7 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 				}
 			}
 
+			int8 lfoDepth = -1;
 			for(uint8 slot = 0; slot < ModCommand::Effects(); slot++)
 			{
 				const auto [chipCommand, chipParam] = chn.rowCommand.GetEffect(slot);
@@ -1097,6 +1099,12 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 				} else if(chipCommand == CMD_PSG_NOISE)
 				{
 					chn.furnaceSlide.psgNoise = static_cast<int8>(chipParam & 3);
+				} else if(chipCommand == CMD_FM_LFO_DEPTH)
+				{
+					lfoDepth = static_cast<int8>(chipParam & 0x37);
+				} else if(chipCommand == CMD_FM_LFO_SPEED)
+				{
+					playState.m_fmLfoSpeed = chipParam;
 				} else if(chipCommand == CMD_ARP_SPEED && chipParam)
 				{
 					playState.m_furnaceArpSpeed = chipParam;
@@ -1108,6 +1116,11 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 					chn.furnaceSlide.arp = chipParam;
 				}
 			}
+			// Новая нота берёт глубину LFO из инструмента, если её не задаёт строка.
+			if(lfoDepth >= 0)
+				chn.furnaceSlide.lfoDepth = lfoDepth;
+			else if(chn.rowCommand.IsNote() && !(m_furnaceSlides ? IsFurnaceTonePorta(chn, chn.rowCommand) : chn.rowCommand.IsTonePortamento()))
+				chn.furnaceSlide.lfoDepth = -1;
 
 			switch(chn.rowCommand.volcmd)
 			{
@@ -1644,6 +1657,7 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 			m_PlayState.m_nMusicTempo = Order(sequence).GetDefaultTempo();
 			m_PlayState.m_nGlobalVolume = m_nDefaultGlobalVolume;
 			m_PlayState.m_furnaceArpSpeed = 0;
+			m_PlayState.m_fmLfoSpeed = -1;
 		}
 		// When adjusting the playback status, we will also want to update the visited rows vector according to the current position.
 		if(sequence != Order.GetCurrentSequenceIndex())
@@ -2868,6 +2882,13 @@ bool CSoundFile::ProcessEffects()
 				const auto [cmd, param] = m_PlayState.Chn[nChn].rowCommand.GetEffect(slot);
 				if(cmd == CMD_ARP_SPEED && param)
 					m_PlayState.m_furnaceArpSpeed = param;
+				// Скорость LFO тоже общая и не должна пропадать с заглушённым каналом.
+				if(cmd == CMD_FM_LFO_SPEED)
+				{
+					m_PlayState.m_fmLfoSpeed = param;
+					if(m_opl)
+						m_opl->FMLfoSpeed(static_cast<uint8>(param));
+				}
 			}
 		}
 	}
@@ -4150,6 +4171,12 @@ bool CSoundFile::ProcessEffects()
 				m_opl->FMOperatorLevel(nChn, static_cast<uint8>(cmd - CMD_FM_LEVEL1), static_cast<uint8>(param & 127));
 			break;
 
+		case CMD_FM_LFO_DEPTH:
+			if(chn.isFirstTick && m_opl)
+				m_opl->FMLfoDepth(nChn, static_cast<uint8>(param & 0x37));
+			break;
+
+		case CMD_FM_LFO_SPEED:
 		case CMD_ARP_SPEED:
 			// Уже учтено перед проходом по каналам.
 			break;
@@ -4421,7 +4448,12 @@ void CSoundFile::RestoreChipVoices()
 		}
 		if(state.psgNoise >= 0)
 			m_opl->PSGNoiseMode(n, static_cast<uint8>(state.psgNoise));
+		if(state.lfoDepth >= 0)
+			m_opl->FMLfoDepth(n, static_cast<uint8>(state.lfoDepth));
 	}
+	// Патчи могли задать LFO чипа сами, а эффект был позже них.
+	if(m_PlayState.m_fmLfoSpeed >= 0)
+		m_opl->FMLfoSpeed(static_cast<uint8>(m_PlayState.m_fmLfoSpeed));
 
 	// Держащиеся ноты: нажимаем заново в том же порядке, в каком они были
 	// взяты, и между нажатиями прогоняем чип вхолостую. Тогда огибающая FM к

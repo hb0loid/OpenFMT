@@ -150,6 +150,9 @@ struct VgmEvent
 	// Режим шума в понятиях движка (бит 0 — белый, бит 1 — от третьего тона),
 	// -1 — не шум.
 	int8 noiseMode = -1;
+	// LFO YM2612: глубина канала (AMS << 4 | FMS) и скорость чипа (0 или
+	// 0x10 | скорость) посреди ноты, -1 — не менять.
+	int8 lfoDepth = -1, lfoSpeed = -1;
 };
 
 // Голоса микросхем в этой сборке живут по нотной шкале Furnace, где до первой
@@ -1072,6 +1075,26 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	};
 	std::vector<VgmEvent> events;
 	uint32 sample = 0;
+	// LFO посреди ноты: драйверы Tiny Toon и Thunder Force IV ведут глубину
+	// вибрато (0xB4) и скорость LFO (0x22), пока нота звучит. Глубину канала
+	// ставит нота (из инструмента), дальше её меняют эффекты. Скорость — общая,
+	// пишется в то же время, что в логе: LFO идёт непрерывно, и фаза слышна.
+	std::array<uint8, FMChannels> engineLfoDepth{};
+	std::vector<std::pair<uint32, uint8>> lfoSpeeds{{0, uint8(0)}};
+	bool lfoFollowed = false;
+	const auto followLfo = [&](uint8 channel)
+	{
+		const uint8 b4 = registers[channel < 3 ? 0 : 1][0xB4 + channel % 3] & 0x37;
+		if(b4 == engineLfoDepth[channel])
+			return;
+		VgmEvent event{};
+		event.sample = sample;
+		event.channel = channel;
+		event.volume = 255;
+		event.lfoDepth = static_cast<int8>(engineLfoDepth[channel] = b4);
+		events.push_back(event);
+		lfoFollowed = true;
+	};
 	size_t pos = header.dataOffset;
 
 	// Громкость канала FM — это уровень его несущих операторов. Берём самый
@@ -1247,6 +1270,19 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 				dacEnabled = (value & 0x80) != 0;
 				if(!dacEnabled)
 					closeHit();
+			if(code == 0x52 && reg == 0x22)
+			{
+				const uint8 speed = (value & 0x08) ? static_cast<uint8>(0x10 | (value & 7)) : uint8(0);
+				// Выключил и тут же включил — так Thunder Force IV начинает LFO
+				// заново; обе записи в одну строку, поэтому это одна команда.
+				auto &last = lfoSpeeds.back();
+				if(speed && !last.second && sample - last.first < VgmRate / 500)
+					last = {sample, static_cast<uint8>(speed + 0x10)};
+				else if(last.first == sample)
+					last.second = speed;
+				else if((last.second & 7) != (speed & 7) || !last.second != !speed)
+					lfoSpeeds.emplace_back(sample, speed);
+			}
 			if(code == 0x52 && reg == 0x27 && (value & 0x30) && (driverTicks.empty() || sample > driverTicks.back() + 30))
 				driverTicks.push_back(sample);
 			if(code == 0x52 && reg == 0x2B)
@@ -1306,6 +1342,8 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 						fmPitchNote[channel] = note;
 						fmLastVolume[channel] = volume;
 						fmPatch[channel] = patch;
+						// Патч ставит каналу глубину LFO.
+						engineLfoDepth[channel] = registers[channel < 3 ? 0 : 1][0xB4 + channel % 3] & 0x37;
 					}
 				} else
 				{
@@ -1324,6 +1362,8 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 					const int pan = (sides == 1) ? 255 : ((sides == 2) ? 0 : 128);
 					events.push_back({sample, channel, NOTE_NONE, 255, -1, pan});
 				}
+				if(fmPitchNote[channel] != NOTE_NONE && !(channel == 5 && dacEnabled))
+					followLfo(channel);
 			} else if(reg >= 0x40 && reg <= 0x4E)
 			{
 				// Ведение уровня по ходу ноты. Драйвер плавно двигает уровень
@@ -2022,6 +2062,46 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	}
 
 	closeHit();
+	// Период тиков драйвера: промежутки между перезапусками таймера. Опрос таймера
+	// в цикле (сотни записей подряд) и редкая настройка — не тики.
+	std::vector<uint32> tickPeriods;
+	for(size_t i = 1; i < driverTicks.size(); i++)
+		tickPeriods.push_back(driverTicks[i] - driverTicks[i - 1]);
+	uint32 tickMedian = 0;
+	if(driverTicks.size() >= 64)
+	{
+		std::vector<uint32> sorted = tickPeriods;
+		std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
+		tickMedian = sorted[sorted.size() / 2];
+		// Короче 2,5 мс — темп выше предела MPTM.
+		if(tickMedian < VgmRate / 400)
+			tickMedian = 0;
+	}
+	// Ведение LFO — только у драйверов по таймеру (Tiny Toon, Thunder Force IV): на
+	// них это сверено с эталоном. Остальным глубину и скорость пока ставит нота.
+	if(lfoFollowed && !tickMedian)
+	{
+		lfoFollowed = false;
+		events.erase(std::remove_if(events.begin(), events.end(), [](const VgmEvent &e) { return e.lfoDepth >= 0; }), events.end());
+	}
+	if(lfoFollowed)
+	{
+		const auto first = std::find_if(events.begin(), events.end(), [](const VgmEvent &e) { return e.channel < FMChannels && ModCommand::IsNote(e.note) && !e.legato; });
+		const uint8 channel = (first != events.end()) ? first->channel : uint8(0);
+		std::vector<VgmEvent> speeds;
+		for(const auto &[when, speed] : lfoSpeeds)
+		{
+			VgmEvent event{};
+			event.sample = when;
+			event.channel = channel;
+			event.volume = 255;
+			event.lfoSpeed = static_cast<int8>(speed);
+			speeds.push_back(event);
+		}
+		std::vector<VgmEvent> merged;
+		std::merge(speeds.begin(), speeds.end(), events.begin(), events.end(), std::back_inserter(merged), [](const VgmEvent &l, const VgmEvent &r) { return l.sample < r.sample; });
+		events = std::move(merged);
+	}
 	// Игровые логи (записи 0x8n): нарезка заново, по журналу. Перемотка 0xE0 —
 	// не начало удара, а прыжок сжатия лога: один и тот же барабан Sonic 3 от
 	// включения до выключения ЦАПа всегда 3836 записей, где бы внутри него ни
@@ -2386,25 +2466,19 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// становится пустой строкой, иначе сетка уползала бы от лога.
 	double rowLength = samplesPerRow;
 	std::vector<uint32> tickRow;
-	if(driverTicks.size() >= 64)
+	if(tickMedian)
 	{
-		std::vector<uint32> periods;
-		for(size_t i = 1; i < driverTicks.size(); i++)
-			periods.push_back(driverTicks[i] - driverTicks[i - 1]);
-		std::vector<uint32> sorted = periods;
-		std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
-		const uint32 median = sorted[sorted.size() / 2];
 		uint64 total = 0;
 		uint32 even = 0;
-		for(const uint32 period : periods)
+		for(const uint32 period : tickPeriods)
 		{
-			if(period * 10 < median * 9 || period * 10 > median * 11)
+			if(period * 10 < tickMedian * 9 || period * 10 > tickMedian * 11)
 				continue;
 			total += period;
 			even++;
 		}
-		// Короче 2,5 мс — темп выше предела MPTM, от кадра и длиннее — не нужно.
-		if(median >= VgmRate / 400 && median * 2 <= samplesPerRow && even * 20u >= periods.size() * 19u)
+		// Тики не чаще пары за кадр сетке не нужны.
+		if(tickMedian * 2 <= samplesPerRow && even * 20u >= tickPeriods.size() * 19u)
 		{
 			rowLength = static_cast<double>(total) / even;
 			uint32 row = mpt::saturate_round<uint32>(driverTicks[0] / rowLength);
@@ -3363,6 +3437,10 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			}
 			if(event.pan >= 0)
 				setEffect(cell, CMD_PANNING8, static_cast<uint8>(event.pan));
+			if(event.lfoDepth >= 0)
+				setEffect(cell, CMD_FM_LFO_DEPTH, static_cast<uint8>(event.lfoDepth));
+			if(event.lfoSpeed >= 0)
+				setEffect(cell, CMD_FM_LFO_SPEED, static_cast<uint8>(event.lfoSpeed));
 		}
 	} else
 	{
@@ -3378,7 +3456,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			uint32 noteTick = 0;
 			int instr = 0;
 			bool legato = false;
-			int volume = -1, fine = -1, pan = -1;
+			int volume = -1, fine = -1, pan = -1, lfoDepth = -1, lfoSpeed = -1;
 			bool fineSmooth = false;
 			// Громкость по ходу строки (тик, значение): в ячейку идёт начало и
 			// плавный спад или подъём Dxy к концу строки.
@@ -3449,6 +3527,10 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 					setEffect(cell, state.fineSmooth ? CMD_FINETUNE_SMOOTH : CMD_FINETUNE, static_cast<uint8>(state.fine));
 				if(state.pan >= 0)
 					setEffect(cell, CMD_PANNING8, static_cast<uint8>(state.pan));
+				if(state.lfoDepth >= 0)
+					setEffect(cell, CMD_FM_LFO_DEPTH, static_cast<uint8>(state.lfoDepth));
+				if(state.lfoSpeed >= 0)
+					setEffect(cell, CMD_FM_LFO_SPEED, static_cast<uint8>(state.lfoSpeed));
 				for(uint8 op = 0; op < 4; op++)
 				{
 					if(state.level[op] >= 0)
@@ -3566,6 +3648,10 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			}
 			if(event.pan >= 0)
 				state.pan = event.pan;
+			if(event.lfoDepth >= 0)
+				state.lfoDepth = event.lfoDepth;
+			if(event.lfoSpeed >= 0)
+				state.lfoSpeed = event.lfoSpeed;
 			for(uint8 op = 0; op < 4; op++)
 			{
 				if(event.level[op] >= 0)
