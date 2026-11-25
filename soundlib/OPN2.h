@@ -28,6 +28,7 @@ public:
 	static constexpr uint8 OPN2Channels = 6, OPMChannels = 8;
 
 private:
+	static constexpr uint16 DefaultFnumFloor = 1024, MinFnumFloor = 400;
 	static constexpr uint32 OPN2Clock = 7670454;  // YM2612 as clocked in the Mega Drive
 	static constexpr uint32 OPMClock = 3579545;   // YM2151
 
@@ -75,6 +76,9 @@ private:
 		bool keyed = false, hasPlayed = false, muted = false;
 		// Сколько отсчётов чипа осталось выждать до постановки ключа.
 		uint8 keyOnDelay = 0;
+		// Блок и высота (в единицах F-number нулевого блока) прошлой записи.
+		uint8 block = 0;
+		double pitch = 0.0;
 	};
 
 	struct Chip
@@ -111,6 +115,7 @@ protected:
 	std::array<Chip, MaxChipsPerType * 2> m_chips;
 	std::array<uint8, 2> m_chipCount{1, 1};
 	std::array<size_t, 2> m_nextSteal{};
+	uint16 m_fnumFloor = DefaultFnumFloor;
 	uint8 m_lfoSpeed = 0x08;  // Регистр 0x22 YM2612 для новых чипов
 	bool m_lfoRunning = false;  // Песня задала LFO командой
 	uint32 m_rate;
@@ -396,6 +401,12 @@ public:
 		}
 	}
 
+	// Наименьший F-number ноты YM2612: нота пишется в [порог, 2 * порог).
+	void SetFnumFloor(uint16 floor)
+	{
+		m_fnumFloor = std::clamp<uint16>(floor, MinFnumFloor, DefaultFnumFloor);
+	}
+
 	void SetChipCount(bool opm, uint8 count)
 	{
 		m_chipCount[opm ? 1 : 0] = std::clamp<uint8>(count, 1, MaxChipsPerType);
@@ -615,12 +626,28 @@ public:
 			const uint64 denominator = static_cast<uint64>(OPN2Clock) * 1000;
 			uint8 block = 0;
 			uint64 fnum = (numerator + denominator / 2) / denominator;
-			while(fnum > 2047 && block < 7)
+			const auto setBlock = [&](uint8 newBlock)
 			{
-				block++;
+				block = newBlock;
 				const uint64 scaled = denominator << block;
 				fnum = (numerator + scaled / 2) / scaled;
+			};
+			while(fnum >= 2u * m_fnumFloor && block < 7)
+				setBlock(static_cast<uint8>(block + 1));
+			// Блок выбирает нота, а слайды и вибрато драйвер ведёт одним
+			// F-number: код клавиши (расстройка, скорость огибающих) на них
+			// не прыгает. Шаг от полутона — уже новая нота.
+			const double pitch = static_cast<double>(numerator) / denominator;
+			const bool strike = !keyOff && !slot->keyed && !slot->keyOnDelay;
+			if(m_fnumFloor != DefaultFnumFloor && !strike && slot->pitch > 0.0 && block != slot->block && pitch < slot->pitch * 1.055 && slot->pitch < pitch * 1.055)
+			{
+				const uint8 chosen = block;
+				setBlock(slot->block);
+				if(fnum > 2047 || fnum < m_fnumFloor / 2u)
+					setBlock(chosen);
 			}
+			slot->block = block;
+			slot->pitch = pitch;
 			fnum = std::clamp<uint64>(fnum, 1, 2047);
 			Write(*chip, ChannelRegister(*chip, index, 0xA4), static_cast<uint8>((block << 3) | (fnum >> 8)));
 			Write(*chip, ChannelRegister(*chip, index, 0xA0), static_cast<uint8>(fnum & 0xFF));

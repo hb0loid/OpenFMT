@@ -363,6 +363,13 @@ void OPL::Patch(CHANNELINDEX c, const OPLPatch &patch)
 }
 
 
+void OPL::SetFMFnumFloor(uint16 floor)
+{
+	m_fmFnumFloor = floor;
+	if(m_opn2)
+		m_opn2->SetFnumFloor(floor);
+}
+
 void OPL::Patch(CHANNELINDEX c, const ModSample &sample)
 {
 	if(sample.psg)
@@ -385,6 +392,7 @@ void OPL::Patch(CHANNELINDEX c, const ModSample &sample)
 			return;
 		if(!m_opn2)
 			m_opn2 = std::make_unique<OPN2>(m_sampleRate);
+		m_opn2->SetFnumFloor(m_fmFnumFloor);
 		m_opn2->SetChipCount(false, m_fmChipCount[0]);
 		m_opn2->SetChipCount(true, m_fmChipCount[1]);
 		if(GetVoice(c) != OPL_CHANNEL_INVALID)

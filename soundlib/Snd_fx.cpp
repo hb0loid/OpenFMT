@@ -3388,6 +3388,7 @@ bool CSoundFile::ProcessEffects()
 				if(!chn.dwFlags[CHN_MUTE | CHN_SYNCMUTE] && chn.pModSample != nullptr && chn.pModSample->uFlags[CHN_ADLIB] && m_opl)
 				{
 					m_opl->SetFMChipCount(m_fmChipCount[0], m_fmChipCount[1], m_fmChipCount[2]);
+					m_opl->SetFMFnumFloor(m_fmFnumFloor);
 					m_opl->Patch(nChn, *chn.pModSample);
 				}
 
@@ -3456,6 +3457,7 @@ bool CSoundFile::ProcessEffects()
 				if(!chn.dwFlags[CHN_MUTE | CHN_SYNCMUTE] && chn.pModSample != nullptr && chn.pModSample->uFlags[CHN_ADLIB] && m_opl && (instrChange || !m_opl->IsActive(nChn)))
 				{
 					m_opl->SetFMChipCount(m_fmChipCount[0], m_fmChipCount[1], m_fmChipCount[2]);
+					m_opl->SetFMFnumFloor(m_fmFnumFloor);
 					m_opl->Patch(nChn, *chn.pModSample);
 				}
 
@@ -4446,6 +4448,7 @@ void CSoundFile::RestoreChipVoices()
 		if(chn.dwFlags[CHN_MUTE | CHN_SYNCMUTE] || chn.pModSample == nullptr || !chn.pModSample->uFlags[CHN_ADLIB])
 			continue;
 		m_opl->SetFMChipCount(m_fmChipCount[0], m_fmChipCount[1], m_fmChipCount[2]);
+		m_opl->SetFMFnumFloor(m_fmFnumFloor);
 		m_opl->Patch(n, *chn.pModSample);
 		// Нота, которая к точке старта ещё держится, звучит дальше (ниже).
 		// Раньше глушили всё подряд, и длинные ноты, взятые до точки старта,

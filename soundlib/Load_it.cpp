@@ -2642,6 +2642,8 @@ void CSoundFile::SaveExtendedSongProperties(std::ostream &f) const
 			mpt::IO::WriteRaw(f, data.data(), data.size());
 		}
 	}
+	if(m_fmFnumFloor != 1024)
+		WriteModular(f, MagicLE("FCFN"), m_fmFnumFloor);
 	// Громкость чипов идёт именованным полем расширений песни, а не новой
 	// сигнатурой файла: читатель, который его не знает, просто его пропустит.
 	if(std::any_of(m_chipVolume.begin(), m_chipVolume.end(), [](uint16 volume) { return volume != ChipVolumeUnity; }))
@@ -2958,6 +2960,7 @@ bool CSoundFile::LoadExtendedSongProperties(FileReader &file, bool ignoreChannel
 					m_fmChipCount[2] = static_cast<uint8>(std::clamp<int>(size >= 3 ? (counts >> 16) & 0xFF : 1, 1, 4));
 				}
 				break;
+			case MagicLE("FCFN"): ReadField(chunk, size, m_fmFnumFloor); break;
 			case MagicLE("FCHV"):
 				// Громкость чипов, по 16 бит на чип в порядке ChipKind.
 				{

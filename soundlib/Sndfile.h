@@ -541,6 +541,10 @@ public:
 	// Полифония: сколько чипов YM2612 и YM2151 у песни (1..4). Импорт Furnace
 	// оставляет по одному, как у оригинала.
 	std::array<uint8, 3> m_fmChipCount{1, 1, 1};  // YM2612, YM2151, SN76489
+	// YM2612: нота пишется с F-number в [порог, 2 * порог). От выбора блока
+	// зависит код клавиши (расстройка, скорость огибающих), а у драйверов он
+	// свой: у SMPS порог около 640. 1024 — наш и Furnace.
+	uint16 m_fmFnumFloor = 1024;
 	uint32 m_nSamplePreAmp, m_nVSTiVolume;
 	uint32 m_OPLVolumeFactor;  // 16.16
 	static constexpr uint32 m_OPLVolumeFactorScale = 1 << 16;

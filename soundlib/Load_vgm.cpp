@@ -299,14 +299,46 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// без кадрового прерывания отмеряет им свои тики (см. разбор после лога).
 	std::vector<uint32> driverTicks;
 	uint32 tickMedian = 0;
+	// F-number новых нот: по нему видно, как драйвер делит высоту на блок и F-number.
+	std::array<uint32, 2048> fnumUse{}, fnumLowest{}, fnumHighest{};
+	uint16 fnumFloor = 1024;
 	{
 		uint32 when = 0;
+		std::array<uint8, FMChannels> high{}, keys{};
+		std::array<uint16, FMChannels> pitch{};
 		for(size_t scan = header.dataOffset; scan < data.size() && data[scan] != 0x66;)
 		{
 			const uint8 code = data[scan];
 			const auto word = [&](size_t at) { return at + 1 < data.size() ? static_cast<uint32>(data[at] | (data[at + 1] << 8)) : 0u; };
 			if(code == 0x52 && scan + 2 < data.size() && data[scan + 1] == 0x27 && (data[scan + 2] & 0x30) && (driverTicks.empty() || when > driverTicks.back() + 30))
 				driverTicks.push_back(when);
+			if((code == 0x52 || code == 0x53) && scan + 2 < data.size())
+			{
+				const uint8 reg = data[scan + 1], value = data[scan + 2];
+				const uint8 base = (code == 0x52) ? 0 : 3;
+				if(reg >= 0xA4 && reg <= 0xA6)
+				{
+					high[base + reg - 0xA4] = value & 0x3F;
+				} else if(reg >= 0xA0 && reg <= 0xA2)
+				{
+					pitch[base + reg - 0xA0] = static_cast<uint16>((high[base + reg - 0xA0] << 8) | value);
+				} else if(reg == 0x28 && code == 0x52 && (value & 3) != 3)
+				{
+					const uint8 channel = static_cast<uint8>((value & 3) + ((value & 4) ? 3 : 0));
+					const uint16 number = pitch[channel] & 0x7FF;
+					if((value & 0xF0) && !keys[channel] && number)
+					{
+						// Ниже нулевого блока и выше седьмого делить некуда.
+						const uint8 block = static_cast<uint8>(pitch[channel] >> 11);
+						fnumUse[number]++;
+						if(block == 0)
+							fnumLowest[number]++;
+						else if(block == 7)
+							fnumHighest[number]++;
+					}
+					keys[channel] = value & 0xF0;
+				}
+			}
 			if(code == 0x61)
 				when += word(scan + 1);
 			else if(code == 0x62 || code == 0x63)
@@ -350,6 +382,51 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		// Короче 2,5 мс — темп выше предела MPTM.
 		if(tickMedian < VgmRate / 400)
 			tickMedian = 0;
+	}
+
+	// Порог F-number: такой, при котором в [порог, 2 * порог) попадает больше
+	// всего нот. У SMPS это около 640, и там сходятся все ноты до одной.
+	{
+		constexpr uint32 Lowest = 400, Ours = 1024;
+		uint32 total = 0;
+		for(const uint32 use : fnumUse)
+			total += use;
+		std::array<uint32, Ours + 1> agree{};
+		uint32 best = 0;
+		for(uint32 floor = Lowest; floor <= Ours; floor++)
+		{
+			for(uint32 number = 1; number < fnumUse.size(); number++)
+			{
+				if(number < floor)
+					agree[floor] += fnumLowest[number];
+				else if(number >= 2 * floor)
+					agree[floor] += fnumHighest[number];
+				else
+					agree[floor] += fnumUse[number];
+			}
+			best = std::max(best, agree[floor]);
+		}
+		if(total >= 8 && agree[Ours] < best && best * 20 >= total * 19)
+		{
+			// Порогов, одинаково верных для этих нот, целый отрезок. Берём
+			// середину того, что ближе к делению по нотам (до — си).
+			constexpr uint32 Usual = 640;
+			uint32 chosen = 0;
+			for(uint32 distance = 0; !chosen && distance <= Ours; distance++)
+			{
+				if(Usual + distance <= Ours && agree[Usual + distance] == best)
+					chosen = Usual + distance;
+				else if(Usual >= Lowest + distance && agree[Usual - distance] == best)
+					chosen = Usual - distance;
+			}
+			uint32 from = chosen, to = chosen;
+			while(from > Lowest && agree[from - 1] == best)
+				from--;
+			while(to < Ours && agree[to + 1] == best)
+				to++;
+			const double clockRatio = static_cast<double>(header.opn2Clock) / 7670454.0;
+			fnumFloor = std::clamp<uint16>(mpt::saturate_round<uint16>((from + to) / 2.0 * clockRatio), Lowest, Ours);
+		}
 	}
 
 	// Состояние микросхем по ходу потока.
@@ -2495,6 +2572,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			moduleChannel[voice] = usedChannels++;
 	}
 	InitializeGlobals(MOD_TYPE_MPT, usedChannels);
+	m_fmFnumFloor = fnumFloor;
 	m_SongFlags.set(SONG_IMPORTED);  // Ctrl+S спросит имя, а не запишет модуль поверх лога
 	m_nSamplePreAmp = m_nVSTiVolume = 48;
 	// Баланс чипов как у плат в MAME. Сэмплы (PCM) идут через общее
