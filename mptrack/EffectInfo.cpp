@@ -145,6 +145,7 @@ static constexpr MPTEffectInfo gFXInfo[] =
 	{CMD_ARP_SPEED, 0, 0, 255, MOD_TYPE_MPT, _T("Arpeggio Speed (ticks per step)")},
 	{CMD_FM_LFO_DEPTH, 0, 0, 0x37, MOD_TYPE_MPT, _T("FM LFO Depth (x = tremolo, y = vibrato)")},
 	{CMD_FM_LFO_SPEED, 0, 0, 0x27, MOD_TYPE_MPT, _T("FM LFO Speed (00 = off, 1x = speed, 2x = restart)")},
+	{CMD_FM_KEYOFF, 0, 0, 0, MOD_TYPE_MPT, _T("FM Key Off")},
 };
 
 

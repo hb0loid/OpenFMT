@@ -129,6 +129,7 @@ enum EffectCommand : uint8
 	CMD_ARP_SPEED          = 63, // Furnace E0xx: скорость арпеджио, тиков на ступень
 	CMD_FM_LFO_DEPTH       = 64, // глубина LFO канала FM: x — тремоло (AMS), y — вибрато (FMS), до следующей ноты
 	CMD_FM_LFO_SPEED       = 65, // LFO чипа YM2612: 00 — выключен, 1x — скорость x (как 10xx у Furnace), 2x — с перезапуском фазы
+	CMD_FM_KEYOFF          = 66, // отпустить клавишу голоса чипа, не трогая ноту строки (высоту затухания)
 	MAX_EFFECTS
 };
 

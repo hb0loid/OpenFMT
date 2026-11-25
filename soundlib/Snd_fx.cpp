@@ -1102,6 +1102,9 @@ std::vector<GetLengthType> CSoundFile::GetLength(enmGetLengthResetMode adjustMod
 				} else if(chipCommand == CMD_FM_LFO_DEPTH)
 				{
 					lfoDepth = static_cast<int8>(chipParam & 0x37);
+				} else if(chipCommand == CMD_FM_KEYOFF)
+				{
+					chn.dwFlags.set(CHN_KEYOFF);
 				} else if(chipCommand == CMD_FM_LFO_SPEED)
 				{
 					playState.m_fmLfoSpeed = chipParam;
@@ -3456,7 +3459,11 @@ bool CSoundFile::ProcessEffects()
 					m_opl->Patch(nChn, *chn.pModSample);
 				}
 
+				// Легато отпущенной ноты (FurnaceReleasedLegato) клавишу не нажимает.
+				const bool stayReleased = bPorta && !instr && ModCommand::IsNote(note) && chn.dwFlags[CHN_KEYOFF] && (m_furnaceArpFlags & FurnaceReleasedLegato);
 				NoteChange(chn, note, bPorta, !(GetType() & (MOD_TYPE_XM | MOD_TYPE_MT2)), false, nChn);
+				if(stayReleased)
+					chn.dwFlags.set(CHN_KEYOFF);
 				if(continueNote)
 					chn.nPeriod = chn.nPortamentoDest;
 				if(ModCommand::IsNote(note))
@@ -4176,6 +4183,15 @@ bool CSoundFile::ProcessEffects()
 				m_opl->FMLfoDepth(nChn, static_cast<uint8>(param & 0x37));
 			break;
 
+		case CMD_FM_KEYOFF:
+			if(chn.isFirstTick)
+			{
+				KeyOff(chn);
+				if(chn.dwFlags[CHN_ADLIB] && m_opl)
+					m_opl->NoteOff(nChn);
+			}
+			break;
+
 		case CMD_FM_LFO_SPEED:
 		case CMD_ARP_SPEED:
 			// Уже учтено перед проходом по каналам.
@@ -4391,8 +4407,10 @@ bool CSoundFile::IsFurnaceTonePorta(const ModChannel &chn, const ModCommand &m) 
 {
 	if(m.volcmd == VOLCMD_TONEPORTAMENTO)
 		return true;
-	if(!chn.nPeriod || chn.dwFlags[CHN_KEYOFF])
+	if(!chn.nPeriod)
 		return false;
+	if(chn.dwFlags[CHN_KEYOFF])
+		return (m_furnaceArpFlags & FurnaceReleasedLegato) && m.command == CMD_TONEPORTAMENTO && m.param && !m.instr;
 	switch(m.command)
 	{
 	case CMD_TONEPORTAMENTO:

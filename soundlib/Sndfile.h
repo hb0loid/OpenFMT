@@ -522,6 +522,9 @@ public:
 		// continuousVibrato: новая нота не сбрасывает фазу вибрато. Лежит среди
 		// флагов арпеджио, потому что они уже сохраняются в MPTM (блок FARP).
 		FurnaceContinuousVibrato = 1 << 3,
+		// Легато (Gxx с нотой) на отпущенной ноте только меняет высоту её
+		// затухания. Без флага, как у Furnace, нота нажимается заново.
+		FurnaceReleasedLegato = 1 << 4,
 	};
 	uint8 m_furnaceArpSpeed = 1;
 	uint8 m_furnaceArpFlags = 0;

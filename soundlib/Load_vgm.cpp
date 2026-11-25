@@ -153,6 +153,8 @@ struct VgmEvent
 	// LFO YM2612: глубина канала (AMS << 4 | FMS) и скорость чипа (0 или
 	// 0x10 | скорость) посреди ноты, -1 — не менять.
 	int8 lfoDepth = -1, lfoSpeed = -1;
+	// Легато на затухании: клавиша уже отпущена, меняется только высота.
+	bool released = false;
 };
 
 // Голоса микросхем в этой сборке живут по нотной шкале Furnace, где до первой
@@ -296,6 +298,59 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// Моменты, когда драйвер перезапускал таймер YM2612 (регистр 0x27): драйвер
 	// без кадрового прерывания отмеряет им свои тики (см. разбор после лога).
 	std::vector<uint32> driverTicks;
+	uint32 tickMedian = 0;
+	{
+		uint32 when = 0;
+		for(size_t scan = header.dataOffset; scan < data.size() && data[scan] != 0x66;)
+		{
+			const uint8 code = data[scan];
+			const auto word = [&](size_t at) { return at + 1 < data.size() ? static_cast<uint32>(data[at] | (data[at + 1] << 8)) : 0u; };
+			if(code == 0x52 && scan + 2 < data.size() && data[scan + 1] == 0x27 && (data[scan + 2] & 0x30) && (driverTicks.empty() || when > driverTicks.back() + 30))
+				driverTicks.push_back(when);
+			if(code == 0x61)
+				when += word(scan + 1);
+			else if(code == 0x62 || code == 0x63)
+				when += (code == 0x62) ? 735 : 882;
+			else if(code >= 0x70 && code <= 0x7F)
+				when += (code & 15) + 1;
+			else if(code >= 0x80 && code <= 0x8F)
+				when += code & 15;
+			if(code == 0x67)
+				scan += 7 + (word(scan + 3) | ((word(scan + 5) & 0x7FFF) << 16));
+			else if(code == 0x68)
+				scan += 12;
+			else if(code == 0x90 || code == 0x91 || code == 0x95)
+				scan += 5;
+			else if(code == 0x92)
+				scan += 6;
+			else if(code == 0x93)
+				scan += 11;
+			else if(code == 0x94 || code == 0x4F || code == 0x50 || (code >= 0x30 && code <= 0x3F))
+				scan += 2;
+			else if(code >= 0xE0)
+				scan += 5;
+			else if(code >= 0xC0)
+				scan += 4;
+			else if(code == 0x62 || code == 0x63 || (code >= 0x70 && code <= 0x8F))
+				scan += 1;
+			else
+				scan += 3;
+		}
+	}
+	// Период тиков драйвера: промежутки между перезапусками таймера. Опрос таймера
+	// в цикле (сотни записей подряд) и редкая настройка — не тики.
+	std::vector<uint32> tickPeriods;
+	for(size_t i = 1; i < driverTicks.size(); i++)
+		tickPeriods.push_back(driverTicks[i] - driverTicks[i - 1]);
+	if(driverTicks.size() >= 64)
+	{
+		std::vector<uint32> sorted = tickPeriods;
+		std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
+		tickMedian = sorted[sorted.size() / 2];
+		// Короче 2,5 мс — темп выше предела MPTM.
+		if(tickMedian < VgmRate / 400)
+			tickMedian = 0;
+	}
 
 	// Состояние микросхем по ходу потока.
 	std::array<std::array<uint8, 256>, 2> registers{};
@@ -1283,8 +1338,6 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 				else if((last.second & 7) != (speed & 7) || !last.second != !speed)
 					lfoSpeeds.emplace_back(sample, speed);
 			}
-			if(code == 0x52 && reg == 0x27 && (value & 0x30) && (driverTicks.empty() || sample > driverTicks.back() + 30))
-				driverTicks.push_back(sample);
 			if(code == 0x52 && reg == 0x2B)
 			{
 				dacLogOn = dacEnabled;
@@ -1411,12 +1464,14 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 						const double exact = ExactNote(hertz);
 						VgmEvent event{sample, channel, NOTE_NONE, 255, -1};
 						const bool farAway = std::abs(exact - fmPitchNote[channel]) > 127.0 / 128.0;
-						// Легато только у нажатой ноты: на затухании новая нота
-						// заново нажала бы ключ. Там уходим не дальше полутона.
-						if(farAway && keyed)
+						// На затухании легато меняет одну высоту (FurnaceReleasedLegato):
+						// драйверы по таймеру отпускают барабан сразу, а его высота
+						// едет дальше. Остальным там разрешён полутон, не дальше.
+						if(farAway && (keyed || tickMedian))
 						{
 							event.note = NoteFromFrequency(hertz);
 							event.legato = true;
+							event.released = !keyed;
 							if(keyed)
 								fmSounding[channel] = event.note;
 							fmPitchNote[channel] = event.note;
@@ -2062,20 +2117,34 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	}
 
 	closeHit();
-	// Период тиков драйвера: промежутки между перезапусками таймера. Опрос таймера
-	// в цикле (сотни записей подряд) и редкая настройка — не тики.
-	std::vector<uint32> tickPeriods;
-	for(size_t i = 1; i < driverTicks.size(); i++)
-		tickPeriods.push_back(driverTicks[i] - driverTicks[i - 1]);
-	uint32 tickMedian = 0;
-	if(driverTicks.size() >= 64)
+	// Частоту новой ноты драйвер ставит чуть раньше нажатия. Хвосту прежней она
+	// слышна миг, а в строке тянулась бы целый кадр, поэтому пропускаем.
+	if(tickMedian)
 	{
-		std::vector<uint32> sorted = tickPeriods;
-		std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
-		tickMedian = sorted[sorted.size() / 2];
-		// Короче 2,5 мс — темп выше предела MPTM.
-		if(tickMedian < VgmRate / 400)
-			tickMedian = 0;
+		std::array<size_t, VgmChannels> nextStrike;
+		nextStrike.fill(events.size());
+		std::vector<bool> drop(events.size(), false);
+		for(size_t i = events.size(); i-- > 0;)
+		{
+			VgmEvent &event = events[i];
+			size_t &next = nextStrike[event.channel];
+			if(ModCommand::IsNote(event.note) && !event.legato)
+			{
+				next = i;
+			} else if(event.released && next < events.size() && events[next].sample - event.sample < std::min<uint32>(samplesPerRow, 2 * tickMedian))
+			{
+				drop[i] = true;
+				if(events[next].fine < 0)
+					events[next].fine = event.fine;
+			}
+		}
+		size_t kept = 0;
+		for(size_t i = 0; i < events.size(); i++)
+		{
+			if(!drop[i])
+				events[kept++] = events[i];
+		}
+		events.resize(kept);
 	}
 	// Ведение LFO — только у драйверов по таймеру (Tiny Toon, Thunder Force IV): на
 	// них это сверено с эталоном. Остальным глубину и скорость пока ставит нота.
@@ -2523,6 +2592,8 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	m_furnaceSlides = static_cast<uint16>((tickGrid ? 64 : 4) | FurnaceStopAtTarget);
 	m_playBehaviour = GetDefaultPlaybackBehaviour(MOD_TYPE_MPT);
 	m_playBehaviour.set(kFurnacePersistentFinetune);
+	if(tickMedian)
+		m_furnaceArpFlags |= FurnaceReleasedLegato;
 
 	// Тембры FM становятся инструментами, каналы PSG — четырьмя своими.
 	for(size_t i = 0; i < patches.size() && m_nSamples < MAX_SAMPLES - 1 && m_nInstruments < MAX_INSTRUMENTS - 1; i++)
@@ -2543,6 +2614,10 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		{
 			instrument->name = m_szNames[smp];
 			instrument->midiPWD = 1;  // E5xx: шаг 1/128 полутона
+			// После отпускания гасит чип, а не инструмент: общее затухание (по
+			// умолчанию 128 тиков) укорачивало хвосты.
+			if(tickMedian)
+				instrument->nFadeOut = 0;
 		}
 	}
 	// Удары ЦАПа, записанные побайтно: одинаковые удары становятся одним
@@ -3408,6 +3483,26 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			if(!found)
 				continue;
 			ModCommand &cell = *found;
+			// Отпускание и сдвиг высоты затухания в одной строке, в любом порядке:
+			// нота остаётся высотой, а отпускание становится командой.
+			if(tickMedian && event.channel < FMChannels)
+			{
+				const bool pitchCell = ModCommand::IsNote(cell.note) && !cell.instr;
+				if(event.released && (cell.note == NOTE_KEYOFF || cell.note == NOTE_NOTECUT))
+				{
+					cell.note = NOTE_NONE;
+					setEffect(cell, CMD_FM_KEYOFF, 0);
+				} else if(event.note == NOTE_KEYOFF && pitchCell)
+				{
+					setEffect(cell, CMD_FM_KEYOFF, 0);
+					continue;
+				}
+				for(uint8 slot = 0; strike && slot < ModCommand::Effects(); slot++)
+				{
+					if(cell.GetEffect(slot).first == CMD_FM_KEYOFF)
+						cell.SetEffect(slot, CMD_NONE, 0);
+				}
+			}
 			if(event.note != NOTE_NONE)
 			{
 				cell.note = event.note;
@@ -3616,6 +3711,11 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			// затёр бы её: короткий удар в кадр (хет шумом, щелчок FM) и его
 			// отпускание из-за дрожания времени лога попадают в одну строку, и
 			// удар пропадал целиком. Такое тоже переезжает дальше.
+			if(event.released && (state.note == NOTE_KEYOFF || state.note == NOTE_NOTECUT))
+			{
+				state.carry.push_back(event);
+				continue;
+			}
 			const bool sameTickNote = hasRealNote && tick == state.noteTick
 				&& (realNote || event.note == NOTE_KEYOFF || event.note == NOTE_NOTECUT);
 			if(sameTickNote || (hasRealNote && tick > state.noteTick && (event.note != NOTE_NONE || event.volume != 255 || event.fine >= 0 || hasLevel)))

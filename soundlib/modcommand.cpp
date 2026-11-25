@@ -37,7 +37,7 @@ static constexpr EffectType effectTypes[] =
 	EffectType::Volume, EffectType::Volume,
 	EffectType::Normal, EffectType::Volume, EffectType::Volume, EffectType::Volume, EffectType::Volume,
 	EffectType::Pitch,
-	EffectType::Pitch, EffectType::Pitch,
+	EffectType::Pitch, EffectType::Pitch, EffectType::Normal,
 };
 
 static_assert(std::size(effectTypes) == MAX_EFFECTS);
@@ -1231,6 +1231,7 @@ size_t ModCommand::GetEffectWeight(COMMAND cmd)
 		CMD_ARP_SPEED,
 		CMD_FM_LFO_DEPTH,
 		CMD_FM_LFO_SPEED,
+		CMD_FM_KEYOFF,
 		CMD_VOLUMEDOWN_ETX,
 		CMD_CHANNELVOLSLIDE,
 		CMD_CHANNELVOLUME,
