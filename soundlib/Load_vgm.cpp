@@ -287,14 +287,8 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		return true;
 
 	// Шаг строки. Драйверы Mega Drive тикают кадром, поэтому строка — кадр.
-	// Какой именно, видно по тому, какая пауза в файле преобладает.
-	uint32 frames60 = 0, frames50 = 0;
-	for(size_t scan = header.dataOffset; scan < data.size(); scan++)
-	{
-		if(data[scan] == 0x62) frames60++;
-		else if(data[scan] == 0x63) frames50++;
-	}
-	const uint32 samplesPerRow = frames50 > frames60 ? 882 : 735;
+	// Какой именно, видно по тому, на какой кадр ложатся записи в микросхемы.
+	uint32 samplesPerRow = 735;
 	// Моменты, когда драйвер перезапускал таймер YM2612 (регистр 0x27): драйвер
 	// без кадрового прерывания отмеряет им свои тики (см. разбор после лога).
 	std::vector<uint32> driverTicks;
@@ -309,6 +303,9 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	uint16 fnumFloor = 1024;
 	{
 		uint32 when = 0;
+		constexpr uint32 Frame60 = 735, Frame50 = 882;
+		std::array<std::array<double, 2>, 2> onFrame{};
+		uint32 frames60 = 0, frames50 = 0, lastWrite = 0, writes = 0;
 		std::array<uint8, FMChannels> high{}, keys{};
 		std::array<uint16, FMChannels> pitch{};
 		for(size_t scan = header.dataOffset; scan < data.size() && data[scan] != 0x66;)
@@ -356,6 +353,24 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 					keys[channel] = value & 0xF0;
 				}
 			}
+			const bool chipWrite = code == 0x50 || code == 0x53 || code == 0x54 || code == 0xB0 || (code == 0x52 && scan + 2 < data.size() && data[scan + 1] != 0x27 && data[scan + 1] != 0x2A && data[scan + 1] != 0x2B);
+			if(chipWrite)
+			{
+				// Пачка записей считается один раз, по её началу.
+				if(!writes || when > lastWrite + 60)
+				{
+					constexpr double TwoPi = 2.0 * 3.14159265358979323846;
+					const double angle60 = TwoPi * (when % Frame60) / Frame60, angle50 = TwoPi * (when % Frame50) / Frame50;
+					onFrame[0][0] += std::sin(angle60);
+					onFrame[0][1] += std::cos(angle60);
+					onFrame[1][0] += std::sin(angle50);
+					onFrame[1][1] += std::cos(angle50);
+					writes++;
+				}
+				lastWrite = when;
+			}
+			frames60 += (code == 0x62) ? 1 : 0;
+			frames50 += (code == 0x63) ? 1 : 0;
 			if(code == 0x61)
 				when += word(scan + 1);
 			else if(code == 0x62 || code == 0x63)
@@ -385,6 +400,12 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			else
 				scan += 3;
 		}
+		const double focus60 = std::hypot(onFrame[0][0], onFrame[0][1]) / std::max<uint32>(writes, 1);
+		const double focus50 = std::hypot(onFrame[1][0], onFrame[1][1]) / std::max<uint32>(writes, 1);
+		// Не ложатся ни на какой кадр (драйвер по таймеру) — по паузам файла.
+		constexpr double Enough = 0.2;
+		if(std::max(focus60, focus50) >= Enough ? focus50 > focus60 : frames50 > frames60)
+			samplesPerRow = Frame50;
 	}
 	// Период тиков драйвера: промежутки между перезапусками таймера. Опрос таймера
 	// в цикле (сотни записей подряд) и редкая настройка — не тики.
@@ -673,6 +694,7 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	// ею пользуются вовсю — голос, уведённый в одну сторону, звучит на шесть
 	// децибел тише того же голоса по центру. Пока мы её не переносили, тихие
 	// крайние голоса выходили заметно громче, чем на приставке.
+	std::array<bool, FMChannels> fmSilentStrike{};
 	std::array<uint8, FMChannels> fmPan{3, 3, 3, 3, 3, 3};
 	struct FMVoice
 	{
@@ -1496,9 +1518,16 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 						fmPatch[channel] = patch;
 						// Патч ставит каналу глубину LFO.
 						engineLfoDepth[channel] = registers[channel < 3 ? 0 : 1][0xB4 + channel % 3] & 0x37;
+						fmSilentStrike[channel] = false;
+					} else
+					{
+						// Нажатие на нулевой частоте (Tiny Toon): нота начнётся с
+						// первой слышной высотой.
+						fmSilentStrike[channel] = rising;
 					}
 				} else
 				{
+					fmSilentStrike[channel] = false;
 					events.push_back({sample, channel, NOTE_KEYOFF, 255, -1});
 					fmSounding[channel] = NOTE_NONE;
 				}
@@ -1554,7 +1583,23 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 				// держит в защёлке до неё. Если нота звучит, это слайд, вибрато
 				// или подстройка: в пределах полутона от ноты строки пишем E5xx,
 				// дальше — новую ноту без удара.
-				if(fmPitchNote[channel] != NOTE_NONE && !(channel == 5 && dacEnabled))
+				if(fmSilentStrike[channel] && !(channel == 5 && dacEnabled))
+				{
+					const double hertz = fmHertz(channel);
+					if(const auto note = NoteFromFrequency(hertz); note != NOTE_NONE)
+					{
+						const auto [patch, volume] = patchAndVolume(channel);
+						const int fine = FineFromOffset(ExactNote(hertz) - note);
+						events.push_back({sample, channel, note, volume, patch, -1, false, fine != fmFine[channel] ? fine : -1, noteLevels});
+						fmFine[channel] = fine;
+						fmSounding[channel] = note;
+						fmPitchNote[channel] = note;
+						fmLastVolume[channel] = volume;
+						fmPatch[channel] = patch;
+						engineLfoDepth[channel] = registers[channel < 3 ? 0 : 1][0xB4 + channel % 3] & 0x37;
+						fmSilentStrike[channel] = false;
+					}
+				} else if(fmPitchNote[channel] != NOTE_NONE && !(channel == 5 && dacEnabled))
 				{
 					const double hertz = fmHertz(channel);
 					const bool keyed = fmSounding[channel] != NOTE_NONE;
@@ -3548,7 +3593,12 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 	const auto frameOf = [&](const VgmEvent &event) { return std::max(frameIndex(event), phase) - phase; };
 
 	const uint32 lastRow = frameOf(events.back()) / framesPerRow;
-	const ROWINDEX totalRows = static_cast<ROWINDEX>(std::min<uint32>(lastRow + 2, MAX_PATTERN_ROWS * 1000u));
+	// После последней записи лог ещё длится: там дозвучивает последняя нота, а
+	// у песни с петлёй — пауза до её начала.
+	VgmEvent logEnd{};
+	logEnd.sample = sample;
+	const uint32 endRow = std::min(frameOf(logEnd) / framesPerRow, lastRow + static_cast<uint32>(VgmRate * 10.0 / (rowLength * framesPerRow)));
+	const ROWINDEX totalRows = static_cast<ROWINDEX>(std::min<uint32>(std::max(lastRow + 2, endRow), MAX_PATTERN_ROWS * 1000u));
 	// Кадр на строку — это 60 строк в секунду; паттерн по 128 строк держит
 	// около двух секунд. В компактном режиме строки длиннее, хватает 64.
 	// По тикам драйвера строк вчетверо больше — узор в те же две секунды.
@@ -3621,9 +3671,56 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 		std::array<uint32, VgmChannels> pushedFrame;  // куда отложено отпускание
 		std::array<uint32, VgmChannels> notedSample{};  // когда был последний удар
 		pushedFrame.fill(NoFrame);
+		// Драйвер пишет канал раз за кадр, но не в одно и то же время: запись
+		// прошлого кадра запоздала, этого — пришла рано, и обе попадают в одну
+		// строку. Первая терялась (громкое начало удара PSG). Пачки записей
+		// канала, между которыми заметный промежуток, разводим по соседним
+		// строкам, если там пусто.
+		std::vector<uint32> eventFrame(events.size());
+		{
+			struct Burst { uint32 first = 0, last = 0, frame = 0; std::vector<size_t> events; };
+			std::array<std::vector<Burst>, VgmChannels> bursts;
+			const uint32 apart = static_cast<uint32>(rowLength * 0.35);
+			for(size_t i = 0; i < events.size(); i++)
+			{
+				const uint32 frame = frameOf(events[i]);
+				auto &list = bursts[events[i].channel];
+				if(list.empty() || frame != list.back().frame || events[i].sample > list.back().last + apart)
+					list.push_back({events[i].sample, events[i].sample, frame, {}});
+				list.back().last = events[i].sample;
+				list.back().events.push_back(i);
+			}
+			for(uint8 voice = 0; voice < VgmChannels; voice++)
+			{
+				auto &list = bursts[voice];
+				// У FM отпускание и нажатие одного кадра сами стоят порознь, и
+				// разводить их незачем: нота уезжала бы с места.
+				const bool spread = !tickGrid && voice >= FMChannels && voice < FMChannels + PSGChannels;
+				for(size_t i = 1; spread && i < list.size(); i++)
+				{
+					if(list[i].frame != list[i - 1].frame)
+						continue;
+					const uint32 frame = list[i].frame;
+					const bool before = frame > 0 && (i < 2 || list[i - 2].frame + 1 < frame);
+					const bool after = i + 1 >= list.size() || list[i + 1].frame > frame + 1;
+					// Кто ближе к своему краю строки, тот и уходит.
+					const double start = frame * rowLength - gridShift;
+					const bool early = (list[i - 1].first - start) < (start + rowLength - list[i].last);
+					if(before && (early || !after))
+						list[i - 1].frame = frame - 1;
+					else if(after)
+						list[i].frame = frame + 1;
+				}
+				for(const auto &burst : list)
+				{
+					for(const size_t i : burst.events)
+						eventFrame[i] = burst.frame;
+				}
+			}
+		}
 		for(const auto &event : events)
 		{
-			uint32 frame = frameOf(event);
+			uint32 frame = eventFrame[&event - events.data()];
 			const bool strike = ModCommand::IsNote(event.note) && !event.legato;
 			if((event.note == NOTE_KEYOFF || event.note == NOTE_NOTECUT) && notedFrame[event.channel] == frame
 				&& event.sample >= notedSample[event.channel] + static_cast<uint32>(rowLength / 4))
