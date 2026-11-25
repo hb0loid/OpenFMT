@@ -2615,8 +2615,8 @@ bool CSoundFile::ReadVGM(FileReader &file, ModLoadingFlags loadFlags)
 			instrument->name = m_szNames[smp];
 			instrument->midiPWD = 1;  // E5xx: шаг 1/128 полутона
 			// После отпускания гасит чип, а не инструмент: общее затухание (по
-			// умолчанию 128 тиков) укорачивало хвосты.
-			if(tickMedian)
+			// умолчанию 128 тиков) укорачивало хвосты. У YM2151 не сверено.
+			if(!patches[i].opm)
 				instrument->nFadeOut = 0;
 		}
 	}
